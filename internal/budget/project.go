@@ -101,7 +101,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 				continue
 			}
 			if l.Income {
-				mo.Income = mo.Income.Add(p.ToBase(l.Amt, roundReceive))
+				mo.Income = mo.Income.Add(p.IncomeValue(l.Amt, roundReceive))
 				continue
 			}
 			cost := p.PayCost(l.Amt, roundPay)

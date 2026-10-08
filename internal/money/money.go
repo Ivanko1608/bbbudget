@@ -186,6 +186,17 @@ func (m Money) FormatWhole() string {
 	return m.format(0, new(big.Rat).SetInt(roundRat(m.Rat(), HalfEven)))
 }
 
+// Display is the short form UIs show: FormatWhole for fiat; for crypto, where
+// whole units hide everything (0.015 BTC), the exact amount without trailing
+// zeros ("0.015 BTC", "1,200 USDT").
+func (m Money) Display() string {
+	if !m.cur.Crypto {
+		return m.FormatWhole()
+	}
+	d := m.Decimal()
+	return m.format(d.Scale(), d.Rat())
+}
+
 func (m Money) format(digits int, v *big.Rat) string {
 	neg := v.Sign() < 0
 	s := new(big.Rat).Abs(v).FloatString(digits)
@@ -214,7 +225,7 @@ func (m Money) format(digits int, v *big.Rat) string {
 type moneyJSON struct {
 	Amount   Decimal `json:"amount"`
 	Currency string  `json:"currency"`
-	// Display is FormatWhole, for UIs; ignored on input.
+	// Display is Money.Display, for UIs; ignored on input.
 	Display string `json:"display,omitempty"`
 }
 
@@ -224,7 +235,7 @@ func (m Money) MarshalJSON() ([]byte, error) {
 	if m.cur.Code == "" {
 		return []byte("null"), nil
 	}
-	return json.Marshal(moneyJSON{m.Decimal(), m.cur.Code, m.FormatWhole()})
+	return json.Marshal(moneyJSON{m.Decimal(), m.cur.Code, m.Display()})
 }
 
 func (m *Money) UnmarshalJSON(b []byte) error {

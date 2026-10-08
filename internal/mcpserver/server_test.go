@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/rates"
+	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 )
 
@@ -27,6 +30,8 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	a := app.New(st, nil)
+	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001"}}
+	a.Rates = map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: f, rates.CoinGecko: f}
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
 	if _, err := a.Create(ctx, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
@@ -91,7 +96,7 @@ func TestToolsAreListedWithStringAmounts(t *testing.T) {
 		names[tl.Name] = tl
 	}
 	for _, want := range []string{"list_budgets", "create_budget", "get_budget", "add_line", "update_line", "remove_line", "set_currency",
-		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario"} {
+		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario", "refresh_rates"} {
 		if names[want] == nil {
 			t.Errorf("missing tool %s", want)
 		}
@@ -227,4 +232,43 @@ func TestCreateAndResource(t *testing.T) {
 	if err != nil || !strings.Contains(res.Contents[0].Text, `"per_base": "1.08"`) {
 		t.Fatalf("resource: %v", err)
 	}
+}
+
+func TestCryptoIncomeAndRates(t *testing.T) {
+	h := setup(t)
+	// A new currency without a rate gets one fetched.
+	s := h.call("set_currency", map[string]any{"code": "btc", "cash_out_fee_pct": "1"}, false)
+	cur := s["settings"].(map[string]any)["currencies"].([]any)[2].(map[string]any)
+	if cur["code"] != "BTC" || cur["per_base"] != "0.00001" || cur["source"] != "auto" || cur["cash_out_fee_pct"] != "1" {
+		t.Fatalf("set_currency: %v", cur)
+	}
+	s = h.call("add_line", map[string]any{"name": "Staking", "amount": "0.002", "currency": "BTC", "category": "income"}, false)
+	if l := line(s, "staking"); l["base"] != "198.00" { // 0.002 BTC = €200, less 1%
+		t.Fatalf("crypto income: %v", l)
+	}
+	h.call("add_line", map[string]any{"name": "Dust", "amount": "0.000000001", "currency": "BTC", "category": "income"}, true)
+
+	r := h.call("refresh_rates", map[string]any{"codes": []string{"USD"}}, false)
+	u := r["rate_updates"].([]any)[0].(map[string]any)
+	if u["old"] != "1.08" || u["new"] != "1.1186" || u["from"] != "currency-api" {
+		t.Fatalf("refresh_rates: %v", u)
+	}
+}
+
+func TestRatesWhenOffline(t *testing.T) {
+	h := setup(t)
+	h.app.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	off := false
+	if _, err := h.app.UpdateSettings(settings.Patch{FetchRates: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if e := h.call("set_currency", map[string]any{"code": "BTC"}, true)["error"].(string); !strings.Contains(e, "turned off") {
+		t.Fatalf("set_currency: %s", e)
+	}
+	h.call("refresh_rates", map[string]any{"codes": []string{"USD"}}, true)
+	// Nothing to fetch is not an error, and a typed rate still works offline.
+	if r := h.call("refresh_rates", map[string]any{}, false); len(r["rate_updates"].([]any)) != 0 {
+		t.Fatal(r["rate_updates"])
+	}
+	h.call("set_currency", map[string]any{"code": "BTC", "per_base": "0.00001"}, false)
 }

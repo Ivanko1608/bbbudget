@@ -96,7 +96,7 @@ func (p *Plan) MonthlyEquivalent(l PlanLine) money.Money {
 	}
 	per := p.PayCost(l.Amt, roundPay)
 	if l.Income {
-		per = p.ToBase(l.Amt, roundReceive)
+		per = p.IncomeValue(l.Amt, roundReceive)
 	}
 	return per.Mul(big.NewRat(1, int64(l.Schedule.Every)), money.HalfEven)
 }

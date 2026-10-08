@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,9 @@ const (
 	MaxLines  = 2000
 	// MaxAmountMajor caps any single amount (10^12 major units).
 	MaxAmountMajor = 1_000_000_000_000
+	// MaxAmountMinor caps it in minor units too, which binds for currencies
+	// with many decimals (10^15 satoshi is 10 million BTC).
+	MaxAmountMinor = 1_000_000_000_000_000
 )
 
 // Issue is one validation problem, addressed by a JSON-ish path.
@@ -56,6 +60,7 @@ type fx struct {
 	cur     money.Currency
 	perBase *big.Rat
 	feeMul  *big.Rat // 1 + fee/100
+	keepMul *big.Rat // 1 - cash-out fee/100: the share of income that arrives
 }
 
 type PlanLine struct {
@@ -93,7 +98,7 @@ func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allow
 	if !allowNeg && m.IsNegative() {
 		c.add(path, "must not be negative")
 	}
-	if d.Rat().Abs(d.Rat()).Cmp(big.NewRat(MaxAmountMajor, 1)) > 0 {
+	if d.Rat().Abs(d.Rat()).Cmp(big.NewRat(MaxAmountMajor, 1)) > 0 || m.Minor() > MaxAmountMinor || m.Minor() < -MaxAmountMinor {
 		c.add(path, "is unreasonably large (max %d)", MaxAmountMajor)
 		return money.Zero(cur)
 	}
@@ -129,8 +134,12 @@ func Compile(b Budget) (*Plan, error) {
 		c.add("base_currency", "%v", err)
 		base = money.MustLookup("EUR")
 	}
+	if base.Crypto {
+		c.add("base_currency", "%s is a cryptocurrency; plan in a fiat currency and add %s under currencies", base.Code, base.Code)
+	}
 	p.Base = base
-	p.rates[base.Code] = fx{base, big.NewRat(1, 1), big.NewRat(1, 1)}
+	one := big.NewRat(1, 1)
+	p.rates[base.Code] = fx{base, one, one, one}
 
 	if t, err := time.Parse("2006-01", b.StartMonth); err != nil {
 		c.add("start_month", "must be YYYY-MM, got %q", b.StartMonth)
@@ -170,8 +179,15 @@ func Compile(b Budget) (*Plan, error) {
 			continue
 		}
 		c.pct(path+".transfer_fee_pct", r.TransferFeePct, 100)
+		if r.CashOutFeePct.Sign() < 0 || r.CashOutFeePct.Rat().Cmp(big.NewRat(100, 1)) >= 0 {
+			c.add(path+".cash_out_fee_pct", "must be at least 0 and below 100")
+		}
+		if !slices.Contains(RateSources, r.Source) && r.Source != "" {
+			c.add(path+".source", "must be one of %s", strings.Join(RateSources, ", "))
+		}
 		fee := new(big.Rat).Quo(r.TransferFeePct.Rat(), big.NewRat(100, 1))
-		p.rates[r.Code] = fx{cur, r.PerBase.Rat(), fee.Add(fee, big.NewRat(1, 1))}
+		keep := new(big.Rat).Quo(r.CashOutFeePct.Rat(), big.NewRat(100, 1))
+		p.rates[r.Code] = fx{cur, r.PerBase.Rat(), fee.Add(fee, one), keep.Sub(one, keep)}
 	}
 	currency := func(path, code string) (money.Currency, bool) {
 		r, ok := p.rates[code]
@@ -260,6 +276,20 @@ func (p *Plan) Currency(code string) (money.Currency, bool) {
 func (p *Plan) ToBase(m money.Money, mode money.RoundingMode) money.Money {
 	r := p.rates[m.Currency().Code]
 	return money.FromRat(new(big.Rat).Quo(m.Rat(), r.perBase), p.Base, mode)
+}
+
+// IncomeValue is what income m (in its own currency) is worth in base
+// currency once converted, after the currency's cash-out loss.
+func (p *Plan) IncomeValue(m money.Money, mode money.RoundingMode) money.Money {
+	r := p.rates[m.Currency().Code]
+	v := new(big.Rat).Quo(m.Rat(), r.perBase)
+	return money.FromRat(v.Mul(v, r.keepMul), p.Base, mode)
+}
+
+// CashOutPct returns the cash-out loss percent for a currency.
+func (p *Plan) CashOutPct(code string) *big.Rat {
+	v := new(big.Rat).Sub(big.NewRat(1, 1), p.rates[code].keepMul)
+	return v.Mul(v, big.NewRat(100, 1))
 }
 
 // PayCost is what paying m (in its own currency) costs in base currency,

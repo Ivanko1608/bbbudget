@@ -52,7 +52,34 @@ type CurrencyRate struct {
 	// TransferFeePct is the percent lost when paying in this currency (fees, spread).
 	// It is added on top of every outgoing payment in this currency.
 	TransferFeePct money.Decimal `json:"transfer_fee_pct"`
+	// CashOutFeePct is the percent lost when income in this currency is
+	// converted to the base currency (exchange fees, spread, withdrawal fees).
+	// Typical for crypto income. Zero when omitted.
+	CashOutFeePct money.Decimal `json:"cash_out_fee_pct,omitzero"`
+	// Source says where PerBase comes from: "manual" (or empty) for a rate you
+	// type, otherwise a rate provider that refreshing fetches it from (see RateSources).
+	Source string `json:"source,omitempty"`
+	// RateDate and RateFrom record the last fetched quote: its date (YYYY-MM-DD)
+	// and the provider that supplied it. Informational; cleared by a manual rate.
+	RateDate string `json:"rate_date,omitempty"`
+	RateFrom string `json:"rate_from,omitempty"`
 }
+
+// Rate sources. SourceAuto tries the official ECB rate first and falls back
+// to a provider that also covers crypto and the currencies ECB doesn't quote.
+const (
+	SourceManual      = "manual"
+	SourceAuto        = "auto"
+	SourceECB         = "ecb"
+	SourceCurrencyAPI = "currency-api"
+	SourceCoinGecko   = "coingecko"
+)
+
+// RateSources lists every valid CurrencyRate.Source.
+var RateSources = []string{SourceManual, SourceAuto, SourceECB, SourceCurrencyAPI, SourceCoinGecko}
+
+// IsManual reports whether the rate is typed by hand rather than fetched.
+func (r CurrencyRate) IsManual() bool { return r.Source == "" || r.Source == SourceManual }
 
 type Category struct {
 	ID    string `json:"id"`

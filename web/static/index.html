@@ -19,6 +19,7 @@
       <label class="sr" for="picker">Budget</label>
       <select id="picker" aria-label="Budget"></select>
       <button id="newBtn" type="button">New</button>
+      <a class="btn" href="settings.html" aria-label="App settings">Settings</a>
       <details class="menu">
         <summary aria-label="More actions">⋯</summary>
         <div class="menu-body">
@@ -66,15 +67,18 @@
     </section>
 
     <section aria-labelledby="h-set">
-      <h2 id="h-set">Settings</h2>
+      <h2 id="h-set">Budget settings</h2>
       <div class="grid" id="settings"></div>
     </section>
 
     <section aria-labelledby="h-cur">
       <h2 id="h-cur">Currencies</h2>
-      <p class="muted">Rate is units per 1 of the base currency. Transfer loss is added on top of every payment in that currency.</p>
+      <p class="muted">Rate is units per 1 of the base currency. Pick where it comes from: the ECB's official rate, market data (which also covers crypto), or type it yourself. Payment loss is added to every payment in that currency; cash-out loss is taken off income in it, such as fees for selling crypto.</p>
       <div id="currencies"></div>
-      <button class="add" type="button" data-action="add-currency">Add a currency</button>
+      <div class="row-actions">
+        <button type="button" data-action="add-currency">Add a currency</button>
+        <button type="button" id="refreshRates" data-action="refresh-rates">Update rates now</button>
+      </div>
     </section>
 
     <section aria-labelledby="h-lines">

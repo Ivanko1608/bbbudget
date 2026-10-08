@@ -22,9 +22,10 @@ import (
 
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
-Model: a budget has a base currency, foreign currencies (per_base rate + transfer_fee_pct lost on every payment in that currency), categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
+Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
+Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
 Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
 
@@ -132,9 +133,16 @@ type LineRef struct {
 
 type CurrencyIn struct {
 	Ref
-	Code           string         `json:"code" jsonschema:"ISO code, e.g. USD"`
-	PerBase        *money.Decimal `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit"`
+	Code           string         `json:"code" jsonschema:"ISO code or crypto ticker, e.g. USD, BTC, USDT"`
+	PerBase        *money.Decimal `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit; setting it makes the rate manual. Omit to fetch the current rate"`
+	Source         *string        `json:"source,omitempty" jsonschema:"where the rate comes from: manual, auto, ecb, currency-api or coingecko"`
 	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty" jsonschema:"percent lost on every payment in this currency"`
+	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty" jsonschema:"percent lost when income in this currency is converted to base (exchange fee + spread)"`
+}
+
+type RatesIn struct {
+	Ref
+	Codes []string `json:"codes,omitempty" jsonschema:"currencies to refresh; omit for every currency whose source isn't manual. Naming a manual one switches it to auto"`
 }
 
 type SettingsIn struct {
@@ -186,7 +194,7 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Line{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct}. Amounts are decimal strings.`
+Value fields: Line{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -226,9 +234,28 @@ func (h *handlers) register(s *mcp.Server) {
 	tool(s, "remove_line", "Delete one line. Returns the updated budget.", func(ctx context.Context, in LineRef) (any, error) {
 		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("remove_line", in.Line, nil))
 	})
-	tool(s, "set_currency", "Set a currency's exchange rate and/or transfer loss; adds the currency if it is new (per_base required). Returns the updated budget.",
+	tool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns the updated budget.",
 		func(ctx context.Context, in CurrencyIn) (any, error) {
-			return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_currency", in.Code, budget.CurrencyPatch{PerBase: in.PerBase, TransferFeePct: in.TransferFeePct}))
+			id, err := h.id(in.Budget)
+			if err != nil {
+				return nil, err
+			}
+			return sum(h.app.SetCurrency(ctx, id, in.Code, budget.CurrencyPatch{PerBase: in.PerBase, Source: in.Source, TransferFeePct: in.TransferFeePct, CashOutFeePct: in.CashOutFeePct}))
+		})
+	tool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
+		func(ctx context.Context, in RatesIn) (any, error) {
+			id, err := h.id(in.Budget)
+			if err != nil {
+				return nil, err
+			}
+			v, updates, err := h.app.RefreshRates(ctx, id, in.Codes)
+			if err != nil {
+				if len(updates) > 0 {
+					return nil, fmt.Errorf("%w; per currency: %+v", err, updates)
+				}
+				return nil, err
+			}
+			return map[string]any{"rate_updates": updates, "budget": summarize(v)}, nil
 		})
 	tool(s, "update_settings", "Change budget settings (name, start_month, months, savings_start, extra_to_debt_pct, debt_strategy). Returns the updated budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
