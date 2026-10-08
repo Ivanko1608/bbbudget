@@ -2,6 +2,7 @@ package budget
 
 import (
 	"fmt"
+	"math/big"
 
 	"bbbudget/internal/money"
 )
@@ -45,12 +46,17 @@ type Report struct {
 	Currencies []CurrencyReport `json:"currencies"`
 }
 
-// CurrencyReport is a foreign currency as a UI shows it: "1 BTC = €73,957.31".
+// CurrencyReport is a foreign currency as a UI shows it: "1 BTC = €73,957.31",
+// "1,000 KRW = €0.61".
 type CurrencyReport struct {
 	Code   string `json:"code"`
 	Crypto bool   `json:"crypto"`
-	// BasePerUnit is one unit of the currency in base, at the mid rate.
-	BasePerUnit money.Money `json:"base_per_unit"`
+	// Units is the smallest power of ten of the currency worth at least a
+	// tenth of a unit of base (1 for BTC or USD, 1,000 for KRW), so BaseValue
+	// keeps two significant digits instead of rounding to nothing.
+	Units money.Decimal `json:"units"`
+	// BaseValue is Units of the currency in base, at the mid rate.
+	BaseValue money.Money `json:"base_value"`
 }
 
 // Analyze compiles, projects and summarises a budget.
@@ -87,8 +93,8 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	r.Currencies = []CurrencyReport{}
 	for _, c := range p.Doc.Currencies {
 		cur, _ := p.Currency(c.Code)
-		one, _ := money.FromDecimal(money.DecimalFromInt(1), cur) // 1 always fits
-		r.Currencies = append(r.Currencies, CurrencyReport{c.Code, cur.Crypto, p.ToBase(one, money.HalfEven)})
+		units, value := p.unitValue(cur)
+		r.Currencies = append(r.Currencies, CurrencyReport{c.Code, cur.Crypto, units, value})
 	}
 	t := Totals{Income: money.Zero(p.Base), Expenses: money.Zero(p.Base), DebtPayments: money.Zero(p.Base), Saved: money.Zero(p.Base)}
 	for _, m := range pr.Months {
@@ -124,4 +130,20 @@ func describeSchedule(p *Plan, s Schedule) string {
 		txt += " until " + p.MonthLabel(*s.End)
 	}
 	return txt
+}
+
+// unitValue finds the smallest 10^k units of cur worth at least 0.1 in base.
+func (p *Plan) unitValue(cur money.Currency) (money.Decimal, money.Money) {
+	enough := big.NewRat(1, 10)
+	units := int64(1)
+	m, _ := money.FromDecimal(money.DecimalFromInt(1), cur) // 1 always fits
+	v := p.ToBase(m, money.HalfEven)
+	for v.Rat().Cmp(enough) < 0 && units < MaxAmountMajor {
+		next, err := money.FromDecimal(money.DecimalFromInt(units*10), cur)
+		if err != nil {
+			break
+		}
+		units, v = units*10, p.ToBase(next, money.HalfEven)
+	}
+	return money.DecimalFromInt(units), v
 }

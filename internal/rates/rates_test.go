@@ -238,3 +238,37 @@ func TestCoinGeckoRejectedKeyIsExplained(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestCacheRemembersMisses(t *testing.T) {
+	var hits atomic.Int32
+	c := NewCache(&ECBProvider{URL: serve(t, ecbXML, &hits).URL}, time.Hour)
+	for range 3 {
+		q, err := c.Quotes(context.Background(), "EUR", []string{"USD", "BTC"}) // the ECB has no BTC
+		if err != nil || len(q) != 1 {
+			t.Fatal(q, err)
+		}
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("%d fetches: a code the provider lacks must not force a refetch", hits.Load())
+	}
+	// A failed request is not cached as "missing".
+	failing := NewCache(Fixed{ID: "x", Err: errors.New("down")}, time.Hour)
+	failing.Quotes(context.Background(), "EUR", []string{"USD"})
+	if len(failing.entries) != 0 {
+		t.Fatal("cached a failure")
+	}
+}
+
+func TestChainReportsOutageForMissingCodes(t *testing.T) {
+	ecb := &ECBProvider{URL: serve(t, ecbXML, nil).URL}
+	down := &CurrencyAPIProvider{URLs: []string{serve(t, "", nil).URL + "/%s.json"}}
+	q, err := Chain{ID: Auto, Providers: []Provider{ecb, down}}.Quotes(context.Background(), "EUR", []string{"USD", "BTC"})
+	var pe *PartialError
+	if !errors.As(err, &pe) || q["USD"].From != ECB || len(q) != 1 {
+		t.Fatalf("want USD plus a PartialError, got %v %v", q, err)
+	}
+	// Everything priced: an outage further down the chain doesn't matter.
+	if _, err := (Chain{ID: Auto, Providers: []Provider{ecb, down}}).Quotes(context.Background(), "EUR", []string{"USD"}); err != nil {
+		t.Fatal(err)
+	}
+}

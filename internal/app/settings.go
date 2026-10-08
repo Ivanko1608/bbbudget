@@ -55,7 +55,14 @@ type AutoRefreshStatus struct {
 type autoState struct {
 	mu     sync.Mutex
 	status AutoRefreshStatus
+	// retrySoon is set when the last run fetched nothing but had failures
+	// (the network wasn't up yet, a provider was down): try again after
+	// retryAfter instead of a whole interval.
+	retrySoon bool
 }
+
+// retryAfter is how soon an auto-refresh that fetched nothing is retried.
+const retryAfter = 10 * time.Minute
 
 // AutoRefresh returns the last automatic refresh.
 func (a *App) AutoRefresh() AutoRefreshStatus {
@@ -75,9 +82,12 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 	}
 	every := s.Interval()
 	a.auto.mu.Lock()
-	last := a.auto.status.LastRun
+	last, wait := a.auto.status.LastRun, every
+	if a.auto.retrySoon {
+		wait = min(every, retryAfter)
+	}
 	a.auto.mu.Unlock()
-	if every == 0 || !s.FetchRates || (!last.IsZero() && a.Now().Sub(last) < every) {
+	if every == 0 || !s.FetchRates || (!last.IsZero() && a.Now().Sub(last) < wait) {
 		return false, nil
 	}
 	list, err := a.List(ctx)
@@ -103,6 +113,7 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 	}
 	a.auto.mu.Lock()
 	a.auto.status = st
+	a.auto.retrySoon = st.Updated == 0 && len(st.Failures) > 0
 	a.auto.mu.Unlock()
 	return true, nil
 }

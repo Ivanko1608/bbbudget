@@ -106,6 +106,10 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	if out, err := runCLI(t, "rates", "home", "-only", "usd", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
 		t.Fatalf("offline dry run: %s", out)
 	}
+	// Dry runs check currencies exactly like real runs.
+	if out, err := runCLI(t, "rates", "home", "-only", "XYZ", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
+		t.Fatalf("dry run accepted an unknown currency: %s", out)
+	}
 
 	// A broken settings file is reported, not silently replaced by defaults.
 	os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)

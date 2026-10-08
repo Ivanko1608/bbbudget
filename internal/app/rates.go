@@ -77,7 +77,8 @@ func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([
 		}
 	}
 	q, err := p.Quotes(ctx, base, codes)
-	if err != nil {
+	var partial *rates.PartialError
+	if err != nil && !errors.As(err, &partial) {
 		return nil, &RateError{err}
 	}
 	out := make([]RateUpdate, len(codes))
@@ -85,6 +86,8 @@ func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([
 		out[i] = RateUpdate{Code: c, Source: source}
 		if v, ok := q[c]; ok {
 			out[i].New, out[i].From, out[i].Date = money.RoundSignificant(v.PerBase, rateDigits), v.From, v.Date
+		} else if partial != nil {
+			out[i].Error = fmt.Sprintf("could not get a %s rate right now (%v); try again later", c, partial.Err)
 		} else {
 			out[i].Error = fmt.Sprintf("%s has no %s rate for %s", source, c, base)
 		}
@@ -94,13 +97,77 @@ func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([
 
 // RefreshRates fetches fresh rates for a budget's currencies and saves them.
 // With no codes it refreshes every currency whose source isn't manual. Naming
-// a manual currency refreshes it anyway and switches it to the default source. Currencies
-// that fail keep their old rate and are reported with Error set; if all fail
-// nothing is saved and a *RateError is returned.
+// a manual currency refreshes it anyway and switches it to the default source.
+// Currencies that fail keep their old rate and are reported with Error set; if
+// all fail nothing is saved and a *RateError is returned. A currency edited
+// while its rate was being fetched (say, a rate typed by hand) is left as the
+// edit made it.
 func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*View, []RateUpdate, error) {
+	r, targets, updates, err := a.fetchRates(ctx, id, codes)
+	if err != nil || len(targets) == 0 {
+		if err != nil {
+			return nil, updates, err
+		}
+		v, err := view(r)
+		return v, updates, err
+	}
+	fetched := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
+	for _, c := range r.Budget.Currencies {
+		fetched[c.Code] = c
+	}
+	var skipped map[string]bool
+	saved, err := a.Store.Update(ctx, id, store.AnyRevision, func(cur budget.Budget) (budget.Budget, error) {
+		if cur.BaseCurrency != r.Budget.BaseCurrency {
+			return budget.Budget{}, fmt.Errorf("the base currency changed to %s while rates were fetched; refresh again", cur.BaseCurrency)
+		}
+		skipped = map[string]bool{}
+		var ops []budget.Op
+		for i, u := range updates {
+			if u.Error != "" {
+				continue
+			}
+			j := slices.IndexFunc(cur.Currencies, func(c budget.CurrencyRate) bool { return c.Code == u.Code })
+			if j < 0 || changedSince(fetched[u.Code], cur.Currencies[j]) {
+				skipped[u.Code] = true
+				continue
+			}
+			src := targets[i].Source
+			ops = append(ops, budget.NewOp("set_currency", u.Code, budget.CurrencyPatch{PerBase: &updates[i].New, Source: &src, RateDate: &updates[i].Date, RateFrom: &updates[i].From}))
+		}
+		return budget.Apply(cur, ops...)
+	})
+	if err != nil {
+		return nil, updates, err
+	}
+	for i, u := range updates {
+		if skipped[u.Code] {
+			updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
+		}
+	}
+	v, err := view(saved)
+	return v, updates, err
+}
+
+// PreviewRates is RefreshRates without saving: the same currencies, sources
+// and providers, so a dry run shows exactly what a refresh would do.
+func (a *App) PreviewRates(ctx context.Context, id string, codes []string) ([]RateUpdate, error) {
+	_, _, updates, err := a.fetchRates(ctx, id, codes)
+	return updates, err
+}
+
+// changedSince reports whether a currency's rate or source was edited.
+func changedSince(was, now budget.CurrencyRate) bool {
+	return was.Source != now.Source || was.PerBase.Cmp(now.PerBase) != 0
+}
+
+// fetchRates picks the currencies to refresh and fetches them, outside any
+// store lock (the network can be slow), one request per source. targets[i]
+// is the currency (with the source it is fetched from) behind updates[i].
+// It fails only if nothing at all could be fetched.
+func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.Record, []budget.CurrencyRate, []RateUpdate, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
-		return nil, nil, err
+		return r, nil, nil, err
 	}
 	b := r.Budget
 	var targets []budget.CurrencyRate
@@ -115,7 +182,7 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 			code = strings.ToUpper(strings.TrimSpace(code))
 			i := slices.IndexFunc(b.Currencies, func(c budget.CurrencyRate) bool { return c.Code == code })
 			if i < 0 {
-				return nil, nil, &budget.NoMatchError{Kind: "currency", Ref: code}
+				return r, nil, nil, &budget.NoMatchError{Kind: "currency", Ref: code}
 			}
 			c := b.Currencies[i]
 			if c.IsManual() {
@@ -125,16 +192,14 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 		}
 	}
 	if len(targets) == 0 {
-		v, err := view(r)
-		return v, []RateUpdate{}, err
+		return r, nil, []RateUpdate{}, nil
 	}
 	if s, err := a.Settings(); err != nil {
-		return nil, nil, err
+		return r, nil, nil, err
 	} else if !s.FetchRates {
-		return nil, nil, ErrRatesOff
+		return r, nil, nil, ErrRatesOff
 	}
 
-	// Fetch outside the store lock (the network can be slow), one request per source.
 	bySource := map[string][]string{}
 	for _, c := range targets {
 		bySource[c.Source] = append(bySource[c.Source], c.Code)
@@ -154,41 +219,21 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 			got[u.Code] = u
 		}
 	}
-	updates := make([]RateUpdate, 0, len(targets))
-	var ops []budget.Op
-	for _, c := range targets {
+	updates := make([]RateUpdate, len(targets))
+	ok := false
+	for i, c := range targets {
 		u := got[c.Code]
 		u.Code, u.Source, u.Old = c.Code, c.Source, c.PerBase
-		if u.Error == "" {
-			src := c.Source
-			ops = append(ops, budget.NewOp("set_currency", c.Code, budget.CurrencyPatch{PerBase: &u.New, Source: &src, RateDate: &u.Date, RateFrom: &u.From}))
-		}
-		updates = append(updates, u)
+		updates[i] = u
+		ok = ok || u.Error == ""
 	}
-	if len(ops) == 0 {
+	if !ok {
 		if len(fetchErrs) > 0 {
-			return nil, updates, &RateError{errors.Join(fetchErrs...)}
+			return r, nil, updates, &RateError{errors.Join(fetchErrs...)}
 		}
-		return nil, updates, &RateError{errors.New(updates[0].Error)}
+		return r, nil, updates, &RateError{errors.New(updates[0].Error)}
 	}
-
-	saved, err := a.Store.Update(ctx, id, store.AnyRevision, func(cur budget.Budget) (budget.Budget, error) {
-		if cur.BaseCurrency != b.BaseCurrency {
-			return budget.Budget{}, fmt.Errorf("the base currency changed to %s while rates were fetched; refresh again", cur.BaseCurrency)
-		}
-		var keep []budget.Op
-		for _, op := range ops { // a currency removed meanwhile stays removed
-			if slices.ContainsFunc(cur.Currencies, func(c budget.CurrencyRate) bool { return c.Code == op.Target }) {
-				keep = append(keep, op)
-			}
-		}
-		return budget.Apply(cur, keep...)
-	})
-	if err != nil {
-		return nil, updates, err
-	}
-	v, err := view(saved)
-	return v, updates, err
+	return r, targets, updates, nil
 }
 
 // SetCurrency adds or edits a currency. A new currency without a per_base,
@@ -196,6 +241,9 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 // (a new currency gets the default source from the settings).
 func (a *App) SetCurrency(ctx context.Context, id, code string, patch budget.CurrencyPatch) (*View, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
+	if patch.Source != nil && *patch.Source == "" {
+		patch.Source = nil // "" is "not given", not a silent "manual" on a fetched rate
+	}
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err

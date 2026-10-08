@@ -3,13 +3,16 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
+	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 )
 
@@ -154,5 +157,94 @@ func TestQuoteRejectsBadInput(t *testing.T) {
 		if _, err := a.Quote(context.Background(), c.base, c.source, []string{c.code}); !errors.Is(err, ErrBadInput) {
 			t.Errorf("%v: want ErrBadInput, got %v", c, err)
 		}
+	}
+}
+
+// hook is a provider that runs a function mid-fetch, like a user editing the
+// budget while a slow request is in flight.
+type hook struct {
+	rates.Provider
+	during func()
+}
+
+func (h hook) Quotes(ctx context.Context, base string, codes []string) (map[string]rates.Quote, error) {
+	h.during()
+	return h.Provider.Quotes(ctx, base, codes)
+}
+
+func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD", "CHF"}); err != nil { // both auto now
+		t.Fatal(err)
+	}
+	typed := money.MustDecimal("1.05")
+	a.Rates[rates.Auto] = hook{a.Rates[rates.Auto], func() {
+		if _, err := a.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_currency", "USD", budget.CurrencyPatch{PerBase: &typed})}); err != nil {
+			t.Error(err)
+		}
+	}}
+	_, updates, err := a.RefreshRates(ctx, "home", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd := currency(t, a, "USD")
+	if usd.PerBase.String() != "1.05" || usd.Source != budget.SourceManual {
+		t.Fatalf("the typed rate was overwritten: %+v", usd)
+	}
+	for _, u := range updates {
+		if (u.Code == "USD") != (u.Error != "") {
+			t.Errorf("%s: %q", u.Code, u.Error)
+		}
+	}
+	if currency(t, a, "CHF").RateFrom != rates.ECB {
+		t.Fatal("CHF should still update")
+	}
+}
+
+func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("currency-api")})
+	before, _ := a.Get(ctx, "home")
+	preview, err := a.PreviewRates(ctx, "home", []string{"USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := a.Get(ctx, "home"); after.Revision != before.Revision {
+		t.Fatal("preview saved")
+	}
+	_, real, err := a.RefreshRates(ctx, "home", []string{"USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same source as the real refresh: the default from settings, not plain auto.
+	if preview[0].Source != "currency-api" || fmt.Sprintf("%+v", preview[0]) != fmt.Sprintf("%+v", real[0]) {
+		t.Fatalf("preview %+v vs refresh %+v", preview[0], real[0])
+	}
+	if _, err := a.PreviewRates(ctx, "home", []string{"XYZ"}); err == nil {
+		t.Fatal("unknown currency accepted by preview")
+	}
+}
+
+func TestEmptySourceMeansDefault(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	empty := ""
+	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{Source: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	if c := currency(t, a, "BTC"); c.Source != budget.SourceAuto || c.IsManual() {
+		t.Fatalf("a fetched rate must not be saved as manual: %+v", c)
+	}
+}
+
+func TestOutageIsNotReportedAsUnsupported(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	ecb := a.Rates[rates.ECB]
+	a.Rates[rates.Auto] = rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, rates.Fixed{ID: rates.CurrencyAPI, Err: errors.New("HTTP 503")}}}
+	q, err := a.Quote(ctx, "EUR", "auto", []string{"USD", "BTC"})
+	if err != nil {
+		t.Fatalf("USD was fetched, so this is not a total failure: %v", err)
+	}
+	if q[0].Error != "" || !strings.Contains(q[1].Error, "try again") || !strings.Contains(q[1].Error, "503") {
+		t.Fatalf("%+v", q)
 	}
 }

@@ -16,13 +16,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -263,7 +261,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		var updates []app.RateUpdate
 		if *dry {
-			updates, err = dryRunRates(ctx, a, id, codes)
+			updates, err = a.PreviewRates(ctx, id, codes)
 		} else {
 			_, updates, err = a.RefreshRates(ctx, id, codes)
 		}
@@ -395,34 +393,6 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 		}
 	}
 	return p, nil
-}
-
-// dryRunRates quotes the currencies RefreshRates would update, saving nothing.
-func dryRunRates(ctx context.Context, a *app.App, id string, codes []string) ([]app.RateUpdate, error) {
-	v, err := a.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	bySource := map[string][]string{}
-	old := map[string]budget.CurrencyRate{}
-	for _, c := range v.Budget.Currencies {
-		if (len(codes) == 0 && !c.IsManual()) || slices.Contains(codes, c.Code) {
-			bySource[c.Source] = append(bySource[c.Source], c.Code)
-			old[c.Code] = c
-		}
-	}
-	var out []app.RateUpdate
-	for _, src := range slices.Sorted(maps.Keys(bySource)) {
-		q, err := a.Quote(ctx, v.Budget.BaseCurrency, src, bySource[src])
-		if err != nil {
-			return out, err
-		}
-		for _, u := range q {
-			u.Old = old[u.Code].PerBase
-			out = append(out, u)
-		}
-	}
-	return out, nil
 }
 
 func printRates(w io.Writer, updates []app.RateUpdate) {

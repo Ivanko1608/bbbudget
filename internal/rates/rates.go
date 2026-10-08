@@ -112,8 +112,17 @@ func parseRate(s string) (*big.Rat, bool) {
 	return r, true
 }
 
+// PartialError comes with the quotes a Chain did get when a provider failed
+// and codes are still unpriced: those may exist but be unreachable right now,
+// which is different from no provider knowing them.
+type PartialError struct{ Err error }
+
+func (e *PartialError) Error() string { return e.Err.Error() }
+func (e *PartialError) Unwrap() error { return e.Err }
+
 // Chain asks each provider in turn for the codes still missing. It fails only
-// if every provider failed; partial answers are returned as they are.
+// if every provider failed. If some failed and codes are still missing, the
+// quotes it has come with a *PartialError.
 type Chain struct {
 	ID        string
 	Providers []Provider
@@ -146,11 +155,16 @@ func (c Chain) Quotes(ctx context.Context, base string, codes []string) (map[str
 	if len(out) == 0 && len(errs) == len(c.Providers) {
 		return nil, errors.Join(errs...)
 	}
+	if len(errs) > 0 && len(out) < len(codes) {
+		return out, &PartialError{errors.Join(errs...)}
+	}
 	return out, nil
 }
 
 // Cache remembers quotes for TTL, so refreshing several budgets (or clicking
-// twice) doesn't hit the provider each time. Safe for concurrent use.
+// twice) doesn't hit the provider each time. It also remembers which codes
+// the provider answered without (the ECB has no BTC), so asking for those
+// doesn't refetch either. Failed requests are not cached. Safe for concurrent use.
 type Cache struct {
 	Provider
 	TTL time.Duration
@@ -161,8 +175,9 @@ type Cache struct {
 }
 
 type cached struct {
-	q  Quote
-	at time.Time
+	q    Quote
+	at   time.Time
+	miss bool // the provider answered, without this code
 }
 
 // NewCache wraps p.
@@ -177,7 +192,9 @@ func (c *Cache) Quotes(ctx context.Context, base string, codes []string) (map[st
 	c.mu.Lock()
 	for _, code := range codes {
 		if e, ok := c.entries[base+"/"+code]; ok && now.Sub(e.at) < c.TTL {
-			out[code] = e.q
+			if !e.miss {
+				out[code] = e.q
+			}
 		} else {
 			missing = append(missing, code)
 		}
@@ -192,9 +209,12 @@ func (c *Cache) Quotes(ctx context.Context, base string, codes []string) (map[st
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, v := range q {
-		c.entries[base+"/"+k] = cached{v, now}
-		out[k] = v
+	for _, k := range missing {
+		v, ok := q[k]
+		c.entries[base+"/"+k] = cached{q: v, at: now, miss: !ok}
+		if ok {
+			out[k] = v
+		}
 	}
 	return out, nil
 }

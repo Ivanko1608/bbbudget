@@ -35,6 +35,7 @@ type LinePatch struct {
 
 // CurrencyPatch edits a currency. Setting per_base without a source makes the
 // rate manual (a typed rate would otherwise be overwritten by the next refresh).
+// A manual rate carries no fetch date or provider.
 type CurrencyPatch struct {
 	PerBase        *money.Decimal `json:"per_base,omitempty"`
 	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty"`
@@ -46,7 +47,7 @@ type CurrencyPatch struct {
 
 func (v CurrencyPatch) apply(c *CurrencyRate) {
 	if v.PerBase != nil && v.Source == nil {
-		c.Source, c.RateDate, c.RateFrom = SourceManual, "", ""
+		c.Source = SourceManual
 	}
 	setIf(&c.PerBase, v.PerBase)
 	setIf(&c.TransferFeePct, v.TransferFeePct)
@@ -54,6 +55,9 @@ func (v CurrencyPatch) apply(c *CurrencyRate) {
 	setIf(&c.Source, v.Source)
 	setIf(&c.RateDate, v.RateDate)
 	setIf(&c.RateFrom, v.RateFrom)
+	if c.IsManual() {
+		c.RateDate, c.RateFrom = "", ""
+	}
 }
 
 type SettingsPatch struct {

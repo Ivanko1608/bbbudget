@@ -83,17 +83,22 @@ func TestTypedRateBecomesManual(t *testing.T) {
 
 func TestReportCurrencies(t *testing.T) {
 	b := cryptoBudget()
-	b.Currencies = append(b.Currencies, CurrencyRate{Code: "USD", PerBase: d("1.1186"), TransferFeePct: d("0")})
+	b.Currencies = append(b.Currencies,
+		CurrencyRate{Code: "USD", PerBase: d("1.1186"), TransferFeePct: d("0")},
+		CurrencyRate{Code: "KRW", PerBase: d("1642.5"), TransferFeePct: d("0")})
 	r := mustReport(t, b)
-	if len(r.Currencies) != 2 {
+	if len(r.Currencies) != 3 {
 		t.Fatalf("%+v", r.Currencies)
 	}
-	// 1 BTC at 0.00001 per € is €100,000; 1 USD at 1.1186 per € is €0.89 (0.8939…, half-even).
-	if c := r.Currencies[0]; c.Code != "BTC" || !c.Crypto || c.BasePerUnit.String() != "100000.00" {
-		t.Errorf("BTC: %+v", c)
-	}
-	if c := r.Currencies[1]; c.Code != "USD" || c.Crypto || c.BasePerUnit.String() != "0.89" {
-		t.Errorf("USD: %+v", c)
+	for i, want := range []struct{ code, units, value string }{
+		{"BTC", "1", "100000.00"}, // 1 / 0.00001
+		{"USD", "1", "0.89"},      // 1 / 1.1186 = 0.8939…
+		{"KRW", "1000", "0.61"},   // 1 KRW would show as €0.00: 1,000 / 1642.5 = 0.6088…
+	} {
+		c := r.Currencies[i]
+		if c.Code != want.code || c.Units.String() != want.units || c.BaseValue.String() != want.value || c.Crypto != (want.code == "BTC") {
+			t.Errorf("%s: %s units = %s, want %s = %s", c.Code, c.Units, c.BaseValue, want.units, want.value)
+		}
 	}
 	if r := mustReport(t, blank()); r.Currencies == nil {
 		t.Error("currencies must be [] rather than null in JSON")
@@ -181,4 +186,22 @@ func TestCryptoShortfallWarns(t *testing.T) {
 		}
 	}
 	t.Fatal("no crypto_income insight")
+}
+
+func TestManualRateHasNoFetchMetadata(t *testing.T) {
+	b := cryptoBudget()
+	b.Currencies[0].RateDate, b.Currencies[0].RateFrom = "2026-10-01", "ecb"
+	for _, p := range []CurrencyPatch{
+		{Source: strp(SourceManual)},
+		{PerBase: decp("0.00002"), Source: strp(SourceManual)},
+		{PerBase: decp("0.00002")},
+	} {
+		nb, err := Apply(b, NewOp("set_currency", "BTC", p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := nb.Currencies[0]; c.RateDate != "" || c.RateFrom != "" || !c.IsManual() {
+			t.Errorf("%+v left %+v", p, c)
+		}
+	}
 }

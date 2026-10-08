@@ -161,3 +161,33 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 		t.Fatalf("key header %q", k)
 	}
 }
+
+func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	a.Now = func() time.Time { return now }
+	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD"}); err != nil {
+		t.Fatal(err)
+	}
+	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
+	down := rates.Fixed{ID: rates.Auto, Err: errors.New("network is unreachable")}
+	up := a.Rates[rates.Auto]
+	a.Rates[rates.Auto] = down
+
+	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 0 {
+		t.Fatal("first run should run and fail")
+	}
+	now = now.Add(9 * time.Minute)
+	if ran, _ := a.RefreshIfDue(ctx); ran {
+		t.Fatal("retried too soon")
+	}
+	a.Rates[rates.Auto] = up
+	now = now.Add(time.Minute)
+	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 1 {
+		t.Fatalf("a failed run must be retried after 10 minutes, not a day: %+v", a.AutoRefresh())
+	}
+	now = now.Add(time.Hour)
+	if ran, _ := a.RefreshIfDue(ctx); ran {
+		t.Fatal("after a good run the full interval applies again")
+	}
+}

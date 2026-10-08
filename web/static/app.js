@@ -20,6 +20,8 @@ const S = {
   report: null,
   saving: false,
   pending: false, // local edits not yet sent
+  fetching: 0, // rate fetches in flight: saving waits so a placeholder rate is never stored
+  notice: null, // an error to keep showing after the next save, instead of "Saved"
   timer: null,
   wi: [], // what-if draft ops
 };
@@ -116,6 +118,7 @@ function edited({ structural = false } = {}) {
 
 async function save() {
   S.timer = null;
+  if (S.fetching) { S.timer = setTimeout(save, SAVE_DELAY); return; }
   if (S.saving) return; // the in-flight save re-checks S.pending when it ends
   S.saving = true;
   S.pending = false;
@@ -126,7 +129,9 @@ async function save() {
     S.report = v.report;
     showIssues([]);
     renderOutputs();
-    status(`Saved · revision ${S.revision}`);
+    if (S.notice) status(S.notice, true);
+    else status(`Saved · revision ${S.revision}`);
+    S.notice = null;
     loadCompare();
   } catch (e) {
     if (e.status === 422) {
@@ -318,6 +323,23 @@ function onEditorInput(e) {
   if (path === "months" || path.endsWith(".every")) v = parseInt(v, 10);
   const cur = path.match(/^currencies\.(\d+)\.(\w+)$/);
   if (cur && cur[2] === "cash_out_fee_pct" && v === "") v = undefined;
+  if (cur && (cur[2] === "code" || cur[2] === "source")) {
+    // Selects fire input then change: act once, on change.
+    if (e.type !== "change") return;
+    const c = S.budget.currencies[+cur[1]];
+    const field = cur[2], prev = c[field];
+    c[field] = v;
+    if (!isManual(c)) {
+      // A new code or source needs its rate before anything is saved: the old
+      // rate would be wrong for it. If the fetch fails, the change is undone.
+      S.pending = true;
+      renderEditors();
+      fetchRate(+cur[1], () => { c[field] = prev; });
+      return;
+    }
+    edited({ structural: true });
+    return;
+  }
   if (cur && cur[2] === "per_base") {
     // A typed rate is a manual rate; otherwise the next refresh would overwrite it.
     const c = S.budget.currencies[+cur[1]];
@@ -333,16 +355,17 @@ function onEditorInput(e) {
   if (path.endsWith(".every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   setPath(S.budget, path, v);
   edited({ structural: el.hasAttribute("data-structural") && e.type === "change" });
-  // A new code or source needs a fresh rate (once: selects fire input and change).
-  if (cur && (cur[2] === "code" || cur[2] === "source") && e.type === "change" && !isManual(S.budget.currencies[+cur[1]])) fetchRate(+cur[1]);
 }
 
 // fetchRate quotes one currency from its source and puts the rate into the
-// document, which then saves as any other edit.
-async function fetchRate(i) {
+// document, which then saves as any other edit. Saving waits meanwhile. If no
+// rate comes back, undo() reverts the change that needed it, so a currency is
+// never stored with a placeholder or another currency's rate.
+async function fetchRate(i, undo) {
   const c = S.budget.currencies[i];
   const src = isManual(c) ? "auto" : c.source;
   status(`Fetching the ${c.code} rate…`);
+  S.fetching++;
   try {
     const [q] = await api("GET", `/api/rates?base=${encodeURIComponent(S.budget.base_currency)}&codes=${encodeURIComponent(c.code)}&source=${encodeURIComponent(src)}`);
     if (S.budget.currencies[i] !== c) { // the row changed meanwhile
@@ -353,9 +376,13 @@ async function fetchRate(i) {
     Object.assign(c, { per_base: q.new, source: src, rate_date: q.date, rate_from: q.from });
     edited({ structural: true });
   } catch (e) {
-    c.source = "manual";
+    const code = c.code;
+    undo();
+    S.notice = `Couldn't get the ${code} rate (${e.message}), so nothing changed. To use ${code} anyway, set “Rate from” to “Typed by hand” and type its rate.`;
     edited({ structural: true });
-    status(`No rate for ${c.code}: ${e.message}. Type it by hand.`, true);
+    status(S.notice, true);
+  } finally {
+    S.fetching--;
   }
 }
 
@@ -386,13 +413,14 @@ async function refreshAll() {
 
 function renderRateNotes() {
   if (!S.report || !S.budget) return;
-  const unit = Object.fromEntries((S.report.currencies || []).map((c) => [c.code, c.base_per_unit]));
+  const unit = Object.fromEntries((S.report.currencies || []).map((c) => [c.code, c]));
   const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: S.report.base_currency, maximumFractionDigits: 2 });
   document.querySelectorAll("[data-rate]").forEach((el) => {
     const c = S.budget.currencies.find((x) => x.code === el.dataset.rate);
     const u = unit[el.dataset.rate];
     if (!c) return;
-    const worth = u ? `1 ${c.code} = ${fmt.format(Number(u.amount))}` : ""; // display only
+    const n = u ? new Intl.NumberFormat("en-GB").format(Number(u.units)) : "";
+    const worth = u ? `${n} ${c.code} = ${fmt.format(Number(u.base_value.amount))}` : ""; // display only
     const from = isManual(c) ? "typed by hand" : c.rate_date ? `${({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from} rate of ${c.rate_date}` : "not fetched yet";
     el.textContent = [worth, from].filter(Boolean).join(" · ");
   });
@@ -421,7 +449,11 @@ const ACTIONS = {
     // the rate loads; fetchRate's edited() then saves it.
     S.pending = true;
     renderEditors();
-    fetchRate(b.currencies.length - 1);
+    const row = b.currencies[b.currencies.length - 1];
+    fetchRate(b.currencies.length - 1, () => {
+      const at = S.budget.currencies.indexOf(row);
+      if (at >= 0) S.budget.currencies.splice(at, 1);
+    });
   },
   "refresh-rates"() { refreshAll(); },
   "del-currency"(i) { S.budget.currencies.splice(i, 1); edited({ structural: true }); },
