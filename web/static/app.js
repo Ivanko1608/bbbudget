@@ -111,6 +111,7 @@ function setView(view, { focus = false } = {}) {
     if (on && focus) tab.focus();
   }
   for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;
+  $("#appAdd").hidden = view !== "lines";
   $("#minibar").hidden = view === "overview" || !S.report;
   setRoute();
   if (view === "overview") drawChart(); // it can't measure itself while hidden
@@ -237,6 +238,7 @@ function hideToast() { $("#toast").hidden = true; clearTimeout(toastTimer); }
 
 // removeWithUndo deletes list[i] and offers to put it back where it was.
 function removeWithUndo(list, i, what) {
+  closeSheet();
   const arr = S.budget[list];
   const [item] = arr.splice(i, 1);
   edited({ structural: true });
@@ -290,7 +292,8 @@ const EVERY = [[0, "One-off"], [1, "Monthly"], [2, "Every 2 months"], [3, "Quart
 function renderEditors() {
   const b = S.budget;
   // Re-rendering replaces the inputs: keep the focus where it was.
-  const active = document.activeElement?.dataset?.path;
+  const ae = document.activeElement?.dataset || {};
+  const active = { path: ae.path, row: ae.row };
 
   document.title = `${b.name} · Budget planner`;
   document.querySelectorAll(".baseCode").forEach((el) => { el.textContent = b.base_currency; });
@@ -307,49 +310,62 @@ function renderEditors() {
     select("Debt strategy", "debt_strategy", strategies),
   ].join("");
 
-  const allCodes = (S.meta?.currencies || []).filter((c) => c !== b.base_currency);
-  const codeOpts = allCodes.map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
-  $("#currencies").innerHTML = b.currencies.map((c, i) => `<div class="row row-cur" data-row="currencies.${i}">
-      ${select("Code", `currencies.${i}.code`, codeOpts, { structural: true })}
-      ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
-      ${field(`per 1 ${b.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
-      ${field("Payment loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
-      ${field("Cash-out loss %", `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
-      ${del("del-currency", i, c.code)}
-      <p class="rate-note muted" data-rate="${esc(c.code)}"></p>
-    </div>`).join("") || `<p class="muted">Only ${esc(b.base_currency)} so far.</p>`;
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
-
   renderLines();
-
-  $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" data-row="debts.${i}" style="box-shadow:inset 3px 0 0 var(--debt)">
-      ${field("Name", `debts.${i}.name`)}
-      ${select("Currency", `debts.${i}.currency`, currencyOptions())}
-      ${field("Balance", `debts.${i}.balance`, { type: "decimal" })}
-      ${field("APR %", `debts.${i}.apr_pct`, { type: "decimal" })}
-      ${field("Minimum / month", `debts.${i}.min_payment`, { type: "decimal" })}
-      ${del("del-debt", i, d.name)}
-    </div>`).join("") || `<p class="muted">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
-
-  $("#goals").innerHTML = b.goals.map((g, i) => `<div class="row row-goal" data-row="goals.${i}" style="box-shadow:inset 3px 0 0 var(--save)">
-      ${field("Goal", `goals.${i}.name`)}
-      ${field(`Target (${b.base_currency})`, `goals.${i}.target`, { type: "decimal" })}
-      ${del("del-goal", i, g.name)}
-    </div>`).join("") || `<p class="muted">No goals yet.</p>`;
-
-  $("#categories").innerHTML = b.categories.map((c, i) => `<div class="row row-cat" data-row="categories.${i}">
-      ${field("Label", `categories.${i}.label`)}
-      ${select("Kind", `categories.${i}.kind`, [["expense", "Expense"], ["income", "Income"]], { structural: true })}
-      <label class="f">Colour<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>
-      ${del("del-category", i, c.label)}
-    </div>`).join("");
-
-  if (S.sheet != null && $("#sheet").open) renderSheet();
+  renderItems();
+  if (S.sheet && $("#sheet").open) renderSheet();
   renderWhatIf();
   renderLineNumbers();
   renderRateNotes();
+  restoreFocus(active);
+}
 
-  if (active) document.querySelector(`[data-path="${CSS.escape(active)}"]`)?.focus();
+// restoreFocus puts the focus back on the same field or row after a re-render.
+function restoreFocus(active) {
+  if (!active) return;
+  const sel = active.path ? `[data-path="${CSS.escape(active.path)}"]` : active.row ? `button[data-row="${CSS.escape(active.row)}"]` : "";
+  if (sel) document.querySelector(sel)?.focus();
+}
+
+const CHEVRON = `<svg class="ico chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+
+// itemRow is one readable row that opens the editor sheet for that item.
+const itemRow = ({ kind, i, name, meta = "", metaAttrs = "", value = "", color = "var(--line)" }) =>
+  `<button type="button" class="line item" data-row="${kind}.${i}" data-action="edit" data-kind="${kind}" data-i="${i}" style="box-shadow:inset 3px 0 0 ${esc(color)}">
+    <span class="line-main"><span class="name">${esc(name)}</span><span class="meta" ${metaAttrs}>${meta}</span></span>
+    <span class="val">${value}</span>${CHEVRON}</button>`;
+
+// renderItems draws debts, goals, currencies and categories as lists. Their
+// texts come partly from the report, so this also runs after every save.
+function renderItems() {
+  const b = S.budget, r = S.report;
+  const debtRep = Object.fromEntries((r?.debts || []).map((d) => [d.id, d]));
+  const goalRep = Object.fromEntries((r?.goals || []).map((g) => [g.id, g]));
+  const crypto = new Set(S.meta?.crypto || []);
+
+  $("#debts").innerHTML = b.debts.map((d, i) => {
+    const rep = debtRep[d.id];
+    const when = rep ? (rep.paid_off_label ? `paid off ${esc(rep.paid_off_label)}` : parseFloat(d.balance) > 0 ? "not paid off in this window" : "") : "";
+    return itemRow({ kind: "debts", i, name: d.name, color: "var(--debt)",
+      meta: [`${esc(d.apr_pct)}% APR`, `min ${esc(fmtAmount(d.min_payment, d.currency))} ${esc(d.currency)}/mo`, when].filter(Boolean).join(" · "),
+      value: `${esc(fmtAmount(d.balance, d.currency))} <small>${esc(d.currency)}</small>` });
+  }).join("") || `<p class="muted pad">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
+
+  $("#goals").innerHTML = b.goals.map((g, i) => {
+    const rep = goalRep[g.id];
+    const meta = !rep ? "" : rep.already_met ? "already covered by savings" : rep.reached_label ? `reached ${esc(rep.reached_label)}` : rep.needed_per_month ? `needs ${esc(rep.needed_per_month.display)}/mo` : "";
+    return itemRow({ kind: "goals", i, name: g.name, color: "var(--save)", meta, value: `${esc(fmtAmount(g.target, b.base_currency))} <small>${esc(b.base_currency)}</small>` });
+  }).join("") || `<p class="muted pad">No goals yet.</p>`;
+
+  $("#currencies").innerHTML = b.currencies.map((c, i) => itemRow({ kind: "currencies", i,
+    name: crypto.has(c.code) ? `${c.code} · crypto` : c.code, metaAttrs: `data-rate="${esc(c.code)}"`,
+    value: `${esc(c.per_base)} <small>per ${esc(b.base_currency)}</small>` })).join("") || `<p class="muted pad">Only ${esc(b.base_currency)} so far.</p>`;
+
+  $("#categories").innerHTML = b.categories.map((c, i) => {
+    const n = b.lines.filter((l) => l.category === c.id).length;
+    return itemRow({ kind: "categories", i, name: c.label, color: c.color || "var(--line)",
+      meta: `${c.kind === "income" ? "Income" : "Cost"} · ${n} line${n === 1 ? "" : "s"}` });
+  }).join("");
 }
 
 // ---------- lines: grouped list + editor sheet ----------
@@ -375,11 +391,12 @@ function renderLines() {
       ${lines.map((i) => {
         const l = b.lines[i];
         return `<div class="line" data-row="lines.${i}" style="box-shadow:inset 3px 0 0 ${esc(cat.color || "var(--line)")}">
-          <button type="button" class="line-main" data-action="edit-line" data-i="${i}" aria-label="Edit ${esc(l.name)}">
+          <button type="button" class="line-main" data-action="edit" data-kind="lines" data-i="${i}" aria-label="Edit ${esc(l.name)}">
             <span class="name">${esc(l.name)}</span><span class="meta">${esc(rep[l.id]?.schedule_text || "")}</span></button>
           <label class="amt"><span class="sr">Amount for ${esc(l.name)}</span>
             <input data-path="lines.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(fmtAmount(l.amount, l.currency))}">
             <span class="cur">${esc(l.currency)}</span></label>
+          <span class="chev-hit" data-action="edit" data-kind="lines" data-i="${i}">${CHEVRON}</span>
           <span class="base" data-base="${esc(l.id)}"></span>
         </div>`;
       }).join("")}
@@ -416,13 +433,13 @@ function renderLineNumbers() {
     el.innerHTML = parts.join(" + ");
   });
   // Schedule texts come from the report too.
-  document.querySelectorAll(".line").forEach((row) => {
+  document.querySelectorAll('#lines .line[data-row^="lines."]').forEach((row) => {
     const l = S.budget.lines[+row.dataset.row.split(".")[1]];
     const meta = row.querySelector(".meta");
     if (l && meta) meta.textContent = byId[l.id]?.schedule_text || "";
   });
-  if ($("#sheet").open) {
-    const l = S.budget.lines[S.sheet];
+  if ($("#sheet").open && S.sheet?.kind === "lines") {
+    const l = S.budget.lines[S.sheet.i];
     const r = l && byId[l.id];
     const el = $("#sheetBase");
     if (el) el.textContent = r && r.amount.currency !== base
@@ -440,39 +457,92 @@ function categorySelect(path) {
   return `<label class="f">Category<select data-path="${esc(path)}" data-kind="text" data-structural>${group("income", "Income")}${group("expense", "Costs")}</select></label>`;
 }
 
+// SHEETS describes the editor for each kind of item: its title, fields and
+// the delete action. Fields use the same data-path inputs as everywhere else.
+const SHEETS = {
+  lines: {
+    noun: "line", title: (l) => l.name,
+    body(l, i) {
+      const sch = l.schedule;
+      return `${field("Name", `lines.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field("Amount", `lines.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
+        ${select("Currency", `lines.${i}.currency`, currencyOptions(), { structural: true })}
+        ${categorySelect(`lines.${i}.category`)}
+        ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
+        <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+        ${sch.every === 0 ? "<span></span>" :
+          `<label class="f">Until (optional)<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+        <p class="base" id="sheetBase"></p>`;
+    },
+  },
+  debts: {
+    noun: "debt", title: (d) => d.name,
+    body(d, i) {
+      return `${field("Name", `debts.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field("Balance", `debts.${i}.balance`, { type: "decimal" })}
+        ${select("Currency", `debts.${i}.currency`, currencyOptions(), { structural: true })}
+        ${field("APR %", `debts.${i}.apr_pct`, { type: "decimal" })}
+        ${field("Minimum / month", `debts.${i}.min_payment`, { type: "decimal" })}
+        <p class="base">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>`;
+    },
+  },
+  goals: {
+    noun: "goal", title: (g) => g.name,
+    body(g, i) {
+      return `${field("Goal", `goals.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field(`Target (${S.budget.base_currency})`, `goals.${i}.target`, { type: "decimal" })}`;
+    },
+  },
+  currencies: {
+    noun: "currency", title: (c) => c.code,
+    body(c, i) {
+      const crypto = new Set(S.meta?.crypto || []);
+      const codes = (S.meta?.currencies || []).filter((x) => x !== S.budget.base_currency).map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
+      return `${select("Code", `currencies.${i}.code`, codes, { structural: true })}
+        ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
+        ${field(`Units per 1 ${S.budget.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
+        ${field("Payment loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
+        ${field("Cash-out loss %", `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
+        <p class="base" data-rate="${esc(c.code)}"></p>
+        <p class="base">Payment loss is added to every payment in this currency. Cash-out loss is taken off income in it, such as fees for selling crypto. Typing a rate makes it manual.</p>`;
+    },
+  },
+  categories: {
+    noun: "category", title: (c) => c.label,
+    body(c, i) {
+      return `${field("Label", `categories.${i}.label`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${select("Kind", `categories.${i}.kind`, [["expense", "Cost"], ["income", "Income"]], { structural: true })}
+        <label class="f">Colour<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>`;
+    },
+  },
+};
+
 function renderSheet() {
-  const i = S.sheet;
-  const l = S.budget.lines[i];
-  if (!l) { closeSheet(); return; }
-  const sch = l.schedule;
-  $("#sheetTitle").textContent = l.name || "Line";
-  $("#sheetBody").innerHTML = `<div class="sheet-body">
-      ${field("Name", `lines.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-      ${field("Amount", `lines.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
-      ${select("Currency", `lines.${i}.currency`, currencyOptions(), { structural: true })}
-      ${categorySelect(`lines.${i}.category`)}
-      ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
-      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
-      ${sch.every === 0 ? "<span></span>" :
-        `<label class="f">Until (optional)<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
-      <p class="base" id="sheetBase"></p>
-    </div>
+  const { kind, i } = S.sheet;
+  const item = S.budget[kind]?.[i];
+  const def = SHEETS[kind];
+  if (!item || !def) { closeSheet(); return; }
+  $("#sheetTitle").textContent = def.title(item) || def.noun;
+  $("#sheetBody").innerHTML = `<div class="sheet-body">${def.body(item, i)}</div>
     <div class="sheet-foot">
-      <button type="button" class="danger" data-action="del-line" data-i="${i}">Delete line</button>
+      <button type="button" class="danger" data-action="delete-item" data-kind="${kind}" data-i="${i}">Delete ${def.noun}</button>
       <button type="button" class="primary" data-action="close-sheet">Done</button>
     </div>`;
   renderLineNumbers();
+  renderRateNotes();
 }
 
-function openSheet(i, { focusName = false } = {}) {
-  S.sheet = i;
+function openSheet(kind, i, { focusFirst = false } = {}) {
+  S.sheet = { kind, i };
   renderSheet();
   const d = $("#sheet");
   if (!d.open) d.showModal();
   renderLineNumbers(); // the base-currency note needs the sheet open
-  const first = focusName ? d.querySelector(`[data-path="lines.${i}.name"]`) : d.querySelector(`[data-path="lines.${i}.amount"]`);
+  // A new item starts on its name; an existing line on its amount.
+  const first = focusFirst ? d.querySelector("#sheetBody input, #sheetBody select")
+    : kind === "lines" ? d.querySelector(`[data-path="lines.${i}.amount"]`) : null;
   first?.focus();
-  if (focusName) first?.select();
+  if (focusFirst && first?.select) first.select();
 }
 function closeSheet() {
   const d = $("#sheet");
@@ -541,13 +611,13 @@ function onEditorInput(e) {
   }
   if (path.endsWith(".every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   setPath(S.budget, path, v);
-  // The same line can be edited in the list and in the sheet: keep both in step.
-  if (/^lines\.\d+\.(amount|name)$/.test(path)) {
+  // The same item can be edited in its list and in the sheet: keep both in step.
+  const item = path.match(/^(\w+)\.(\d+)\.(amount|name|label)$/);
+  if (item) {
     document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((o) => { if (o !== el) o.value = v; });
-    if (path.endsWith(".name")) {
-      const i = +path.split(".")[1];
-      document.querySelectorAll(`[data-row="lines.${i}"] .name`).forEach((n) => { n.textContent = v; });
-      if (S.sheet === i) $("#sheetTitle").textContent = v || "Line";
+    if (item[3] !== "amount") {
+      document.querySelectorAll(`[data-row="${item[1]}.${item[2]}"] .name`).forEach((n) => { n.textContent = v; });
+      if (S.sheet?.kind === item[1] && S.sheet.i === +item[2]) $("#sheetTitle").textContent = v || SHEETS[item[1]]?.noun || "";
     }
   }
   edited({ structural: el.hasAttribute("data-structural") && e.type === "change" });
@@ -629,13 +699,22 @@ const ACTIONS = {
     if (!cat) { setView("setup"); status("Add a category first.", true); return; }
     b.lines.push({ id: newId("New line", b.lines), name: "New line", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
-    openSheet(b.lines.length - 1, { focusName: true });
+    openSheet("lines", b.lines.length - 1, { focusFirst: true });
   },
-  "edit-line"(i) { openSheet(i); },
+  edit(i, el) { openSheet(el.dataset.kind, i); },
   "close-sheet"() { closeSheet(); },
-  "del-line"(i) {
-    closeSheet();
-    removeWithUndo("lines", i, `“${S.budget.lines[i].name}”`);
+  "delete-item"(i, el) {
+    const kind = el.dataset.kind;
+    const item = S.budget[kind][i];
+    if (kind === "currencies") {
+      const user = [...S.budget.lines, ...S.budget.debts].find((x) => x.currency === item.code);
+      if (user) { status(`${item.code} is still used by “${user.name}”.`, true); return; }
+    }
+    if (kind === "categories" && S.budget.lines.some((l) => l.category === item.id)) {
+      status(`“${item.label}” is still used by a line.`, true);
+      return;
+    }
+    removeWithUndo(kind, i, kind === "currencies" ? item.code : `“${item.name || item.label}”`);
   },
   "add-currency"() {
     const b = S.budget;
@@ -646,48 +725,37 @@ const ACTIONS = {
     const fetch = S.prefs.fetch_rates && S.prefs.default_rate_source !== "manual";
     // The rate starts at 1 for a moment, until fetchRate fills in the real one.
     b.currencies.push({ code, per_base: "1", transfer_fee_pct: "0", source: fetch ? S.prefs.default_rate_source : "manual" });
-    if (!fetch) { edited({ structural: true }); return; }
+    const i = b.currencies.length - 1;
+    if (!fetch) { edited({ structural: true }); openSheet("currencies", i, { focusFirst: true }); return; }
     // Pending now, so poll() can't replace the budget (and drop this row) while
     // the rate loads; fetchRate's edited() then saves it.
     S.pending = true;
     renderEditors();
-    const row = b.currencies[b.currencies.length - 1];
-    fetchRate(b.currencies.length - 1, () => {
+    openSheet("currencies", i, { focusFirst: true });
+    const row = b.currencies[i];
+    fetchRate(i, () => {
       const at = S.budget.currencies.indexOf(row);
       if (at >= 0) S.budget.currencies.splice(at, 1);
     });
   },
   "refresh-rates"() { refreshAll(); },
-  "del-currency"(i) {
-    const code = S.budget.currencies[i].code;
-    const user = [...S.budget.lines, ...S.budget.debts].find((x) => x.currency === code);
-    if (user) { status(`${code} is still used by “${user.name}”.`, true); return; }
-    removeWithUndo("currencies", i, code);
-  },
   "add-debt"() {
     const b = S.budget;
     b.debts.push({ id: newId("Debt", b.debts), name: "Debt", currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
     edited({ structural: true });
-    focusLast("#debts input[data-path$='.name']");
+    openSheet("debts", b.debts.length - 1, { focusFirst: true });
   },
-  "del-debt"(i) { removeWithUndo("debts", i, `“${S.budget.debts[i].name}”`); },
   "add-goal"() {
     const b = S.budget;
     b.goals.push({ id: newId("Goal", b.goals), name: "Goal", target: "1000" });
     edited({ structural: true });
-    focusLast("#goals input[data-path$='.name']");
+    openSheet("goals", b.goals.length - 1, { focusFirst: true });
   },
-  "del-goal"(i) { removeWithUndo("goals", i, `“${S.budget.goals[i].name}”`); },
   "add-category"() {
     const b = S.budget;
     b.categories.push({ id: newId("Category", b.categories), label: "Category", kind: "expense", color: "#7a6ff0" });
     edited({ structural: true });
-    focusLast("#categories input[data-path$='.label']");
-  },
-  "del-category"(i) {
-    const c = S.budget.categories[i];
-    if (S.budget.lines.some((l) => l.category === c.id)) { status(`“${c.label}” is still used by a line.`, true); return; }
-    removeWithUndo("categories", i, `“${c.label}”`);
+    openSheet("categories", b.categories.length - 1, { focusFirst: true });
   },
   "all-insights"() { S.allInsights = !S.allInsights; renderInsights(); },
   new() { openNewDialog(); },
@@ -759,6 +827,7 @@ function renderSummary() {
   // Flash the summary when an edit changed it, so the effect is noticed.
   const changed = S.lastSummary && S.lastSummary !== html;
   S.lastSummary = html;
+  if (changed) announce(`${neg ? "Short" : "Left"} in ${month}: ${p.m0.left.display.replace("−", "")}. Savings in ${p.n} months: ${p.last.savings.display}.`);
   for (const el of [$("#railSummary"), $("#mobileSummary")]) {
     el.innerHTML = html;
     if (changed) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
@@ -769,17 +838,35 @@ function renderSummary() {
   mb.hidden = S.view === "overview";
 }
 
-const FX_RE = /^(fx_risk_|transfer_loss_|cash_out_loss_)/;
-const TONE_RANK = { warn: 0, good: 1, info: 2 };
+// announce tells screen readers what an edit changed, once, after typing pauses.
+let announceTimer = null;
+function announce(text) {
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => { $("#announce").textContent = text; }, 1200);
+}
 
-// renderInsights ranks warnings first, folds the per-currency notes into one
+const FX_RE = /^(fx_risk_|transfer_loss_|cash_out_loss_)/;
+// Risks: things that can make the plan go wrong even when nothing is wrong yet.
+const RISK_RE = /^(crypto_income|negative_savings|debt_min_)/;
+
+// relevance ranks what to show first: warnings, then risks (crypto income,
+// currency exposure), then good news, then the rest. Within a rank the
+// server's order is kept.
+function relevance(x) {
+  if (x.tone === "warn") return 0;
+  if (x.group || RISK_RE.test(x.id || "")) return 1;
+  if (x.tone === "good") return 2;
+  return 3;
+}
+
+// renderInsights ranks by relevance, folds the per-currency notes into one
 // "Currency exposure" card, and shows three until asked for all.
 function renderInsights() {
   const r = S.report;
   const fx = r.insights.filter((x) => FX_RE.test(x.id));
   const items = r.insights.filter((x) => !FX_RE.test(x.id)).map((x) => ({ ...x }));
   if (fx.length) items.push({ tone: fx.some((x) => x.tone === "warn") ? "warn" : "info", group: fx });
-  items.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+  items.sort((a, b) => relevance(a) - relevance(b));
   const shown = S.allInsights ? items : items.slice(0, 3);
   const card = (x) => x.group
     ? `<details class="ins ${esc(x.tone)}"><summary><span><b>Currency exposure</b> · ${x.group.length} note${x.group.length === 1 ? "" : "s"} on rates and fees</span></summary>
@@ -812,15 +899,11 @@ function renderOutputs() {
   $("#legend").innerHTML = segs.map((s) => `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(s[1].display)}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
 
   renderInsights();
-
-  const last = r.months[r.months.length - 1];
-  const goal = r.goals[0];
-  const debt = r.debts.find((d) => parseFloat(d.start_balance.amount) > 0);
-  $("#stats").innerHTML = `
-    <div><span class="muted">Savings after ${r.months.length} months</span><b>${esc(last.savings.display)}</b></div>
-    <div><span class="muted">Interest paid</span><b>${esc(r.totals.total_interest_base.display)}</b></div>
-    ${goal ? `<div><span class="muted">${esc(goal.name)} (${esc(goal.target.display)})</span><b>${goal.already_met ? "Already met" : goal.reached_label ? "Reached " + esc(goal.reached_label) : "Not in this window"}</b></div>` : ""}
-    ${debt ? `<div><span class="muted">${esc(debt.name)} paid off</span><b>${debt.paid_off_label ? esc(debt.paid_off_label) : "Not in this window"}</b></div>` : ""}`;
+  // Debts, goals and currencies show report figures (payoff dates, rates).
+  const ae = document.activeElement?.dataset || {};
+  renderItems();
+  renderRateNotes(); // fills the currency rows just drawn
+  if (ae.row) restoreFocus({ row: ae.row });
   drawChart();
 
   const hasDebt = r.debts.length > 0;
@@ -919,7 +1002,8 @@ function renderWhatIf() {
       ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Line"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
       ${o.kind === "remove" ? "<span></span>" : `<label class="f">New value<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
       ${del("del-wi", i, "change")}
-    </div>`).join("") || `<p class="muted">Add a change to see what it would do.</p>`;
+    </div>`).join("") || `<p class="muted">Add a change, for example rent down to 1,000 or a different exchange rate, then preview it.</p>`;
+  $("#previewBtn").disabled = !S.wi.length;
   S.wi.forEach((o, i) => { const t = document.querySelector(`[data-wi="${i}"][data-k="target"]`); if (t) { if (o.target) t.value = o.target; o.target = t.value; } });
 }
 
@@ -1075,7 +1159,20 @@ tablist.addEventListener("keydown", (e) => {
 
 const sheet = $("#sheet");
 sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); }); // tap outside
-sheet.addEventListener("close", () => { S.sheet = null; renderLines(); renderLineNumbers(); showIssues([]); });
+sheet.addEventListener("close", () => {
+  const was = S.sheet;
+  S.sheet = null;
+  renderLines();
+  renderItems();
+  renderLineNumbers();
+  renderRateNotes();
+  // Back to the row that was edited, for keyboard users.
+  if (was) document.querySelector(`[data-row="${was.kind}.${was.i}"] .line-main, button[data-row="${was.kind}.${was.i}"]`)?.focus({ preventScroll: true });
+});
+
+const isField = (el) => el?.matches?.("input:not([type=color]):not([type=checkbox]), select, textarea");
+document.addEventListener("focusin", (e) => document.body.classList.toggle("typing", isField(e.target)));
+document.addEventListener("focusout", () => setTimeout(() => document.body.classList.toggle("typing", isField(document.activeElement)), 0));
 
 let resizeTimer = null;
 window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawChart, 120); });

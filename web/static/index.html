@@ -26,13 +26,15 @@
     <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
   </div>
   <div class="appbar-actions">
+    <button id="appAdd" type="button" class="icon-btn compact-only" data-action="add-line" aria-label="Add a line" hidden>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
     <button id="newBtn" type="button" class="desktop-only">New</button>
     <a class="btn desktop-only" href="settings.html">Settings</a>
     <details class="menu">
       <summary aria-label="More actions"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></summary>
       <div class="menu-body">
-        <button type="button" data-action="new">New budget</button>
-        <a class="menu-link" href="settings.html" aria-label="App settings">App settings</a>
+        <button type="button" class="compact-only" data-action="new">New budget</button>
+        <a class="menu-link compact-only" href="settings.html" aria-label="App settings">App settings</a>
         <button id="exportBtn" type="button">Download JSON</button>
         <label class="filebtn">Import JSON<input id="importFile" type="file" accept="application/json,.json"></label>
         <button id="deleteBtn" type="button" class="danger">Delete this budget</button>
@@ -54,7 +56,7 @@
 <div id="workspace" class="layout" hidden>
   <!-- Always visible on wide screens, so every edit's effect stays in view. -->
   <aside class="rail" aria-label="Summary">
-    <div class="card summary" id="railSummary" aria-live="polite"></div>
+    <div class="card summary" id="railSummary"></div>
   </aside>
 
   <div class="content">
@@ -86,7 +88,6 @@
       </section>
       <section class="card" aria-labelledby="h-proj">
         <h2 id="h-proj">The next <span id="monthsOut"></span> months</h2>
-        <div class="stats" id="stats"></div>
         <div class="chart-wrap" id="chartWrap">
           <svg id="chart" role="img" aria-label="Projected savings and debt"></svg>
           <div class="tip" id="chartTip" hidden></div>
@@ -102,27 +103,24 @@
     <!-- Lines -->
     <section class="view" id="view-lines" role="tabpanel" aria-labelledby="tab-lines" hidden>
       <div class="view-head">
-        <div>
-          <h2>Income and costs</h2>
-          <p class="muted">Select a line to edit it. Amounts are exact; ≈ shows the monthly amount in <span class="baseCode"></span>.</p>
-        </div>
-        <button type="button" class="primary" data-action="add-line">Add a line</button>
+        <h2>Income and costs</h2>
+        <p class="muted">Change an amount right in the list, or open a line for the rest. ≈ is the monthly amount in <span class="baseCode"></span>.</p>
       </div>
       <div id="lines"></div>
+      <button class="add" type="button" data-action="add-line">+ Add a line</button>
     </section>
 
     <!-- Plan: debts and goals -->
     <section class="view" id="view-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
       <section class="card" aria-labelledby="h-debt">
         <h2 id="h-debt">Debts</h2>
-        <p class="muted">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>
-        <div id="debts"></div>
-        <button class="add" type="button" data-action="add-debt">Add a debt</button>
+        <div id="debts" class="items"></div>
+        <button class="add" type="button" data-action="add-debt">+ Add a debt</button>
       </section>
       <section class="card" aria-labelledby="h-goals">
         <h2 id="h-goals">Savings goals</h2>
-        <div id="goals"></div>
-        <button class="add" type="button" data-action="add-goal">Add a goal</button>
+        <div id="goals" class="items"></div>
+        <button class="add" type="button" data-action="add-goal">+ Add a goal</button>
       </section>
     </section>
 
@@ -133,8 +131,8 @@
         <p class="muted">See what a change would do without touching the real budget. Save it as a scenario to compare side by side.</p>
         <div id="wiOps"></div>
         <div class="row-actions">
-          <button type="button" data-action="add-wi">Add a change</button>
-          <button type="button" class="primary" data-action="preview-wi">Preview</button>
+          <button type="button" data-action="add-wi">+ Add a change</button>
+          <button type="button" class="primary" id="previewBtn" data-action="preview-wi" disabled>Preview</button>
         </div>
         <div id="wiResult"></div>
       </section>
@@ -153,17 +151,17 @@
       </section>
       <section class="card" aria-labelledby="h-cur">
         <h2 id="h-cur">Currencies</h2>
-        <p class="muted">Rate is units per 1 of the base currency. Pick where it comes from: the ECB's official rate, market data (which also covers crypto), or type it yourself. Payment loss is added to every payment in that currency; cash-out loss is taken off income in it, such as fees for selling crypto.</p>
-        <div id="currencies"></div>
+        <p class="muted">Each rate comes from the ECB's official rate, market data (which also covers crypto), or is typed by hand.</p>
+        <div id="currencies" class="items"></div>
+        <button class="add" type="button" data-action="add-currency">+ Add a currency</button>
         <div class="row-actions">
-          <button type="button" data-action="add-currency">Add a currency</button>
           <button type="button" id="refreshRates" data-action="refresh-rates">Update rates now</button>
         </div>
       </section>
       <section class="card" aria-labelledby="h-cat">
         <h2 id="h-cat">Categories</h2>
-        <div id="categories"></div>
-        <button class="add" type="button" data-action="add-category">Add a category</button>
+        <div id="categories" class="items"></div>
+        <button class="add" type="button" data-action="add-category">+ Add a category</button>
       </section>
       <section class="card">
         <h2>App</h2>
@@ -177,7 +175,9 @@
 </div>
 
 <!-- Phones: the effect of an edit stays visible on every tab but Overview. -->
-<div class="minibar" id="minibar" aria-live="polite" hidden></div>
+<div class="minibar" id="minibar" hidden></div>
+<!-- Screen readers hear only what an edit changed, once (not the whole summary three times). -->
+<p class="sr" id="announce" role="status" aria-live="polite"></p>
 
 <!-- Line editor: a bottom sheet on phones, a dialog on wide screens. -->
 <dialog id="sheet" class="sheet" aria-labelledby="sheetTitle">
