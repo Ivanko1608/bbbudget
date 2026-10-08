@@ -29,16 +29,83 @@ A web UI, a CLI and an MCP server in a single Go binary that runs on your machin
 - 🤖 **Talk to your budget.** A built-in MCP server lets Claude (or any MCP client) read and edit budgets: *"what if rent goes up to 1200?"*
 - 📦 **One static binary.** The UI is embedded. No Node, no database, no Docker.
 
+## Install
+
+Packages for each release are on the [Releases](https://github.com/Ivanko1608/bbbudget/releases) page, for x86_64 and arm64. Each one installs a single static binary plus a systemd user service.
+
+**Debian / Ubuntu**
+
+```
+sudo apt install ./bbbudget_<version>_amd64.deb
+```
+
+**Fedora / RHEL / openSUSE**
+
+```
+sudo dnf install ./bbbudget-<version>-1.x86_64.rpm      # openSUSE: sudo zypper install ./bbbudget-…rpm
+```
+
+**Arch Linux**: from the AUR (`yay -S bbbudget`), or install the release package directly:
+
+```
+sudo pacman -U ./bbbudget-<version>-1-x86_64.pkg.tar.zst
+```
+
+**Nix / NixOS**: try it without installing:
+
+```
+nix run github:Ivanko1608/bbbudget -- serve
+```
+
+Or add it to your system flake:
+
+```nix
+{
+  inputs.bbbudget.url = "github:Ivanko1608/bbbudget";
+  inputs.bbbudget.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { nixpkgs, bbbudget, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        bbbudget.nixosModules.default
+        { programs.bbbudget.enable = true; }   # autoStart = true; starts it for every user at login
+      ];
+    };
+  };
+}
+```
+
+There's also `overlays.default` if you'd rather use `pkgs.bbbudget` with home-manager or anything else.
+
+**From source** (Go 1.25+, the MCP SDK's minimum):
+
+```
+make build    # ./bin/bbbudget
+```
+
+### Run it in the background
+
+Every package ships a systemd **user** service. It runs as you, on your own budgets, and only listens on `127.0.0.1`:
+
+```
+systemctl --user enable --now bbbudget     # then open http://127.0.0.1:8080
+```
+
+To change its flags, run `systemctl --user edit bbbudget` and clear the command before setting a new one (on NixOS the binary is `/run/current-system/sw/bin/bbbudget`):
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/bbbudget serve -budget home
+```
+
 ## Quick start
 
 ```
-make build
-./bin/bbbudget init home -template example     # a fictional household to explore
-./bin/bbbudget serve            # http://127.0.0.1:8080  (MCP at /mcp)
-./bin/bbbudget report home      # projection + insights in the terminal
+bbbudget init home -template example     # a fictional household to explore
+bbbudget serve                           # http://127.0.0.1:8080  (MCP at /mcp)
+bbbudget report home                     # projection + insights in the terminal
 ```
-
-Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27).
 
 ## Privacy
 
@@ -177,6 +244,8 @@ make hooks     # enable the pre-commit leak check in .githooks/
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
+
+Releases are cut by pushing a `vX.Y.Z` tag: [GoReleaser](.goreleaser.yaml) builds the tarballs and the `.deb`, `.rpm` and Arch packages and attaches them to a GitHub release. Try it locally with `goreleaser release --snapshot --clean`. The Nix package lives in [`flake.nix`](flake.nix), and the AUR recipe in [`packaging/aur`](packaging/aur/PKGBUILD).
 
 The tests include:
 
