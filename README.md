@@ -1,6 +1,34 @@
+<div align="center">
+
 # bbbudget
 
-Plan and explore household budgets across currencies: a projection engine with exact money, a web UI, a CLI and an MCP server so Claude (or any MCP client) can read and edit your budgets.
+**A budget planner that does exact money math and never phones home.**
+
+Multi-currency household budgets, month-by-month projections, debt payoff and what-if scenarios.
+A web UI, a CLI and an MCP server in a single Go binary that runs on your machine and keeps your numbers there.
+
+![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)
+![Telemetry: none](https://img.shields.io/badge/telemetry-none-1f8a5b)
+![Runs on: localhost](https://img.shields.io/badge/runs%20on-localhost-2b59c3)
+![MCP ready](https://img.shields.io/badge/MCP-ready-7a6ff0)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="bbbudget web UI showing a fictional household's monthly split and insights" src="docs/screenshot-light.png" width="760">
+</picture>
+
+</div>
+
+## Why bbbudget
+
+- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory, and the app makes no outbound requests.
+- 🧮 **Exact to the cent.** No floating point anywhere. Rounding is explicit and pessimistic, so the plan never looks better than reality.
+- 💱 **Built for messy, multi-currency lives.** Get paid in one currency, pay rent in another and tuition in a third. bbbudget prices in the FX rate *and* the transfer fees you lose along the way.
+- 📉 **Debts, goals and what-ifs.** Avalanche or snowball payoff, savings goal ETAs, and scenarios you compare side by side before changing anything.
+- 🤖 **Talk to your budget.** A built-in MCP server lets Claude (or any MCP client) read and edit budgets: *"what if rent goes up to 1200?"*
+- 📦 **One static binary.** The UI is embedded. No Node, no database, no Docker.
+
+## Quick start
 
 ```
 make build
@@ -9,7 +37,18 @@ make build
 ./bin/bbbudget report home      # projection + insights in the terminal
 ```
 
-Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27). One static binary; the UI is embedded.
+Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27).
+
+## Privacy
+
+A budget is about as personal as data gets, so bbbudget is built to keep it on your machine:
+
+- **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
+- **Zero third-party requests.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file.
+- **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
+
+One honest caveat: when you use the MCP server with a hosted AI assistant, the MCP server itself still runs locally, but whatever budget data the assistant reads is sent to that assistant's provider as part of the conversation. If that matters to you, use a local MCP client or stick to the web UI and CLI.
 
 ## What it models
 
@@ -133,6 +172,7 @@ The server binds to 127.0.0.1 and accepts only these requests:
 
 ```
 make check     # gofmt, go vet, go test -race
+make hooks     # enable the pre-commit leak check in .githooks/
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
@@ -144,3 +184,5 @@ The tests include:
 - the store under concurrent writers from two "processes";
 - MCP tools via an in-memory client;
 - an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio.
+
+The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
