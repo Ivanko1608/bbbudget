@@ -11,6 +11,7 @@ A web UI, a CLI and an MCP server in a single Go binary that runs on your machin
 ![Telemetry: none](https://img.shields.io/badge/telemetry-none-1f8a5b)
 ![Runs on: localhost](https://img.shields.io/badge/runs%20on-localhost-2b59c3)
 ![MCP ready](https://img.shields.io/badge/MCP-ready-7a6ff0)
+![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-c2412d)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
@@ -186,3 +187,11 @@ The tests include:
 - an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio.
 
 The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
+
+## License
+
+Copyright (C) 2026 Ivanko1608
+
+bbbudget is free software, licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). You can use, study, modify and share it, but anything you build from it has to stay open source under the same license. That includes running a modified version as a web service: the AGPL's network clause means people using it over a network are entitled to its source too.
+
+The bundled Golos Text font is under the [SIL Open Font License 1.1](web/static/fonts/OFL.txt). Go dependencies keep their own (MIT, Apache-2.0 and BSD) licenses.
