@@ -1,0 +1,127 @@
+// Package budget is the planning domain: the budget document, its validation,
+// the month-by-month projection engine, insight rules and scenarios.
+//
+// A Budget is the editable document (what is stored and sent over the wire;
+// amounts are exact decimal strings). Compile validates it into a Plan, whose
+// amounts are money.Money. Only Plans are ever projected.
+package budget
+
+import "bbbudget/internal/money"
+
+// Category kinds.
+const (
+	KindIncome  = "income"
+	KindExpense = "expense"
+)
+
+// Debt payoff strategies for the extra payment.
+const (
+	StrategyAvalanche = "avalanche" // highest APR first: least interest paid
+	StrategySnowball  = "snowball"  // smallest balance first: fastest first win
+	StrategyListed    = "listed"    // in the order the debts are listed
+)
+
+// Budget is the stored, editable document.
+type Budget struct {
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	BaseCurrency string `json:"base_currency"`
+	// StartMonth is the first projected month, "YYYY-MM".
+	StartMonth string `json:"start_month"`
+	// Months is the projection length.
+	Months int `json:"months"`
+	// SavingsStart is savings already held, in base currency.
+	SavingsStart money.Decimal `json:"savings_start"`
+	// Currencies lists every non-base currency used, with its rate and transfer loss.
+	Currencies []CurrencyRate `json:"currencies"`
+	Categories []Category     `json:"categories"`
+	Lines      []Line         `json:"lines"`
+	Debts      []Debt         `json:"debts"`
+	// ExtraToDebtPct is the percent of each month's positive leftover sent to debts.
+	ExtraToDebtPct money.Decimal `json:"extra_to_debt_pct"`
+	DebtStrategy   string        `json:"debt_strategy"`
+	Goals          []Goal        `json:"goals"`
+	Scenarios      []Scenario    `json:"scenarios"`
+}
+
+// CurrencyRate configures one foreign currency.
+type CurrencyRate struct {
+	Code string `json:"code"`
+	// PerBase is units of this currency per 1 unit of base currency (EUR→USD: "1.08").
+	PerBase money.Decimal `json:"per_base"`
+	// TransferFeePct is the percent lost when paying in this currency (fees, spread).
+	// It is added on top of every outgoing payment in this currency.
+	TransferFeePct money.Decimal `json:"transfer_fee_pct"`
+}
+
+type Category struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Kind is "income" or "expense".
+	Kind  string `json:"kind"`
+	Color string `json:"color,omitempty"`
+}
+
+// Line is one income or cost line.
+type Line struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Amount   money.Decimal `json:"amount"`
+	Currency string        `json:"currency"`
+	Category string        `json:"category"`
+	Schedule Schedule      `json:"schedule"`
+}
+
+// Schedule says in which projection months (0-based) a line applies.
+type Schedule struct {
+	// Start is the first month index the line applies.
+	Start int `json:"start"`
+	// Every is the period in months: 1 = monthly, 3 = quarterly, 12 = yearly, 0 = once (in Start).
+	Every int `json:"every"`
+	// End is the last month index (inclusive); nil = no end.
+	End *int `json:"end,omitempty"`
+}
+
+// Monthly is the common schedule: every month from the start.
+func Monthly() Schedule { return Schedule{Every: 1} }
+
+// Once applies only in month m.
+func Once(m int) Schedule { return Schedule{Start: m} }
+
+// ActiveIn reports whether the schedule applies in month m.
+func (s Schedule) ActiveIn(m int) bool {
+	if m < s.Start || (s.End != nil && m > *s.End) {
+		return false
+	}
+	if s.Every == 0 {
+		return m == s.Start
+	}
+	return (m-s.Start)%s.Every == 0
+}
+
+// Debt is a balance that accrues interest and receives a minimum payment.
+type Debt struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Currency string        `json:"currency"`
+	Balance  money.Decimal `json:"balance"`
+	// APRPct is the yearly interest rate in percent. Interest compounds monthly at APR/12.
+	APRPct money.Decimal `json:"apr_pct"`
+	// MinPayment is paid each month (in the debt's currency) until the balance is zero.
+	MinPayment money.Decimal `json:"min_payment"`
+}
+
+// Goal is a savings target in base currency.
+type Goal struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Target money.Decimal `json:"target"`
+}
+
+// Scenario is a named set of edits applied on top of the budget for comparison.
+type Scenario struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Ops         []Op   `json:"ops"`
+}

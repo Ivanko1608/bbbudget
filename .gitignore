@@ -1,0 +1,10 @@
+/bin/
+*.test
+coverage.out
+
+# Personal data belongs outside the repo (~/.local/share/bbbudget,
+# ~/.config/bbbudget/templates). These catch it if pointed here by mistake.
+/data/
+/templates/
+*.local.yaml
+*.local.json

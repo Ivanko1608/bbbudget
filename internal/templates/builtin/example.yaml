@@ -1,0 +1,29 @@
+# A fictional household showing every feature. It is also the test fixture:
+# changing a number here changes the expected values in the tests.
+name: Example household
+description: Fictional example. Salary in EUR, rent in CHF, school fees in USD with a 2% transfer loss, a one-off holiday and card minimums.
+base_currency: EUR
+months: 12
+savings_start: 0
+extra_to_debt_pct: 50
+debt_strategy: avalanche
+currencies:
+  - {code: CHF, per_base: 0.94, transfer_fee_pct: 0}
+  - {code: USD, per_base: 1.08, transfer_fee_pct: 2}
+categories:
+  - {id: income, label: Income, kind: income, color: "#1f8a5b"}
+  - {id: home, label: Home, kind: expense, color: "#2b59c3"}
+  - {id: education, label: Education, kind: expense, color: "#d99a00"}
+  - {id: travel, label: Travel, kind: expense, color: "#7a6ff0"}
+  - {id: cards, label: Cards, kind: expense, color: "#c2412d"}
+lines:
+  - {id: salary, name: Salary, amount: 3900, currency: EUR, category: income}
+  - {id: rent, name: Rent, amount: 1150, currency: CHF, category: home}
+  - {id: utilities, name: Utilities, amount: 80, currency: EUR, category: home}
+  - {id: groceries, name: Groceries and transport, amount: 550, currency: EUR, category: home}
+  - {id: holiday, name: Summer holiday, amount: 600, currency: EUR, category: travel, schedule: {start: 0, every: 0}}
+  - {id: tuition, name: School tuition, amount: 900, currency: USD, category: education}
+  - {id: supplies, name: School supplies, amount: 45.50, currency: USD, category: education}
+  - {id: card-minimums, name: Card minimum payments, amount: 250, currency: USD, category: cards}
+goals:
+  - {id: emergency, name: Emergency fund, target: 2000}
