@@ -41,6 +41,16 @@ type Report struct {
 	Goals        []GoalStatus  `json:"goals"`
 	Totals       Totals        `json:"totals"`
 	Insights     []Insight     `json:"insights"`
+	// Currencies lists each foreign currency with what one unit is worth.
+	Currencies []CurrencyReport `json:"currencies"`
+}
+
+// CurrencyReport is a foreign currency as a UI shows it: "1 BTC = €73,957.31".
+type CurrencyReport struct {
+	Code   string `json:"code"`
+	Crypto bool   `json:"crypto"`
+	// BasePerUnit is one unit of the currency in base, at the mid rate.
+	BasePerUnit money.Money `json:"base_per_unit"`
 }
 
 // Analyze compiles, projects and summarises a budget.
@@ -66,13 +76,19 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	for _, l := range p.Lines {
 		per := p.PayCost(l.Amt, roundPay)
 		if l.Income {
-			per = p.ToBase(l.Amt, roundReceive)
+			per = p.IncomeValue(l.Amt, roundReceive)
 		}
 		r.Lines = append(r.Lines, LineReport{
 			ID: l.ID, Name: l.Name, Category: l.Category, Income: l.Income, Amount: l.Amt,
 			PerOccurrence: per, MonthlyEquivalent: p.MonthlyEquivalent(l),
 			Schedule: l.Schedule, ScheduleText: describeSchedule(p, l.Schedule),
 		})
+	}
+	r.Currencies = []CurrencyReport{}
+	for _, c := range p.Doc.Currencies {
+		cur, _ := p.Currency(c.Code)
+		one, _ := money.FromDecimal(money.DecimalFromInt(1), cur) // 1 always fits
+		r.Currencies = append(r.Currencies, CurrencyReport{c.Code, cur.Crypto, p.ToBase(one, money.HalfEven)})
 	}
 	t := Totals{Income: money.Zero(p.Base), Expenses: money.Zero(p.Base), DebtPayments: money.Zero(p.Base), Saved: money.Zero(p.Base)}
 	for _, m := range pr.Months {

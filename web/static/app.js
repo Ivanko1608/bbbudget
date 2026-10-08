@@ -12,6 +12,7 @@ const POLL_MS = 3000;
 
 const S = {
   meta: null,
+  prefs: { fetch_rates: true, default_rate_source: "auto" }, // app settings (settings.html)
   list: [],
   id: null,
   revision: 0,
@@ -203,15 +204,25 @@ function currencyOptions() {
   return [S.budget.base_currency, ...S.budget.currencies.map((c) => c.code)].map((c) => [c, c]);
 }
 
+const RATE_SOURCES = [
+  ["manual", "Typed by hand"],
+  ["auto", "Auto: ECB, else market"],
+  ["ecb", "ECB (official)"],
+  ["currency-api", "currency-api (fiat + crypto)"],
+  ["coingecko", "CoinGecko (crypto)"],
+];
+const isManual = (c) => !c.source || c.source === "manual";
+
 const EVERY = [[0, "One-off"], [1, "Monthly"], [2, "Every 2 months"], [3, "Quarterly"], [6, "Every 6 months"], [12, "Yearly"]];
 
 function renderEditors() {
   const b = S.budget;
   $("#title").textContent = b.name;
+  const crypto = new Set(S.meta?.crypto || []);
   const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, s[0].toUpperCase() + s.slice(1)]);
   $("#settings").innerHTML = [
     field("Name", "name"),
-    select("Base currency", "base_currency", (S.meta?.currencies || [b.base_currency]).map((c) => [c, c]), { structural: true }),
+    select("Base currency", "base_currency", (S.meta?.currencies || [b.base_currency]).filter((c) => !crypto.has(c)).map((c) => [c, c]), { structural: true }),
     field("First month", "start_month", { type: "month" }),
     select("Months to project", "months", [[6, "6"], [12, "12"], [24, "24"], [36, "36"], [60, "60"]].concat(
       [6, 12, 24, 36, 60].includes(b.months) ? [] : [[b.months, String(b.months)]])),
@@ -221,12 +232,17 @@ function renderEditors() {
   ].join("");
 
   const allCodes = (S.meta?.currencies || []).filter((c) => c !== b.base_currency);
+  const codeOpts = allCodes.map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
   $("#currencies").innerHTML = b.currencies.map((c, i) => `<div class="row row-cur">
-      ${select("Code", `currencies.${i}.code`, allCodes.map((x) => [x, x]), { structural: true })}
+      ${select("Code", `currencies.${i}.code`, codeOpts, { structural: true })}
+      ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
       ${field(`per 1 ${b.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
-      ${field("Transfer loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
+      ${field("Payment loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
+      ${field("Cash-out loss %", `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
       ${del("del-currency", i, c.code)}
+      <p class="rate-note muted" data-rate="${esc(c.code)}"></p>
     </div>`).join("") || `<p class="muted">Only ${esc(b.base_currency)} so far.</p>`;
+  $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
 
   const cats = b.categories.map((c) => [c.id, `${c.label}${c.kind === "income" ? " (income)" : ""}`]);
   $("#lines").innerHTML = b.lines.map((l, i) => {
@@ -270,6 +286,7 @@ function renderEditors() {
 
   renderWhatIf();
   renderLineBases();
+  renderRateNotes();
 }
 
 function onEditorInput(e) {
@@ -299,9 +316,86 @@ function onEditorInput(e) {
       break;
   }
   if (path === "months" || path.endsWith(".every")) v = parseInt(v, 10);
+  const cur = path.match(/^currencies\.(\d+)\.(\w+)$/);
+  if (cur && cur[2] === "cash_out_fee_pct" && v === "") v = undefined;
+  if (cur && cur[2] === "per_base") {
+    // A typed rate is a manual rate; otherwise the next refresh would overwrite it.
+    const c = S.budget.currencies[+cur[1]];
+    if (!isManual(c)) {
+      c.source = "manual";
+      delete c.rate_date;
+      delete c.rate_from;
+      const sel = document.querySelector(`[data-path="currencies.${cur[1]}.source"]`);
+      if (sel) sel.value = "manual";
+      renderRateNotes();
+    }
+  }
   if (path.endsWith(".every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   setPath(S.budget, path, v);
   edited({ structural: el.hasAttribute("data-structural") && e.type === "change" });
+  // A new code or source needs a fresh rate (once: selects fire input and change).
+  if (cur && (cur[2] === "code" || cur[2] === "source") && e.type === "change" && !isManual(S.budget.currencies[+cur[1]])) fetchRate(+cur[1]);
+}
+
+// fetchRate quotes one currency from its source and puts the rate into the
+// document, which then saves as any other edit.
+async function fetchRate(i) {
+  const c = S.budget.currencies[i];
+  const src = isManual(c) ? "auto" : c.source;
+  status(`Fetching the ${c.code} rate…`);
+  try {
+    const [q] = await api("GET", `/api/rates?base=${encodeURIComponent(S.budget.base_currency)}&codes=${encodeURIComponent(c.code)}&source=${encodeURIComponent(src)}`);
+    if (S.budget.currencies[i] !== c) { // the row changed meanwhile
+      if (S.pending && !S.timer && !S.saving) edited(); // never leave pending stuck
+      return;
+    }
+    if (q.error) throw new Error(q.error);
+    Object.assign(c, { per_base: q.new, source: src, rate_date: q.date, rate_from: q.from });
+    edited({ structural: true });
+  } catch (e) {
+    c.source = "manual";
+    edited({ structural: true });
+    status(`No rate for ${c.code}: ${e.message}. Type it by hand.`, true);
+  }
+}
+
+// refreshAll fetches every non-manual rate on the server and saves them.
+async function refreshAll() {
+  if (!S.prefs.fetch_rates) {
+    status("Fetching rates is turned off in Settings.", true);
+    return;
+  }
+  if (!S.budget.currencies.some((c) => !isManual(c))) {
+    status("Every rate is typed by hand. Pick a “Rate from” source for the ones to keep current.", true);
+    return;
+  }
+  let res;
+  await serverChange(async () => {
+    try {
+      res = await api("POST", `/api/budgets/${encodeURIComponent(S.id)}/rates/refresh`, {});
+    } catch (e) {
+      res = e.data;
+      throw e;
+    }
+  });
+  const ups = res?.rate_updates || [];
+  const changed = ups.filter((u) => !u.error).map((u) => (u.old === u.new ? `${u.code} unchanged` : `${u.code} ${u.old} → ${u.new}`));
+  const failed = ups.filter((u) => u.error).map((u) => u.code);
+  if (changed.length) status(`Rates updated: ${changed.join(", ")}${failed.length ? ` · failed: ${failed.join(", ")}` : ""}`, failed.length > 0);
+}
+
+function renderRateNotes() {
+  if (!S.report || !S.budget) return;
+  const unit = Object.fromEntries((S.report.currencies || []).map((c) => [c.code, c.base_per_unit]));
+  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: S.report.base_currency, maximumFractionDigits: 2 });
+  document.querySelectorAll("[data-rate]").forEach((el) => {
+    const c = S.budget.currencies.find((x) => x.code === el.dataset.rate);
+    const u = unit[el.dataset.rate];
+    if (!c) return;
+    const worth = u ? `1 ${c.code} = ${fmt.format(Number(u.amount))}` : ""; // display only
+    const from = isManual(c) ? "typed by hand" : c.rate_date ? `${({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from} rate of ${c.rate_date}` : "not fetched yet";
+    el.textContent = [worth, from].filter(Boolean).join(" · ");
+  });
 }
 
 const ACTIONS = {
@@ -316,11 +410,20 @@ const ACTIONS = {
   "add-currency"() {
     const b = S.budget;
     const used = new Set([b.base_currency, ...b.currencies.map((c) => c.code)]);
-    const code = (S.meta?.currencies || []).find((c) => !used.has(c));
+    const crypto = new Set(S.meta?.crypto || []);
+    const code = (S.meta?.currencies || []).find((c) => !used.has(c) && !crypto.has(c));
     if (!code) return;
-    b.currencies.push({ code, per_base: "1", transfer_fee_pct: "0" });
-    edited({ structural: true });
+    const fetch = S.prefs.fetch_rates && S.prefs.default_rate_source !== "manual";
+    // The rate starts at 1 for a moment, until fetchRate fills in the real one.
+    b.currencies.push({ code, per_base: "1", transfer_fee_pct: "0", source: fetch ? S.prefs.default_rate_source : "manual" });
+    if (!fetch) { edited({ structural: true }); return; }
+    // Pending now, so poll() can't replace the budget (and drop this row) while
+    // the rate loads; fetchRate's edited() then saves it.
+    S.pending = true;
+    renderEditors();
+    fetchRate(b.currencies.length - 1);
   },
+  "refresh-rates"() { refreshAll(); },
   "del-currency"(i) { S.budget.currencies.splice(i, 1); edited({ structural: true }); },
   "add-debt"() {
     const b = S.budget;
@@ -393,6 +496,7 @@ function renderLineBases() {
 function renderOutputs() {
   const r = S.report;
   if (!r) return;
+  renderRateNotes();
   const m0 = r.months[0];
   const cats = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
   $("#monthName").textContent = m0.label.split(" ")[0];
@@ -622,6 +726,7 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
 (async function init() {
   try {
     S.meta = await api("GET", "/api/meta");
+    S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
     await loadList();
     if (!S.list.length) { status("No budgets yet."); return; }
     let want = decodeURIComponent(location.hash.slice(1));

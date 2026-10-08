@@ -3,6 +3,7 @@ package money
 import (
 	"math"
 	"math/big"
+	"strings"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestDecimalHelpers(t *testing.T) {
 		t.Fatal("Cmp")
 	}
 	third := Decimal{big.NewRat(1, 3)} // non-terminating: rendered at MaxScale, never looping
-	if third.Scale() != MaxScale || third.String() != "0.333333333333" {
+	if third.Scale() != MaxScale || third.String() != "0."+strings.Repeat("3", MaxScale) {
 		t.Fatalf("1/3 = %s", third)
 	}
 	if RoundInt(big.NewRat(5, 2), HalfEven).Int64() != 2 {
@@ -69,7 +70,7 @@ func TestCurrencies(t *testing.T) {
 		if codes[i-1] >= codes[i] {
 			t.Fatal("Codes not sorted")
 		}
-		if c := MustLookup(codes[i]); c.Code != codes[i] || c.String() != codes[i] || c.Digits < 0 || c.Digits > 3 {
+		if c := MustLookup(codes[i]); c.Code != codes[i] || c.String() != codes[i] || c.Digits < 0 || (c.Digits > 3 && !c.Crypto) || c.Digits > 9 {
 			t.Fatalf("bad table entry %+v", c)
 		}
 	}
@@ -122,4 +123,52 @@ func FuzzRounding(f *testing.F) {
 			t.Fatalf("%s: half-even %s is more than 1/2 away", r, he)
 		}
 	})
+}
+
+func TestRoundSignificant(t *testing.T) {
+	for _, c := range []struct {
+		r    *big.Rat
+		sig  int
+		want string
+	}{
+		{big.NewRat(1, 72565), 10, "0.00001378074829"},
+		{big.NewRat(1, 3), 4, "0.3333"},
+		{big.NewRat(2, 3), 4, "0.6667"},
+		{big.NewRat(123456789, 1000), 4, "123457"},
+		{big.NewRat(1186, 1000), 10, "1.186"},
+		{big.NewRat(-5, 100), 3, "-0.05"},
+		{big.NewRat(0, 1), 5, "0"},
+		{new(big.Rat).SetFrac(big.NewInt(1), pow10(19)), 10, "0"}, // below MaxScale
+	} {
+		if got := RoundSignificant(c.r, c.sig).String(); got != c.want {
+			t.Errorf("RoundSignificant(%s, %d) = %s, want %s", c.r, c.sig, got, c.want)
+		}
+	}
+}
+
+func TestCrypto(t *testing.T) {
+	btc := MustLookup("BTC")
+	if !btc.Crypto || btc.Stable || !MustLookup("USDT").Stable || MustLookup("EUR").Crypto {
+		t.Fatal("crypto flags")
+	}
+	m, err := Parse("0.015", btc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Minor() != 1_500_000 || m.Display() != "0.015 BTC" || m.Format() != "0.01500000 BTC" {
+		t.Fatalf("got %d %q %q", m.Minor(), m.Display(), m.Format())
+	}
+	if _, err := Parse("0.000000001", btc); err == nil {
+		t.Fatal("9 places of BTC accepted")
+	}
+	if d := New(120_000_000, MustLookup("USDT")).Display(); d != "120 USDT" {
+		t.Fatal(d)
+	}
+	if d := New(123456, EUR).Display(); d != "€1,235" {
+		t.Fatal(d)
+	}
+	codes := CryptoCodes()
+	if len(codes) == 0 || codes[0] != "ADA" {
+		t.Fatal(codes)
+	}
 }

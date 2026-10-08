@@ -5,10 +5,13 @@ package app
 import (
 	"context"
 	"errors"
+	"net/http"
+	"sync"
 	"time"
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/money"
+	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 	"bbbudget/internal/templates"
 )
@@ -16,15 +19,29 @@ import (
 type App struct {
 	Store     store.Store
 	Templates *templates.Registry
-	Now       func() time.Time
+	// Rates are the exchange-rate providers by source name (see budget.RateSources).
+	Rates map[string]rates.Provider
+	// SettingsPath is the app settings file; "" means defaults, read-only.
+	SettingsPath string
+	Now          func() time.Time
+
+	settingsMu sync.Mutex
+	auto       autoState
 }
 
-// New returns an App. A nil registry means built-in templates only.
+// New returns an App. A nil registry means built-in templates only. Rates
+// come from the public providers in package rates. Set SettingsPath to use
+// a settings file.
 func New(s store.Store, t *templates.Registry) *App {
 	if t == nil {
 		t = templates.Builtin()
 	}
-	return &App{Store: s, Templates: t, Now: time.Now}
+	a := &App{Store: s, Templates: t, Now: time.Now}
+	a.Rates = rates.Registry(&http.Client{Timeout: 20 * time.Second}, func() string {
+		st, _ := a.Settings()
+		return st.CoinGeckoAPIKey
+	})
+	return a
 }
 
 // View is a stored budget together with its computed report.

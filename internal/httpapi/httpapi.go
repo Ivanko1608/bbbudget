@@ -14,6 +14,7 @@ import (
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/money"
+	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 )
 
@@ -28,6 +29,8 @@ type Options struct {
 	// AllowedHosts are accepted Host header names besides localhost/127.0.0.1/::1.
 	AllowedHosts []string
 	Log          *slog.Logger
+	// Paths are shown on the settings page (e.g. "data", "templates", "settings").
+	Paths map[string]string
 }
 
 type server struct {
@@ -43,6 +46,9 @@ func New(a *app.App, opts Options) http.Handler {
 	s := &server{a, opts}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/meta", s.meta)
+	mux.HandleFunc("GET /api/rates", s.quote)
+	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	mux.HandleFunc("GET /api/budgets", s.list)
 	mux.HandleFunc("POST /api/budgets", s.create)
 	mux.HandleFunc("GET /api/budgets/{id}", s.get)
@@ -50,6 +56,7 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
+	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
 	mux.HandleFunc("GET /api/budgets/{id}/compare", s.compare)
 	mux.HandleFunc("POST /api/budgets/{id}/scenarios", s.saveScenario)
 	mux.HandleFunc("GET /api/budgets/{id}/scenarios/{sid}/report", s.scenarioReport)
@@ -145,6 +152,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		me *http.MaxBytesError
 		se *json.SyntaxError
 		te *json.UnmarshalTypeError
+		re *app.RateError
 	)
 	switch {
 	case errors.As(err, &oe): // checked first: a bad target inside an op is the caller's mistake
@@ -157,9 +165,13 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrExists):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
+	case errors.Is(err, app.ErrRatesOff):
+		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
+	case errors.As(err, &re): // the rate provider failed, not us
+		writeErr(w, http.StatusBadGateway, err.Error(), nil)
 	case errors.As(err, &me):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
-	case errors.Is(err, store.ErrBadID), errors.As(err, &ae), errors.As(err, &se), errors.As(err, &te), errors.Is(err, errBadRequest):
+	case errors.Is(err, store.ErrBadID), errors.As(err, &ae), errors.As(err, &se), errors.As(err, &te), errors.Is(err, errBadRequest), errors.Is(err, app.ErrBadInput):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
@@ -186,7 +198,8 @@ func decode(r *http.Request, v any) error {
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"currencies": money.Codes(), "templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
+		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources,
+		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
 		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
 	})
 }
@@ -303,6 +316,90 @@ func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"budget": b, "report": rep})
+}
+
+// settingsView is what the settings page sees. The API key itself never
+// leaves the server; only whether one is set.
+type settingsView struct {
+	FetchRates        bool                  `json:"fetch_rates"`
+	DefaultRateSource string                `json:"default_rate_source"`
+	AutoRefresh       string                `json:"auto_refresh"`
+	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
+	Status            app.AutoRefreshStatus `json:"auto_refresh_status"`
+	Paths             map[string]string     `json:"paths"`
+}
+
+func (s *server) settingsView(st settings.Settings) settingsView {
+	paths := s.opts.Paths
+	if paths == nil {
+		paths = map[string]string{}
+	}
+	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", s.app.AutoRefresh(), paths}
+}
+
+func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
+	st, err := s.app.Settings()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.settingsView(st))
+}
+
+func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var p settings.Patch
+	if err := decode(r, &p); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	st, err := s.app.UpdateSettings(p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.settingsView(st))
+}
+
+// quote returns current rates without saving: ?base=EUR&codes=USD,BTC[&source=ecb].
+func (s *server) quote(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	codes := strings.Split(q.Get("codes"), ",")
+	if q.Get("base") == "" || q.Get("codes") == "" || len(codes) > 50 {
+		writeErr(w, http.StatusBadRequest, "base and codes (comma-separated, at most 50) are required", nil)
+		return
+	}
+	out, err := s.app.Quote(r.Context(), strings.ToUpper(q.Get("base")), q.Get("source"), codes)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// refreshRates fetches and saves fresh rates: {codes?: [...]}; omitted means
+// every currency whose source isn't manual.
+func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Codes []string `json:"codes"`
+	}
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	v, updates, err := s.app.RefreshRates(r.Context(), r.PathValue("id"), in.Codes)
+	if err != nil {
+		var re *app.RateError
+		if errors.As(err, &re) && updates != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "rate_updates": updates})
+			return
+		}
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*app.View
+		Updates []app.RateUpdate `json:"rate_updates"`
+	}{v, updates})
 }
 
 func (s *server) compare(w http.ResponseWriter, r *http.Request) {

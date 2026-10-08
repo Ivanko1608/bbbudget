@@ -28,7 +28,7 @@ func TestParseDecimal(t *testing.T) {
 			t.Errorf("ParseDecimal(%q) = %s, want %s", in, d, want)
 		}
 	}
-	for _, bad := range []string{"", "-", ".", ".5", "5.", "1e3", "NaN", "Inf", "1,000", "1.2.3", "0x10", "1/3", "0.0000000000001", "--1"} {
+	for _, bad := range []string{"", "-", ".", ".5", "5.", "1e3", "NaN", "Inf", "1,000", "1.2.3", "0x10", "1/3", "0.0000000000000000001", "--1"} {
 		if _, err := ParseDecimal(bad); err == nil {
 			t.Errorf("ParseDecimal(%q) should fail", bad)
 		}

@@ -34,6 +34,8 @@ var DefaultRules = []Rule{
 	{"category_share", ruleCategoryShare},
 	{"transfer_loss", ruleTransferLoss},
 	{"fx_risk", ruleFXRisk},
+	{"crypto_income", ruleCryptoIncome},
+	{"cash_out_loss", ruleCashOutLoss},
 	{"one_offs", ruleOneOffs},
 	{"first_month", ruleFirstMonth},
 	{"biggest_line", ruleBiggestLine},
@@ -56,7 +58,11 @@ func Insights(pr *Projection, rules []Rule) []Insight {
 	return out
 }
 
-func w(m money.Money) string { return m.FormatWhole() }
+func w(m money.Money) string { return m.Display() }
+
+// fxRate renders an exchange rate with 4 significant digits, so that a crypto
+// rate (0.00001352 BTC per €) doesn't print as 0.00.
+func fxRate(r *big.Rat) string { return money.RoundSignificant(r, 4).String() }
 
 // pct returns round(100*a/b) as an int, or 0 when b is not positive.
 func pct(a, b money.Money) int64 {
@@ -169,7 +175,68 @@ func ruleFXRisk(pr *Projection) []Insight {
 		atWeak := p.WithRate(code, weak).PayCost(amt, money.HalfEven)
 		out = append(out, Insight{ID: "fx_risk_" + strings.ToLower(code), Tone: ToneInfo, Text: fmt.Sprintf(
 			"%s risk: if it strengthens 10%% (%s per %s), the %s side costs %s (**+%s**/month); if it weakens 10%% (%s), it drops to %s.",
-			code, strong.FloatString(2), p.Base.Code, code, w(atStrong), w(atStrong.Sub(now)), weak.FloatString(2), w(atWeak))})
+			code, fxRate(strong), p.Base.Code, code, w(atStrong), w(atStrong.Sub(now)), fxRate(weak), w(atWeak))})
+	}
+	return out
+}
+
+// foreignIncome sums recurring income per foreign currency, per month, in that currency.
+func foreignIncome(p *Plan) map[string]money.Money {
+	out := map[string]money.Money{}
+	for _, l := range p.Lines {
+		c := l.Amt.Currency()
+		if !l.Income || c.Code == p.Base.Code || l.Schedule.Every == 0 || l.Schedule.Start != 0 {
+			continue
+		}
+		t, ok := out[c.Code]
+		if !ok {
+			t = money.Zero(c)
+		}
+		out[c.Code] = t.Add(l.Amt.Mul(big.NewRat(1, int64(l.Schedule.Every)), money.HalfEven))
+	}
+	return out
+}
+
+// ruleCryptoIncome sizes the risk of income paid in a volatile cryptocurrency
+// (stablecoins are covered by the FX rules like any other currency).
+func ruleCryptoIncome(pr *Projection) []Insight {
+	p := pr.Plan
+	fi := foreignIncome(p)
+	total := money.Zero(p.Base)
+	var codes []string
+	for _, code := range sortedKeys(fi) {
+		if c := fi[code].Currency(); c.Crypto && !c.Stable && fi[code].IsPositive() {
+			total = total.Add(p.IncomeValue(fi[code], roundReceive))
+			codes = append(codes, code)
+		}
+	}
+	if !total.IsPositive() {
+		return nil
+	}
+	drop := total.Mul(big.NewRat(3, 10), money.Ceil)
+	m := pr.Months[0]
+	text := fmt.Sprintf("**%d%%** of recurring income (%s a month) arrives in %s. If crypto falls 30%%, that is **%s** a month less",
+		pct(total, p.RecurringIncome()), w(total), strings.Join(codes, ", "), w(drop))
+	after := m.Left.Sub(drop)
+	if after.IsNegative() {
+		return []Insight{{Tone: ToneWarn, Text: text + fmt.Sprintf(", and %s would end **%s short**. Consider converting part of it as it arrives.", m.Label, w(after.Neg()))}}
+	}
+	return []Insight{{Tone: ToneInfo, Text: text + fmt.Sprintf("; %s would still end %s ahead.", m.Label, w(after))}}
+}
+
+func ruleCashOutLoss(pr *Projection) []Insight {
+	p := pr.Plan
+	var out []Insight
+	fi := foreignIncome(p)
+	for _, code := range sortedKeys(fi) {
+		amt := fi[code]
+		if p.CashOutPct(code).Sign() == 0 || !amt.IsPositive() {
+			continue
+		}
+		loss := p.ToBase(amt, money.HalfEven).Sub(p.IncomeValue(amt, money.HalfEven))
+		out = append(out, Insight{ID: "cash_out_loss_" + strings.ToLower(code), Tone: ToneInfo, Text: fmt.Sprintf(
+			"Converting your %s income (%s a month) loses about **%s** a month to exchange fees and spread, %s a year.",
+			code, w(amt), w(loss), w(loss.Mul(big.NewRat(12, 1), money.HalfEven)))})
 	}
 	return out
 }
@@ -184,7 +251,7 @@ func ruleOneOffs(pr *Projection) []Insight {
 		verb := "costs"
 		amt := p.PayCost(l.Amt, roundPay)
 		if l.Income {
-			verb, amt = "brings in", p.ToBase(l.Amt, roundReceive)
+			verb, amt = "brings in", p.IncomeValue(l.Amt, roundReceive)
 		}
 		out = append(out, Insight{ID: "one_off_" + l.ID, Tone: ToneInfo, Text: fmt.Sprintf(
 			"One-off: **%s** %s %s in %s.", l.Name, verb, w(amt), p.MonthLabel(l.Schedule.Start))})

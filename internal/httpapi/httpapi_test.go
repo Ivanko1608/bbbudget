@@ -2,16 +2,52 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
+	"bbbudget/web"
 )
+
+func offlineRates() map[string]rates.Provider {
+	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
+	down := rates.Fixed{ID: rates.ECB, Err: errors.New("HTTP 503")}
+	return map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: down, rates.CoinGecko: down}
+}
+
+func TestRates(t *testing.T) {
+	c := setup(t)
+	var q []map[string]any
+	w := c.req("GET", "/api/rates?base=EUR&codes=usd,BTC", "", nil)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &q) != nil || len(q) != 2 || q[1]["new"] != "0.00001352" {
+		t.Fatalf("quote: %d %s", w.Code, w.Body)
+	}
+	c.do("GET", "/api/rates?base=EUR&codes=USD&source=google", "", 400)
+	c.do("GET", "/api/rates?base=EUR&codes=USD&source=ecb", "", 502)
+
+	// Refreshing nothing (all manual) succeeds; naming USD fetches it.
+	if v := c.do("POST", "/api/budgets/home/rates/refresh", `{}`, 200); len(v["rate_updates"].([]any)) != 0 {
+		t.Fatal(v["rate_updates"])
+	}
+	v := c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["USD"]}`, 200)
+	usd := v["budget"].(map[string]any)["currencies"].([]any)[1].(map[string]any)
+	if usd["per_base"] != "1.1186" || usd["source"] != "auto" || usd["rate_date"] != "2026-10-07" || v["report"] == nil {
+		t.Fatalf("refresh: %v", usd)
+	}
+	c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["JPY"]}`, 404)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_currency","target":"USD","value":{"source":"ecb"}}]}`, 200)
+	if v := c.do("POST", "/api/budgets/home/rates/refresh", `{}`, 502); v["rate_updates"] == nil {
+		t.Fatal("a failed refresh should still say what failed")
+	}
+}
 
 type client struct {
 	t *testing.T
@@ -26,7 +62,10 @@ func setup(t *testing.T) *client {
 	}
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>ui</title>")}}
 	mcpStub := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(299) })
-	c := &client{t, New(app.New(st, nil), Options{Static: static, MCP: mcpStub})}
+	a := app.New(st, nil)
+	a.Rates = offlineRates() // tests never touch the network
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	c := &client{t, New(a, Options{Static: static, MCP: mcpStub, Paths: map[string]string{"data": "/d"}})}
 	c.do("POST", "/api/budgets", `{"id":"home","template":"example"}`, 201)
 	return c
 }
@@ -186,5 +225,60 @@ func TestStaticAndMeta(t *testing.T) {
 	m := c.do("GET", "/api/meta", "", 200)
 	if len(m["currencies"].([]any)) < 10 || m["op_kinds"] == nil {
 		t.Fatalf("meta: %v", m)
+	}
+}
+
+func TestSettings(t *testing.T) {
+	c := setup(t)
+	v := c.do("GET", "/api/settings", "", 200)
+	if v["fetch_rates"] != true || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
+		t.Fatalf("defaults: %v", v)
+	}
+	if v["paths"].(map[string]any)["data"] != "/d" || v["auto_refresh_status"] == nil {
+		t.Fatalf("paths/status: %v", v)
+	}
+
+	w := c.req("PUT", "/api/settings", `{"auto_refresh":"daily","coingecko_api_key":"CG-secret"}`, nil)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "CG-secret") {
+		t.Fatalf("the key must never be sent back: %d %s", w.Code, w.Body)
+	}
+	if v := c.do("GET", "/api/settings", "", 200); v["auto_refresh"] != "daily" || v["coingecko_api_key_set"] != true {
+		t.Fatalf("after PUT: %v", v)
+	}
+	c.do("PUT", "/api/settings", `{"auto_refresh":"weekly"}`, 400)
+	c.do("PUT", "/api/settings", `{"colour":"blue"}`, 400)
+	if w := c.req("PUT", "/api/settings", `{"fetch_rates":false}`, func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }); w.Code != 415 {
+		t.Fatalf("settings writes need JSON like every mutation: %d", w.Code)
+	}
+
+	// Offline: quotes and refreshes are refused with a clear conflict, not a 5xx.
+	c.do("PUT", "/api/settings", `{"fetch_rates":false}`, 200)
+	if v := c.do("GET", "/api/rates?base=EUR&codes=USD", "", 409); !strings.Contains(v["error"].(string), "turned off") {
+		t.Fatal(v)
+	}
+	c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["USD"]}`, 409)
+}
+
+func TestSettingsPageIsServed(t *testing.T) {
+	st, _ := store.NewFileStore(t.TempDir())
+	h := New(app.New(st, nil), Options{Static: web.FS()})
+	for _, path := range []string{"/settings.html", "/settings.js", "/"} {
+		req := httptest.NewRequest("GET", "http://localhost"+path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Errorf("%s: %d", path, w.Code)
+		}
+		if path == "/" && !strings.Contains(w.Body.String(), `href="settings.html"`) {
+			t.Error("the budget page must link to the settings page")
+		}
+	}
+}
+
+func TestMetaListsCrypto(t *testing.T) {
+	v := setup(t).do("GET", "/api/meta", "", 200)
+	crypto, sources := v["crypto"].([]any), v["rate_sources"].([]any)
+	if len(crypto) == 0 || crypto[0] != "ADA" || len(sources) != 5 {
+		t.Fatalf("crypto %v, sources %v", crypto, sources)
 	}
 }

@@ -5,6 +5,8 @@
 //	bbbudget init <id>        create a budget from a template
 //	bbbudget list             list budgets
 //	bbbudget report <id>      print a budget's projection and insights
+//	bbbudget rates <id>       fetch current exchange rates into a budget
+//	bbbudget settings         show or change app settings
 package main
 
 import (
@@ -14,11 +16,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -30,6 +35,7 @@ import (
 	"bbbudget/internal/budget"
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/mcpserver"
+	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 	"bbbudget/internal/templates"
 	"bbbudget/web"
@@ -56,10 +62,13 @@ commands:
   templates  list templates (built-in and yours)
   list     list budgets
   report   print a projection:  bbbudget report home [-scenario name]
+  rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
+  settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
 Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates); -templates overrides.
+App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
 `
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -72,6 +81,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
 	tplDir := fs.String("templates", templates.DefaultDir(), "directory of your own templates (*.yaml, *.json)")
+	settingsFile := fs.String("settings", settings.DefaultPath(), "app settings file")
 
 	openApp := func() (*app.App, error) {
 		st, err := store.NewFileStore(*dir)
@@ -82,7 +92,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return nil, err
 		}
-		return app.New(st, reg), nil
+		a := app.New(st, reg)
+		a.SettingsPath = *settingsFile
+		if _, err := a.Settings(); err != nil {
+			return nil, err
+		}
+		return a, nil
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 
@@ -99,7 +114,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		opts := httpapi.Options{Static: web.FS(), Log: log}
+		opts := httpapi.Options{Static: web.FS(), Log: log, Paths: map[string]string{"data": *dir, "templates": *tplDir, "settings": *settingsFile}}
+		go a.RunAutoRefresh(ctx, log)
 		if *hosts != "" {
 			opts.AllowedHosts = strings.Split(*hosts, ",")
 		}
@@ -230,6 +246,68 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		printReport(stdout, rep)
 		return nil
 
+	case "rates":
+		only := fs.String("only", "", "comma-separated currencies to refresh (default: all whose source isn't manual)")
+		dry := fs.Bool("dry-run", false, "show current rates without saving")
+		id, err := parseWithID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		var codes []string
+		if *only != "" {
+			codes = strings.Split(strings.ToUpper(strings.ReplaceAll(*only, " ", "")), ",")
+		}
+		var updates []app.RateUpdate
+		if *dry {
+			updates, err = dryRunRates(ctx, a, id, codes)
+		} else {
+			_, updates, err = a.RefreshRates(ctx, id, codes)
+		}
+		printRates(stdout, updates)
+		if err == nil && len(updates) == 0 {
+			fmt.Fprintln(stdout, "no currencies to refresh: every rate is manual (name some with -only to fetch them)")
+		}
+		return err
+
+	case "settings":
+		var sets []string
+		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key", func(v string) error {
+			sets = append(sets, v)
+			return nil
+		})
+		if _, err := parseArgs(fs, args, 0, "settings [-set key=value ...]"); err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		if len(sets) > 0 {
+			p, err := settingsPatch(sets)
+			if err != nil {
+				return err
+			}
+			if _, err := a.UpdateSettings(p); err != nil {
+				return err
+			}
+		}
+		s, err := a.Settings()
+		if err != nil {
+			return err
+		}
+		key := "not set"
+		if s.CoinGeckoAPIKey != "" {
+			key = "set"
+		}
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\n", s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key)
+		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
+		return tw.Flush()
+
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil
@@ -289,6 +367,78 @@ func serve(ctx context.Context, addr string, h http.Handler, log *slog.Logger, s
 		defer cancel()
 		return srv.Shutdown(sctx)
 	}
+}
+
+// settingsPatch turns "key=value" flags into a settings patch.
+func settingsPatch(sets []string) (settings.Patch, error) {
+	var p settings.Patch
+	for _, kv := range sets {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return p, fmt.Errorf("-set %q: want key=value", kv)
+		}
+		switch k {
+		case "fetch_rates":
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return p, fmt.Errorf("fetch_rates: want true or false, got %q", v)
+			}
+			p.FetchRates = &b
+		case "default_rate_source":
+			p.DefaultRateSource = &v
+		case "auto_refresh":
+			p.AutoRefresh = &v
+		case "coingecko_api_key":
+			p.CoinGeckoAPIKey = &v
+		default:
+			return p, fmt.Errorf("unknown setting %q", k)
+		}
+	}
+	return p, nil
+}
+
+// dryRunRates quotes the currencies RefreshRates would update, saving nothing.
+func dryRunRates(ctx context.Context, a *app.App, id string, codes []string) ([]app.RateUpdate, error) {
+	v, err := a.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	bySource := map[string][]string{}
+	old := map[string]budget.CurrencyRate{}
+	for _, c := range v.Budget.Currencies {
+		if (len(codes) == 0 && !c.IsManual()) || slices.Contains(codes, c.Code) {
+			bySource[c.Source] = append(bySource[c.Source], c.Code)
+			old[c.Code] = c
+		}
+	}
+	var out []app.RateUpdate
+	for _, src := range slices.Sorted(maps.Keys(bySource)) {
+		q, err := a.Quote(ctx, v.Budget.BaseCurrency, src, bySource[src])
+		if err != nil {
+			return out, err
+		}
+		for _, u := range q {
+			u.Old = old[u.Code].PerBase
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+func printRates(w io.Writer, updates []app.RateUpdate) {
+	if len(updates) == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "CURRENCY\tOLD\tNEW\tFROM\tDATE")
+	for _, u := range updates {
+		if u.Error != "" {
+			fmt.Fprintf(tw, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, u.Error)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", u.Code, u.Old, u.New, u.From, u.Date)
+	}
+	tw.Flush()
 }
 
 func printReport(w io.Writer, r *budget.Report) {

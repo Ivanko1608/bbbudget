@@ -33,9 +33,27 @@ type LinePatch struct {
 	Schedule *Schedule      `json:"schedule,omitempty"`
 }
 
+// CurrencyPatch edits a currency. Setting per_base without a source makes the
+// rate manual (a typed rate would otherwise be overwritten by the next refresh).
 type CurrencyPatch struct {
 	PerBase        *money.Decimal `json:"per_base,omitempty"`
 	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty"`
+	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty"`
+	Source         *string        `json:"source,omitempty"`
+	RateDate       *string        `json:"rate_date,omitempty"`
+	RateFrom       *string        `json:"rate_from,omitempty"`
+}
+
+func (v CurrencyPatch) apply(c *CurrencyRate) {
+	if v.PerBase != nil && v.Source == nil {
+		c.Source, c.RateDate, c.RateFrom = SourceManual, "", ""
+	}
+	setIf(&c.PerBase, v.PerBase)
+	setIf(&c.TransferFeePct, v.TransferFeePct)
+	setIf(&c.CashOutFeePct, v.CashOutFeePct)
+	setIf(&c.Source, v.Source)
+	setIf(&c.RateDate, v.RateDate)
+	setIf(&c.RateFrom, v.RateFrom)
 }
 
 type SettingsPatch struct {
@@ -70,7 +88,7 @@ type CategoryPatch struct {
 // OpKinds documents every supported op and its value type.
 var OpKinds = map[string]string{
 	"set_settings":    "value: SettingsPatch (no target)",
-	"set_currency":    "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then)",
+	"set_currency":    "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
 	"remove_currency": "target: code (must be unused)",
 	"add_category":    "value: Category",
 	"set_category":    "target: category; value: CategoryPatch",
@@ -169,16 +187,15 @@ func applyOne(b *Budget, op Op) error {
 		code := strings.ToUpper(strings.TrimSpace(op.Target))
 		for i := range b.Currencies {
 			if b.Currencies[i].Code == code {
-				setIf(&b.Currencies[i].PerBase, v.PerBase)
-				setIf(&b.Currencies[i].TransferFeePct, v.TransferFeePct)
+				v.apply(&b.Currencies[i])
 				return nil
 			}
 		}
 		if v.PerBase == nil {
 			return fmt.Errorf("currency %s is new: per_base is required", code)
 		}
-		c := CurrencyRate{Code: code, PerBase: *v.PerBase}
-		setIf(&c.TransferFeePct, v.TransferFeePct)
+		c := CurrencyRate{Code: code}
+		v.apply(&c)
 		b.Currencies = append(b.Currencies, c)
 
 	case "remove_currency":
