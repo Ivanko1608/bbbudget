@@ -262,7 +262,7 @@ func TestSettings(t *testing.T) {
 func TestSettingsPageIsServed(t *testing.T) {
 	st, _ := store.NewFileStore(t.TempDir())
 	h := New(app.New(st, nil), Options{Static: web.FS()})
-	for _, path := range []string{"/settings.html", "/settings.js", "/"} {
+	for _, path := range []string{"/settings.html", "/settings.js", "/", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/icon-180.png"} {
 		req := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -272,6 +272,18 @@ func TestSettingsPageIsServed(t *testing.T) {
 		if path == "/" && !strings.Contains(w.Body.String(), `href="settings.html"`) {
 			t.Error("the budget page must link to the settings page")
 		}
+		if path == "/manifest.webmanifest" {
+			if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
+				t.Errorf("manifest served as %q: browsers won't install the app", ct)
+			}
+			var m struct {
+				Display string `json:"display"`
+				Icons   []struct{ Src, Purpose string }
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Display != "standalone" || len(m.Icons) < 3 {
+				t.Errorf("manifest: %v %+v", err, m)
+			}
+		}
 	}
 }
 
@@ -280,5 +292,8 @@ func TestMetaListsCrypto(t *testing.T) {
 	crypto, sources := v["crypto"].([]any), v["rate_sources"].([]any)
 	if len(crypto) == 0 || crypto[0] != "ADA" || len(sources) != 5 {
 		t.Fatalf("crypto %v, sources %v", crypto, sources)
+	}
+	if d := v["digits"].(map[string]any); d["EUR"] != 2.0 || d["JPY"] != 0.0 || d["BTC"] != 8.0 {
+		t.Fatalf("digits: %v", d)
 	}
 }

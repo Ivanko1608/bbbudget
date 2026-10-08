@@ -1,28 +1,38 @@
 // Budget planner UI. The server owns every number: this file edits the budget
 // document (amounts stay exact decimal strings) and renders the server's
-// report. The only floats here are pixel positions on the chart.
+// report. The only floats here are pixel positions and display-only formatting.
+//
+// Layout: five views (Overview, Lines, Plan, Scenarios, Setup) behind one tab
+// list, shown as top tabs with a summary rail on wide screens and as a bottom
+// tab bar with a pinned mini-summary on phones (the shape a native app would
+// take). The route is #<budget>/<view>.
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-const show = (m) => (m ? m.display : "—");
 const DEC_RE = /^[+-]?\d+(\.\d+)?$/;
 const SAVE_DELAY = 600;
 const POLL_MS = 3000;
+const VIEWS = ["overview", "lines", "plan", "scenarios", "setup"];
+const UNDO_MS = 6000;
 
 const S = {
   meta: null,
   prefs: { fetch_rates: true, default_rate_source: "auto" }, // app settings (settings.html)
   list: [],
   id: null,
+  view: "overview",
   revision: 0,
   budget: null,
   report: null,
   saving: false,
   pending: false, // local edits not yet sent
   fetching: 0, // rate fetches in flight: saving waits so a placeholder rate is never stored
-  notice: null, // an error to keep showing after the next save, instead of "Saved"
+  notice: null, // an error to keep showing after the next save, instead of "saved"
   timer: null,
+  sheet: null, // index of the line open in the editor sheet
+  allInsights: false,
+  lastSummary: "",
   wi: [], // what-if draft ops
 };
 
@@ -48,7 +58,7 @@ function status(text, isErr = false) {
   el.classList.toggle("err", isErr);
 }
 
-// ---------- months ----------
+// ---------- months, ids, amounts ----------
 
 function monthKey(index) {
   const [y, m] = S.budget.start_month.split("-").map(Number);
@@ -62,8 +72,6 @@ function monthIndex(key) {
   return Math.max(0, ky * 12 + km - (y * 12 + m));
 }
 
-// ---------- ids ----------
-
 function slug(name) {
   return (String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "item");
 }
@@ -75,25 +83,60 @@ function newId(name, list) {
   return id;
 }
 
+// fmtAmount pads a fiat amount to its currency's decimals for display
+// ("45.5" → "45.50"). The stored value is untouched; crypto stays as typed.
+function fmtAmount(v, code) {
+  const s = String(v ?? "");
+  const digits = S.meta?.digits?.[code];
+  if (!DEC_RE.test(s) || digits == null || digits > 3) return s;
+  const [i, f = ""] = s.split(".");
+  return digits === 0 ? s : `${i}.${f.padEnd(digits, "0")}`;
+}
+
+// ---------- routing and views ----------
+
+function setRoute() {
+  if (S.id) history.replaceState(null, "", `#${encodeURIComponent(S.id)}/${S.view}`);
+}
+
+function setView(view, { focus = false } = {}) {
+  if (!VIEWS.includes(view)) view = "overview";
+  const changed = view !== S.view;
+  if (changed) closeSheet();
+  S.view = view;
+  for (const tab of document.querySelectorAll('[role="tab"]')) {
+    const on = tab.dataset.view === view;
+    tab.setAttribute("aria-selected", on);
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focus) tab.focus();
+  }
+  for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;
+  $("#minibar").hidden = view === "overview" || !S.report;
+  setRoute();
+  if (view === "overview") drawChart(); // it can't measure itself while hidden
+  if (changed && matchMedia("(max-width: 959.98px)").matches) window.scrollTo({ top: 0 });
+}
+
 // ---------- loading ----------
 
 async function loadList() {
   S.list = await api("GET", "/api/budgets");
-  const picker = $("#picker");
-  picker.innerHTML = S.list.map((b) => `<option value="${esc(b.id)}">${esc(b.name)} (${esc(b.id)})</option>`).join("");
+  $("#picker").innerHTML = S.list.map((b) => `<option value="${esc(b.id)}">${esc(b.name || b.id)}</option>`).join("");
   $("#empty").hidden = S.list.length > 0;
   $("#workspace").hidden = S.list.length === 0;
-  picker.hidden = S.list.length === 0;
+  $("#picker").hidden = S.list.length === 0;
+  if (!S.list.length) $("#minibar").hidden = true;
 }
 
-async function open(id) {
+async function open(id, view = S.view) {
   const v = await api("GET", `/api/budgets/${encodeURIComponent(id)}`);
   S.id = v.id;
+  S.lastSummary = "";
   adopt(v, true);
   $("#picker").value = id;
   try { localStorage.setItem("bbbudget.last", id); } catch {}
-  history.replaceState(null, "", `#${encodeURIComponent(id)}`);
-  status(`Saved · revision ${S.revision}`);
+  setView(view);
+  status("All changes saved");
   loadCompare();
 }
 
@@ -111,7 +154,7 @@ function adopt(view, rerenderEditors) {
 function edited({ structural = false } = {}) {
   S.pending = true;
   if (structural) renderEditors();
-  status("Unsaved changes…");
+  status("Saving…");
   clearTimeout(S.timer);
   S.timer = setTimeout(save, SAVE_DELAY);
 }
@@ -130,7 +173,7 @@ async function save() {
     showIssues([]);
     renderOutputs();
     if (S.notice) status(S.notice, true);
-    else status(`Saved · revision ${S.revision}`);
+    else status("All changes saved");
     S.notice = null;
     loadCompare();
   } catch (e) {
@@ -153,14 +196,14 @@ async function save() {
 
 // Pick up changes made elsewhere (MCP, another tab) when idle.
 async function poll() {
-  if (!S.id || S.pending || S.saving || document.visibilityState !== "visible") return;
+  if (!S.id || S.pending || S.saving || $("#sheet").open || document.visibilityState !== "visible") return;
   try {
     const list = await api("GET", "/api/budgets");
     const me = list.find((b) => b.id === S.id);
     if (me && me.revision > S.revision && !S.pending && !S.saving) {
       const v = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}`);
       adopt(v, true);
-      status(`Updated just now (changed elsewhere) · revision ${S.revision}`);
+      status("Updated with changes made elsewhere");
       loadCompare();
     }
   } catch {}
@@ -175,7 +218,32 @@ function showIssues(issues) {
   for (const i of issues) {
     const path = i.path.replace(/\[(\d+)\]/g, ".$1");
     document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((el) => el.classList.add("invalid"));
+    // A field inside a closed sheet can't be highlighted: mark its row instead.
+    document.querySelectorAll("[data-row]").forEach((el) => { if (path.startsWith(el.dataset.row + ".")) el.classList.add("invalid"); });
   }
+}
+
+// ---------- undo ----------
+
+let toastTimer = null;
+function toast(text, undo) {
+  $("#toastText").textContent = text;
+  $("#toast").hidden = false;
+  $("#toastUndo").onclick = () => { hideToast(); undo(); };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, UNDO_MS);
+}
+function hideToast() { $("#toast").hidden = true; clearTimeout(toastTimer); }
+
+// removeWithUndo deletes list[i] and offers to put it back where it was.
+function removeWithUndo(list, i, what) {
+  const arr = S.budget[list];
+  const [item] = arr.splice(i, 1);
+  edited({ structural: true });
+  toast(`Deleted ${what}`, () => {
+    S.budget[list].splice(Math.min(i, S.budget[list].length), 0, item);
+    edited({ structural: true });
+  });
 }
 
 // ---------- editors ----------
@@ -191,17 +259,16 @@ function setPath(obj, path, value) {
   else target[last] = value;
 }
 
-const field = (label, path, { type = "text", attrs = "", cls = "" } = {}) => {
-  const v = getPath(S.budget, path);
+const field = (label, path, { type = "text", attrs = "", cls = "", value } = {}) => {
+  const v = value ?? getPath(S.budget, path);
   return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type === "decimal" ? "decimal" : type}" ${
     type === "decimal" ? 'inputmode="decimal" autocomplete="off"' : type === "int" ? 'type="number" step="1"' : `type="${type}"`
   } value="${esc(v ?? "")}" ${attrs}></label>`;
 };
+const opts = (options, v) => options.map(([val, text]) => `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(text)}</option>`).join("");
 const select = (label, path, options, { structural = false, cls = "" } = {}) => {
   const v = getPath(S.budget, path);
-  return `<label class="f ${cls}">${esc(label)}<select data-path="${esc(path)}" data-kind="text" ${structural ? "data-structural" : ""}>${options
-    .map(([val, text]) => `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(text)}</option>`)
-    .join("")}</select></label>`;
+  return `<label class="f ${cls}">${esc(label)}<select data-path="${esc(path)}" data-kind="text" ${structural ? "data-structural" : ""}>${opts(options, v)}</select></label>`;
 };
 const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="Remove ${esc(what)}">✕</button>`;
 
@@ -222,7 +289,11 @@ const EVERY = [[0, "One-off"], [1, "Monthly"], [2, "Every 2 months"], [3, "Quart
 
 function renderEditors() {
   const b = S.budget;
-  $("#title").textContent = b.name;
+  // Re-rendering replaces the inputs: keep the focus where it was.
+  const active = document.activeElement?.dataset?.path;
+
+  document.title = `${b.name} · Budget planner`;
+  document.querySelectorAll(".baseCode").forEach((el) => { el.textContent = b.base_currency; });
   const crypto = new Set(S.meta?.crypto || []);
   const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, s[0].toUpperCase() + s.slice(1)]);
   $("#settings").innerHTML = [
@@ -238,7 +309,7 @@ function renderEditors() {
 
   const allCodes = (S.meta?.currencies || []).filter((c) => c !== b.base_currency);
   const codeOpts = allCodes.map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
-  $("#currencies").innerHTML = b.currencies.map((c, i) => `<div class="row row-cur">
+  $("#currencies").innerHTML = b.currencies.map((c, i) => `<div class="row row-cur" data-row="currencies.${i}">
       ${select("Code", `currencies.${i}.code`, codeOpts, { structural: true })}
       ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
       ${field(`per 1 ${b.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
@@ -249,25 +320,9 @@ function renderEditors() {
     </div>`).join("") || `<p class="muted">Only ${esc(b.base_currency)} so far.</p>`;
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
 
-  const cats = b.categories.map((c) => [c.id, `${c.label}${c.kind === "income" ? " (income)" : ""}`]);
-  $("#lines").innerHTML = b.lines.map((l, i) => {
-    const color = b.categories.find((c) => c.id === l.category)?.color || "var(--line)";
-    const sch = l.schedule;
-    return `<div class="row row-line" style="box-shadow:inset 3px 0 0 ${esc(color)}">
-      ${field("Name", `lines.${i}.name`, { cls: "name" })}
-      ${field("Amount", `lines.${i}.amount`, { type: "decimal" })}
-      ${select("Currency", `lines.${i}.currency`, currencyOptions())}
-      ${select("Category", `lines.${i}.category`, cats, { structural: true })}
-      ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
-      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
-      ${sch.every === 0 ? "<span></span>" :
-        `<label class="f">Until<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
-      <span class="base" data-base="${esc(l.id)}"></span>
-      ${del("del-line", i, l.name)}
-    </div>`;
-  }).join("") || `<p class="muted">No lines yet.</p>`;
+  renderLines();
 
-  $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" style="box-shadow:inset 3px 0 0 var(--debt)">
+  $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" data-row="debts.${i}" style="box-shadow:inset 3px 0 0 var(--debt)">
       ${field("Name", `debts.${i}.name`)}
       ${select("Currency", `debts.${i}.currency`, currencyOptions())}
       ${field("Balance", `debts.${i}.balance`, { type: "decimal" })}
@@ -276,23 +331,155 @@ function renderEditors() {
       ${del("del-debt", i, d.name)}
     </div>`).join("") || `<p class="muted">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
 
-  $("#goals").innerHTML = b.goals.map((g, i) => `<div class="row row-goal" style="box-shadow:inset 3px 0 0 var(--save)">
+  $("#goals").innerHTML = b.goals.map((g, i) => `<div class="row row-goal" data-row="goals.${i}" style="box-shadow:inset 3px 0 0 var(--save)">
       ${field("Goal", `goals.${i}.name`)}
       ${field(`Target (${b.base_currency})`, `goals.${i}.target`, { type: "decimal" })}
       ${del("del-goal", i, g.name)}
     </div>`).join("") || `<p class="muted">No goals yet.</p>`;
 
-  $("#categories").innerHTML = b.categories.map((c, i) => `<div class="row row-cat">
+  $("#categories").innerHTML = b.categories.map((c, i) => `<div class="row row-cat" data-row="categories.${i}">
       ${field("Label", `categories.${i}.label`)}
       ${select("Kind", `categories.${i}.kind`, [["expense", "Expense"], ["income", "Income"]], { structural: true })}
       <label class="f">Colour<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>
       ${del("del-category", i, c.label)}
     </div>`).join("");
 
+  if (S.sheet != null && $("#sheet").open) renderSheet();
   renderWhatIf();
-  renderLineBases();
+  renderLineNumbers();
   renderRateNotes();
+
+  if (active) document.querySelector(`[data-path="${CSS.escape(active)}"]`)?.focus();
 }
+
+// ---------- lines: grouped list + editor sheet ----------
+
+// lineGroups orders lines income first, then by expense category, as
+// [{cat, lines: [index, ...]}].
+function lineGroups() {
+  const b = S.budget;
+  const order = [...b.categories.filter((c) => c.kind === "income"), ...b.categories.filter((c) => c.kind !== "income")];
+  const groups = order.map((cat) => ({ cat, lines: [] }));
+  const byId = Object.fromEntries(groups.map((g) => [g.cat.id, g]));
+  const other = { cat: { id: "", label: "Other", color: "" }, lines: [] };
+  b.lines.forEach((l, i) => (byId[l.category] || other).lines.push(i));
+  return [...groups, other].filter((g) => g.lines.length);
+}
+
+function renderLines() {
+  const b = S.budget;
+  const rep = Object.fromEntries((S.report?.lines || []).map((l) => [l.id, l]));
+  $("#lines").innerHTML = lineGroups().map(({ cat, lines }) => `<div class="group">
+      <div class="group-head"><span><span class="sw" style="background:${esc(cat.color || "var(--line)")}"></span>${esc(cat.label)}</span>
+        <span class="total" data-total="${esc(cat.id)}"></span></div>
+      ${lines.map((i) => {
+        const l = b.lines[i];
+        return `<div class="line" data-row="lines.${i}" style="box-shadow:inset 3px 0 0 ${esc(cat.color || "var(--line)")}">
+          <button type="button" class="line-main" data-action="edit-line" data-i="${i}" aria-label="Edit ${esc(l.name)}">
+            <span class="name">${esc(l.name)}</span><span class="meta">${esc(rep[l.id]?.schedule_text || "")}</span></button>
+          <label class="amt"><span class="sr">Amount for ${esc(l.name)}</span>
+            <input data-path="lines.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(fmtAmount(l.amount, l.currency))}">
+            <span class="cur">${esc(l.currency)}</span></label>
+          <span class="base" data-base="${esc(l.id)}"></span>
+        </div>`;
+      }).join("")}
+    </div>`).join("") || `<div class="card"><p class="muted">No lines yet. Add your income and regular costs.</p></div>`;
+}
+
+// renderLineNumbers updates the computed figures in place, so typing in an
+// amount never loses focus when the report comes back.
+function renderLineNumbers() {
+  if (!S.report || !S.budget) return;
+  const base = S.report.base_currency;
+  const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
+  document.querySelectorAll("[data-base]").forEach((el) => {
+    const l = byId[el.dataset.base];
+    if (!l) { el.textContent = ""; return; }
+    const once = l.schedule.every === 0;
+    const v = once ? l.per_occurrence_base : l.monthly_equivalent_base;
+    const foreign = l.amount.currency !== base;
+    el.textContent = once ? (foreign ? `≈ ${v.display} once` : "once") : foreign || l.schedule.every !== 1 ? `≈ ${v.display}/mo` : "";
+  });
+  // Group totals, display only: recurring per month, one-offs separately.
+  const totals = {}, once = {};
+  for (const l of S.report.lines) {
+    const cat = S.budget.categories.some((c) => c.id === l.category) ? l.category : "";
+    totals[cat] = (totals[cat] || 0) + parseFloat(l.monthly_equivalent_base.amount);
+    if (l.schedule.every === 0) once[cat] = (once[cat] || 0) + parseFloat(l.per_occurrence_base.amount);
+  }
+  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: base, maximumFractionDigits: 0 });
+  document.querySelectorAll("[data-total]").forEach((el) => {
+    const k = el.dataset.total, m = totals[k] || 0, o = once[k] || 0;
+    const parts = [];
+    if (m || !o) parts.push(`${esc(fmt.format(m))}<small>/mo</small>`);
+    if (o) parts.push(`${esc(fmt.format(o))}<small> once</small>`);
+    el.innerHTML = parts.join(" + ");
+  });
+  // Schedule texts come from the report too.
+  document.querySelectorAll(".line").forEach((row) => {
+    const l = S.budget.lines[+row.dataset.row.split(".")[1]];
+    const meta = row.querySelector(".meta");
+    if (l && meta) meta.textContent = byId[l.id]?.schedule_text || "";
+  });
+  if ($("#sheet").open) {
+    const l = S.budget.lines[S.sheet];
+    const r = l && byId[l.id];
+    const el = $("#sheetBase");
+    if (el) el.textContent = r && r.amount.currency !== base
+      ? `Each ${r.income ? "payment you receive" : "payment"} ≈ ${r.per_occurrence_base.display} in ${base}, ${r.income ? "after cash-out loss" : "transfer loss included"}.`
+      : "";
+  }
+}
+
+function categorySelect(path) {
+  const v = getPath(S.budget, path);
+  const group = (kind, label) => {
+    const cs = S.budget.categories.filter((c) => (kind === "income") === (c.kind === "income"));
+    return cs.length ? `<optgroup label="${label}">${opts(cs.map((c) => [c.id, c.label]), v)}</optgroup>` : "";
+  };
+  return `<label class="f">Category<select data-path="${esc(path)}" data-kind="text" data-structural>${group("income", "Income")}${group("expense", "Costs")}</select></label>`;
+}
+
+function renderSheet() {
+  const i = S.sheet;
+  const l = S.budget.lines[i];
+  if (!l) { closeSheet(); return; }
+  const sch = l.schedule;
+  $("#sheetTitle").textContent = l.name || "Line";
+  $("#sheetBody").innerHTML = `<div class="sheet-body">
+      ${field("Name", `lines.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+      ${field("Amount", `lines.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
+      ${select("Currency", `lines.${i}.currency`, currencyOptions(), { structural: true })}
+      ${categorySelect(`lines.${i}.category`)}
+      ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
+      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+      ${sch.every === 0 ? "<span></span>" :
+        `<label class="f">Until (optional)<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+      <p class="base" id="sheetBase"></p>
+    </div>
+    <div class="sheet-foot">
+      <button type="button" class="danger" data-action="del-line" data-i="${i}">Delete line</button>
+      <button type="button" class="primary" data-action="close-sheet">Done</button>
+    </div>`;
+  renderLineNumbers();
+}
+
+function openSheet(i, { focusName = false } = {}) {
+  S.sheet = i;
+  renderSheet();
+  const d = $("#sheet");
+  if (!d.open) d.showModal();
+  renderLineNumbers(); // the base-currency note needs the sheet open
+  const first = focusName ? d.querySelector(`[data-path="lines.${i}.name"]`) : d.querySelector(`[data-path="lines.${i}.amount"]`);
+  first?.focus();
+  if (focusName) first?.select();
+}
+function closeSheet() {
+  const d = $("#sheet");
+  if (d.open) d.close();
+}
+
+// ---------- input handling ----------
 
 function onEditorInput(e) {
   const el = e.target;
@@ -354,6 +541,15 @@ function onEditorInput(e) {
   }
   if (path.endsWith(".every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   setPath(S.budget, path, v);
+  // The same line can be edited in the list and in the sheet: keep both in step.
+  if (/^lines\.\d+\.(amount|name)$/.test(path)) {
+    document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((o) => { if (o !== el) o.value = v; });
+    if (path.endsWith(".name")) {
+      const i = +path.split(".")[1];
+      document.querySelectorAll(`[data-row="lines.${i}"] .name`).forEach((n) => { n.textContent = v; });
+      if (S.sheet === i) $("#sheetTitle").textContent = v || "Line";
+    }
+  }
   edited({ structural: el.hasAttribute("data-structural") && e.type === "change" });
 }
 
@@ -430,11 +626,17 @@ const ACTIONS = {
   "add-line"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
+    if (!cat) { setView("setup"); status("Add a category first.", true); return; }
     b.lines.push({ id: newId("New line", b.lines), name: "New line", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
-    focusLast("#lines input[data-path$='.name']");
+    openSheet(b.lines.length - 1, { focusName: true });
   },
-  "del-line"(i) { S.budget.lines.splice(i, 1); edited({ structural: true }); },
+  "edit-line"(i) { openSheet(i); },
+  "close-sheet"() { closeSheet(); },
+  "del-line"(i) {
+    closeSheet();
+    removeWithUndo("lines", i, `“${S.budget.lines[i].name}”`);
+  },
   "add-currency"() {
     const b = S.budget;
     const used = new Set([b.base_currency, ...b.currencies.map((c) => c.code)]);
@@ -456,33 +658,40 @@ const ACTIONS = {
     });
   },
   "refresh-rates"() { refreshAll(); },
-  "del-currency"(i) { S.budget.currencies.splice(i, 1); edited({ structural: true }); },
+  "del-currency"(i) {
+    const code = S.budget.currencies[i].code;
+    const user = [...S.budget.lines, ...S.budget.debts].find((x) => x.currency === code);
+    if (user) { status(`${code} is still used by “${user.name}”.`, true); return; }
+    removeWithUndo("currencies", i, code);
+  },
   "add-debt"() {
     const b = S.budget;
     b.debts.push({ id: newId("Debt", b.debts), name: "Debt", currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
     edited({ structural: true });
     focusLast("#debts input[data-path$='.name']");
   },
-  "del-debt"(i) { S.budget.debts.splice(i, 1); edited({ structural: true }); },
+  "del-debt"(i) { removeWithUndo("debts", i, `“${S.budget.debts[i].name}”`); },
   "add-goal"() {
     const b = S.budget;
     b.goals.push({ id: newId("Goal", b.goals), name: "Goal", target: "1000" });
     edited({ structural: true });
     focusLast("#goals input[data-path$='.name']");
   },
-  "del-goal"(i) { S.budget.goals.splice(i, 1); edited({ structural: true }); },
+  "del-goal"(i) { removeWithUndo("goals", i, `“${S.budget.goals[i].name}”`); },
   "add-category"() {
     const b = S.budget;
     b.categories.push({ id: newId("Category", b.categories), label: "Category", kind: "expense", color: "#7a6ff0" });
     edited({ structural: true });
+    focusLast("#categories input[data-path$='.label']");
   },
   "del-category"(i) {
     const c = S.budget.categories[i];
     if (S.budget.lines.some((l) => l.category === c.id)) { status(`“${c.label}” is still used by a line.`, true); return; }
-    S.budget.categories.splice(i, 1);
-    edited({ structural: true });
+    removeWithUndo("categories", i, `“${c.label}”`);
   },
+  "all-insights"() { S.allInsights = !S.allInsights; renderInsights(); },
   new() { openNewDialog(); },
+  export() { exportJSON(); },
   "add-wi"() { S.wi.push({ kind: "line", target: S.budget.lines[0]?.id || "", value: "" }); renderWhatIf(); },
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
@@ -492,6 +701,7 @@ const ACTIONS = {
     await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}/adopt`, {}));
   },
   async "del-scenario"(i, el) {
+    if (!confirm(`Delete the scenario “${el.dataset.name}”?`)) return;
     await serverChange(() => api("DELETE", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}`));
   },
 };
@@ -516,18 +726,73 @@ function focusLast(sel) {
 
 // ---------- outputs ----------
 
-function renderLineBases() {
-  if (!S.report) return;
-  const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
-  document.querySelectorAll("[data-base]").forEach((el) => {
-    const l = byId[el.dataset.base];
-    el.textContent = l && l.amount.currency !== S.report.base_currency ? `≈ ${l.per_occurrence_base.display}` : "";
-  });
+// summaryParts are the few numbers that answer "how am I doing?", shown in
+// the rail, at the top of Overview on phones, and in the phone minibar.
+function summaryParts(r) {
+  const m0 = r.months[0];
+  const last = r.months[r.months.length - 1];
+  const goal = r.goals[0];
+  const debts = r.debts.filter((d) => parseFloat(d.start_balance.amount) > 0);
+  const debtFree = !debts.length ? null : debts.every((d) => d.paid_off_label)
+    ? debts.map((d) => d.paid_off_month).reduce((a, b) => Math.max(a, b)) : -1;
+  const warn = r.insights.find((x) => x.tone === "warn");
+  return { m0, last, goal, debts, debtFree, warn, n: r.months.length };
+}
+
+function renderSummary() {
+  const r = S.report;
+  const p = summaryParts(r);
+  const neg = parseFloat(p.m0.left.amount) < 0;
+  const month = p.m0.label.split(" ")[0];
+  const goalTxt = p.goal ? (p.goal.already_met ? "Already met" : p.goal.reached_label || `Not in ${p.n} months`) : "";
+  const debtTxt = p.debtFree === null ? "" : p.debtFree < 0 ? `Not in ${p.n} months` : r.months[p.debtFree].label;
+  const html = `<h2>${neg ? "Short" : "Left"} in ${esc(month)}</h2>
+    <div class="big ${neg ? "neg" : ""}">${esc(p.m0.left.display.replace("−", ""))}</div>
+    <div class="sub">of ${esc(p.m0.income.display)} income · ${esc(p.m0.saved.display)} to savings</div>
+    <dl>
+      <dt>Savings in ${p.n} months</dt><dd>${esc(p.last.savings.display)}</dd>
+      ${p.goal ? `<dt>${esc(p.goal.name)}</dt><dd>${esc(goalTxt)}</dd>` : ""}
+      ${p.debtFree !== null ? `<dt>Debt-free</dt><dd>${esc(debtTxt)}</dd>` : ""}
+      ${p.debts.length ? `<dt>Interest, ${p.n} months</dt><dd>${esc(r.totals.total_interest_base.display)}</dd>` : ""}
+    </dl>
+    ${p.warn ? `<div class="callout">${bold(p.warn.text)}</div>` : ""}`;
+  // Flash the summary when an edit changed it, so the effect is noticed.
+  const changed = S.lastSummary && S.lastSummary !== html;
+  S.lastSummary = html;
+  for (const el of [$("#railSummary"), $("#mobileSummary")]) {
+    el.innerHTML = html;
+    if (changed) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+  }
+  const mb = $("#minibar");
+  mb.innerHTML = `<span>${neg ? "Short" : "Left"} in ${esc(month)} <b class="${neg ? "neg" : ""}">${esc(p.m0.left.display.replace("−", ""))}</b></span>
+    <span>In ${p.n} months <b>${esc(p.last.savings.display)}</b></span>`;
+  mb.hidden = S.view === "overview";
+}
+
+const FX_RE = /^(fx_risk_|transfer_loss_|cash_out_loss_)/;
+const TONE_RANK = { warn: 0, good: 1, info: 2 };
+
+// renderInsights ranks warnings first, folds the per-currency notes into one
+// "Currency exposure" card, and shows three until asked for all.
+function renderInsights() {
+  const r = S.report;
+  const fx = r.insights.filter((x) => FX_RE.test(x.id));
+  const items = r.insights.filter((x) => !FX_RE.test(x.id)).map((x) => ({ ...x }));
+  if (fx.length) items.push({ tone: fx.some((x) => x.tone === "warn") ? "warn" : "info", group: fx });
+  items.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+  const shown = S.allInsights ? items : items.slice(0, 3);
+  const card = (x) => x.group
+    ? `<details class="ins ${esc(x.tone)}"><summary><span><b>Currency exposure</b> · ${x.group.length} note${x.group.length === 1 ? "" : "s"} on rates and fees</span></summary>
+        <div class="ins-group">${x.group.map((g) => `<p>${bold(g.text)}</p>`).join("")}</div></details>`
+    : `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`;
+  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">Add income and costs to see insights.</p>`) +
+    (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${S.allInsights ? "Show fewer" : `Show all ${items.length}`}</button>` : "");
 }
 
 function renderOutputs() {
   const r = S.report;
   if (!r) return;
+  renderSummary();
   renderRateNotes();
   const m0 = r.months[0];
   const cats = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
@@ -538,18 +803,15 @@ function renderOutputs() {
   const num = (m) => Math.max(parseFloat(m.amount), 0); // pixels only
   const segs = Object.entries(m0.by_category)
     .filter(([, v]) => parseFloat(v.amount) > 0)
-    .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)"]);
-  if (num(m0.debt_payments) > 0) segs.push(["Debt payments", m0.debt_payments, "var(--debt)"]);
-  if (num(m0.saved) > 0) segs.push(["To savings", m0.saved, "var(--save)"]);
+    .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)", ""]);
+  if (num(m0.debt_payments) > 0) segs.push(["Debt payments", m0.debt_payments, "var(--debt)", "hatch"]);
+  if (num(m0.saved) > 0) segs.push(["To savings", m0.saved, "var(--save)", ""]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
-  $("#bar").innerHTML = segs.map((s) => `<div style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(s[1].display)}"></div>`).join("");
-  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(s[1].display)}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
-  const warn = $("#warn");
-  warn.hidden = parseFloat(m0.left.amount) >= 0;
-  if (!warn.hidden) warn.textContent = `Over budget by ${m0.left.display.replace("−", "")} this month.`;
+  $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(s[1].display)}"></div>`).join("");
+  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(s[1].display)}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
 
-  $("#insights").innerHTML = r.insights.map((x) => `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`).join("") || `<p class="muted">Add income and costs to see insights.</p>`;
+  renderInsights();
 
   const last = r.months[r.months.length - 1];
   const goal = r.goals[0];
@@ -559,49 +821,89 @@ function renderOutputs() {
     <div><span class="muted">Interest paid</span><b>${esc(r.totals.total_interest_base.display)}</b></div>
     ${goal ? `<div><span class="muted">${esc(goal.name)} (${esc(goal.target.display)})</span><b>${goal.already_met ? "Already met" : goal.reached_label ? "Reached " + esc(goal.reached_label) : "Not in this window"}</b></div>` : ""}
     ${debt ? `<div><span class="muted">${esc(debt.name)} paid off</span><b>${debt.paid_off_label ? esc(debt.paid_off_label) : "Not in this window"}</b></div>` : ""}`;
-  drawChart(r);
+  drawChart();
 
   const hasDebt = r.debts.length > 0;
-  let h = `<tr><th>Month</th><th>Income</th><th>Spent</th><th>To debts</th><th>Left</th><th>Saved</th><th>Savings</th>${hasDebt ? "<th>Debt</th>" : ""}</tr>`;
+  let h = `<thead><tr><th scope="col">Month</th><th scope="col">Income</th><th scope="col">Spent</th><th scope="col">To debts</th><th scope="col">Left</th><th scope="col">Saved</th><th scope="col">Savings</th>${hasDebt ? '<th scope="col">Debt</th>' : ""}</tr></thead><tbody>`;
   for (const m of r.months) {
     const neg = (x) => (parseFloat(x.amount) < 0 ? "neg" : "");
-    h += `<tr><td>${esc(m.label)}</td><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td><td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td class="${neg(m.savings)}">${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
+    h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td><td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td class="${neg(m.savings)}">${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
   }
-  $("#table").innerHTML = h;
-  renderLineBases();
+  $("#table").innerHTML = h + "</tbody>";
+  renderLineNumbers();
+  $("#minibar").hidden = S.view === "overview";
 }
 
-function drawChart(r) {
+// niceTicks returns round axis values covering [lo, hi]: 0, 5k, 10k, ...
+function niceTicks(lo, hi, count) {
+  const raw = (hi - lo) / count || 1;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  const m = raw / p;
+  const step = (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+  const ticks = [];
+  for (let v = Math.floor(lo / step) * step; v < hi + step * 0.999; v += step) ticks.push(Math.round(v / step) * step);
+  return ticks;
+}
+
+// drawChart sizes the chart to its container, so text stays 12px on a phone,
+// and supports hover/touch to read any month.
+function drawChart() {
+  const r = S.report;
+  const wrap = $("#chartWrap");
+  if (!r || !wrap || $("#view-overview").hidden) return;
   const svg = $("#chart");
-  const W = 640, H = 260, L = 64, R = 12, T = 14, B = 30;
+  const W = Math.max(280, Math.round(wrap.clientWidth));
+  const compact = W < 520;
+  const H = compact ? 220 : 260, R = 12, T = 14, B = 28;
   const sav = r.months.map((m) => parseFloat(m.savings.amount));
   const debt = r.months.map((m) => parseFloat(m.debt_balance_base.amount));
   const hasDebt = debt.some((v) => v > 0);
   const goals = r.goals.map((g) => parseFloat(g.target.amount));
   const all = sav.concat(hasDebt ? debt : [], goals);
-  let lo = Math.min(0, ...all), hi = Math.max(100, ...all);
-  const pad = (hi - lo) * 0.08; hi += pad; if (lo < 0) lo -= pad;
+  const ticks = niceTicks(Math.min(0, ...all), Math.max(100, ...all), compact ? 3 : 4);
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const cur = r.base_currency;
+  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, maximumFractionDigits: 0, notation: compact ? "compact" : "standard" });
+  const L = compact ? 48 : 70;
   const n = Math.max(r.months.length - 1, 1);
   const x = (i) => L + (i * (W - L - R)) / n;
   const y = (v) => T + ((hi - v) / (hi - lo)) * (H - T - B);
-  const cur = r.base_currency;
-  const fmt = (v) => new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(v);
   let g = "";
-  for (let k = 0; k <= 4; k++) {
-    const v = lo + ((hi - lo) * k) / 4, yy = y(v);
-    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${L - 6}" y="${yy + 4}" text-anchor="end">${esc(fmt(v))}</text>`;
+  for (const v of ticks) {
+    const yy = y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--line)"/><text x="${L - 8}" y="${yy + 4}" text-anchor="end">${esc(fmt.format(v))}</text>`;
   }
   if (lo < 0) g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 3"/>`;
-  const step = Math.ceil(r.months.length / 8);
+  const step = Math.ceil(r.months.length / (compact ? 4 : 8));
   r.months.forEach((m, i) => { if (i % step === 0) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(m.label.replace(/ (\d\d)(\d\d)$/, " $2"))}</text>`; });
   r.goals.forEach((gl, i) => {
     g += `<line x1="${L}" x2="${W - R}" y1="${y(goals[i])}" y2="${y(goals[i])}" stroke="var(--save)" stroke-dasharray="6 4" opacity=".55"/><text x="${W - R}" y="${y(goals[i]) - 5}" text-anchor="end">${esc(gl.name)}</text>`;
   });
-  const line = (arr, c, labels) => `<polyline fill="none" stroke="${c}" stroke-width="2.5" stroke-linejoin="round" points="${arr.map((v, i) => x(i) + "," + y(v)).join(" ")}"/>` +
-    arr.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${c}"><title>${esc(r.months[i].label)}: ${esc(labels[i])}</title></circle>`).join("");
-  g += line(sav, "var(--save)", r.months.map((m) => m.savings.display));
-  if (hasDebt) g += line(debt, "var(--debt)", r.months.map((m) => m.debt_balance_base.display));
+  const line = (arr, c) => `<polyline fill="none" stroke="${c}" stroke-width="2.5" stroke-linejoin="round" points="${arr.map((v, i) => x(i) + "," + y(v)).join(" ")}"/>` +
+    arr.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="${compact ? 2.5 : 3}" fill="${c}"/>`).join("");
+  g += line(sav, "var(--save)");
+  if (hasDebt) g += line(debt, "var(--debt)");
+  g += `<line id="guide" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="2 3" visibility="hidden"/>`;
+  g += `<rect id="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/>`;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("height", H);
   svg.innerHTML = g;
+
+  const tip = $("#chartTip"), guide = svg.querySelector("#guide"), hit = svg.querySelector("#hit");
+  const show = (ev) => {
+    const box = svg.getBoundingClientRect();
+    const i = Math.max(0, Math.min(r.months.length - 1, Math.round(((ev.clientX - box.left) * (W / box.width) - L) / ((W - L - R) / n))));
+    const m = r.months[i];
+    guide.setAttribute("x1", x(i)); guide.setAttribute("x2", x(i)); guide.setAttribute("visibility", "visible");
+    tip.innerHTML = `<b>${esc(m.label)}</b><span>Savings <strong>${esc(m.savings.display)}</strong></span>${hasDebt ? `<span>Debt <strong>${esc(m.debt_balance_base.display)}</strong></span>` : ""}<span>Left <strong>${esc(m.left.display)}</strong></span>`;
+    tip.hidden = false;
+    const px = (x(i) / W) * box.width;
+    tip.style.left = `${Math.min(Math.max(px - tip.offsetWidth / 2, 0), box.width - tip.offsetWidth)}px`;
+  };
+  const hide = () => { tip.hidden = true; guide.setAttribute("visibility", "hidden"); };
+  hit.addEventListener("pointermove", show);
+  hit.addEventListener("pointerdown", show);
+  hit.addEventListener("pointerleave", hide);
 }
 
 // ---------- scenarios ----------
@@ -643,10 +945,10 @@ async function previewWhatIf() {
     const before = S.report, after = res.report;
     const endB = parseFloat(before.totals.end_savings.amount), endA = parseFloat(after.totals.end_savings.amount);
     const goalTxt = after.goals.map((g) => `${esc(g.name)}: ${g.already_met ? "already met" : g.reached_label ? esc(g.reached_label) : "not reached"}`).join(" · ");
-    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}">After ${after.months.length} months: <b>${esc(after.totals.end_savings.display)}</b> instead of ${esc(before.totals.end_savings.display)}. This month saves ${esc(after.months[0].saved.display)}.${goalTxt ? "<br>" + goalTxt : ""}</div>
-      <div class="row-actions"><input id="wiName" placeholder="Scenario name" style="flex:1"><button type="button" data-action="save-wi">Save as scenario</button></div>`;
+    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}" style="margin-top:12px">After ${after.months.length} months: <b>${esc(after.totals.end_savings.display)}</b> instead of ${esc(before.totals.end_savings.display)}. This month saves ${esc(after.months[0].saved.display)}.${goalTxt ? "<br>" + goalTxt : ""}</div>
+      <div class="row-actions"><input id="wiName" placeholder="Scenario name" aria-label="Scenario name" style="flex:1;min-width:160px"><button type="button" data-action="save-wi">Save as scenario</button></div>`;
   } catch (e) {
-    out.innerHTML = `<div class="ins warn">${esc(e.message)}</div>`;
+    out.innerHTML = `<div class="ins warn" style="margin-top:12px">${esc(e.message)}</div>`;
   }
 }
 
@@ -665,22 +967,24 @@ async function loadCompare() {
   if (!S.id) return;
   try {
     const rows = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}/compare`);
+    $("#compareEmpty").hidden = rows.length >= 2;
     if (rows.length < 2) { table.innerHTML = ""; return; }
-    let h = `<tr><th>Scenario</th><th>This month</th><th>End savings</th><th>Δ</th><th>Interest</th><th>Goals</th><th></th></tr>`;
+    let h = `<thead><tr><th scope="col">Scenario</th><th scope="col">This month</th><th scope="col">End savings</th><th scope="col">Δ</th><th scope="col">Interest</th><th scope="col">Goals</th><th scope="col"><span class="sr">Actions</span></th></tr></thead><tbody>`;
     for (const o of rows) {
-      if (o.error) { h += `<tr><td>${esc(o.name)}</td><td colspan="5" class="neg">${esc(o.error)}</td><td>${scenarioButtons(o)}</td></tr>`; continue; }
+      if (o.error) { h += `<tr><th scope="row">${esc(o.name)}</th><td colspan="5" class="neg">${esc(o.error)}</td><td>${scenarioButtons(o)}</td></tr>`; continue; }
       const d = o.delta_end_savings;
       const goals = (o.goals || []).map((g) => g.already_met ? "met" : g.reached_label || "—").join(", ");
-      h += `<tr><td>${esc(o.name)}</td><td>${esc(o.first_month_saved.display)}</td><td>${esc(o.end_savings.display)}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(d.display) : ""}</td><td>${esc(o.total_interest_base.display)}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
+      h += `<tr><th scope="row">${esc(o.name)}</th><td>${esc(o.first_month_saved.display)}</td><td>${esc(o.end_savings.display)}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(d.display) : ""}</td><td>${esc(o.total_interest_base.display)}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
     }
-    table.innerHTML = h;
+    table.innerHTML = h + "</tbody>";
   } catch { table.innerHTML = ""; }
 }
-const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">Adopt</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" aria-label="Delete ${esc(o.name)}">✕</button>`;
+const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">Adopt</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}" aria-label="Delete ${esc(o.name)}">✕</button>`;
 
 // ---------- new / import / export / delete ----------
 
 function openNewDialog() {
+  $("details.menu")?.removeAttribute("open");
   const sel = $("#templateSel");
   const list = S.meta?.templates || [{ name: "blank" }];
   sel.innerHTML = list.map((t) => `<option value="${esc(t.name)}" ${t.name === "blank" ? "selected" : ""}>${esc(t.name)}${t.description ? " — " + esc(t.description) : ""}</option>`).join("");
@@ -693,11 +997,12 @@ async function createFromDialog() {
   try {
     const v = await api("POST", "/api/budgets", { id: f.get("id"), name: f.get("name") || "", template: f.get("template") });
     await loadList();
-    await open(v.id);
+    await open(v.id, "overview");
   } catch (e) { status(e.message, true); }
 }
 
 function exportJSON() {
+  $("details.menu")?.removeAttribute("open");
   const blob = new Blob([JSON.stringify(S.budget, null, 2)], { type: "application/json" });
   const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `${S.id}.json` });
   a.click();
@@ -711,19 +1016,20 @@ async function importJSON(file) {
     if (!id) return;
     await api("POST", "/api/budgets", { id, budget });
     await loadList();
-    await open(id);
+    await open(id, "overview");
   } catch (e) {
     status(`Import failed: ${e.data?.issues ? e.data.issues.map((i) => `${i.path}: ${i.message}`).join("; ") : e.message}`, true);
   }
 }
 
 async function deleteBudget() {
-  if (!S.id || !confirm(`Delete “${S.budget.name}” permanently?`)) return;
+  $("details.menu")?.removeAttribute("open");
+  if (!S.id || !confirm(`Delete “${S.budget.name}” permanently? This can't be undone.`)) return;
   try {
     await api("DELETE", `/api/budgets/${encodeURIComponent(S.id)}`);
     S.id = null;
     await loadList();
-    if (S.list.length) await open(S.list[0].id);
+    if (S.list.length) await open(S.list[0].id, "overview");
     else status("No budgets.");
   } catch (e) { status(e.message, true); }
 }
@@ -742,11 +1048,43 @@ document.addEventListener("change", (e) => {
     if (e.target.dataset.k === "kind") { o.target = ""; renderWhatIf(); }
   }
 });
+// Show amounts with their currency's decimals once the field is left.
+document.addEventListener("focusout", (e) => {
+  const el = e.target;
+  const m = el.dataset?.path?.match(/^lines\.(\d+)\.amount$/);
+  if (m && DEC_RE.test(el.value.trim())) el.value = fmtAmount(el.value.trim(), S.budget.lines[+m[1]]?.currency);
+});
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-action]");
   if (!btn) return;
   ACTIONS[btn.dataset.action]?.(Number(btn.dataset.i), btn);
 });
+
+const tablist = $(".tabs");
+tablist.addEventListener("click", (e) => {
+  const tab = e.target.closest('[role="tab"]');
+  if (tab) setView(tab.dataset.view);
+});
+tablist.addEventListener("keydown", (e) => {
+  const i = VIEWS.indexOf(S.view);
+  const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: VIEWS.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  setView(VIEWS[(next + VIEWS.length) % VIEWS.length], { focus: true });
+});
+
+const sheet = $("#sheet");
+sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); }); // tap outside
+sheet.addEventListener("close", () => { S.sheet = null; renderLines(); renderLineNumbers(); showIssues([]); });
+
+let resizeTimer = null;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawChart, 120); });
+window.addEventListener("hashchange", () => {
+  const [id, view] = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (id && id !== S.id && S.list.some((b) => b.id === id)) open(id, view);
+  else if (view && view !== S.view) setView(view);
+});
+
 $("#picker").addEventListener("change", (e) => open(e.target.value));
 $("#newBtn").addEventListener("click", openNewDialog);
 $("#newDialog").addEventListener("close", () => { if ($("#newDialog").returnValue === "ok") createFromDialog(); });
@@ -761,9 +1099,9 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
     S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
     await loadList();
     if (!S.list.length) { status("No budgets yet."); return; }
-    let want = decodeURIComponent(location.hash.slice(1));
+    let [want, view] = decodeURIComponent(location.hash.slice(1)).split("/");
     if (!want) try { want = localStorage.getItem("bbbudget.last") || ""; } catch {}
-    await open(S.list.some((b) => b.id === want) ? want : S.list[0].id);
+    await open(S.list.some((b) => b.id === want) ? want : S.list[0].id, VIEWS.includes(view) ? view : "overview");
   } catch (e) {
     status(`Could not reach the server: ${e.message}`, true);
   }

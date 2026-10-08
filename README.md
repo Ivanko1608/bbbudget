@@ -84,6 +84,15 @@ lines:
   - {name: Freelance (paid in BTC), amount: 0.012, currency: BTC, category: income}
 ```
 
+## The app
+
+The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Lines** (income and costs grouped by category, amounts editable in place), **Plan** (debts and goals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
+
+- **Wide screens** show the views as tabs next to a summary that stays in view: what's left this month, savings at the end, goal and debt-free dates and the top warning. Every edit's effect shows up there straight away.
+- **Phones and small tablets** get an app layout: a bottom tab bar, a pinned bar with the two key numbers, and bottom sheets for editing a line. Touch targets are at least 44px, and safe-area insets clear notches and the home indicator.
+- **Installable.** The page ships a web app manifest and icons, so a phone or desktop browser can install it ("Add to Home Screen"); it then opens full screen like an app. The same layout is meant to be wrapped as an Android or iOS app later (for example with Capacitor or a Trusted Web Activity). A native shell needs a reachable server; this one only listens on localhost.
+- Deletes can be undone for a few seconds. The current view is in the URL (`#home/lines`), so reloading keeps your place.
+
 ## Templates and your own data
 
 Built in are `blank` and `example`, a fictional household that is also the test fixture. **Your own templates live outside the repository**, in `~/.config/bbbudget/templates/` (or `$BBBUDGET_TEMPLATES`, or `-templates DIR`), as YAML or JSON. The file name is the template name, and a file named like a built-in replaces it. Your budgets live in `~/.local/share/bbbudget/` (or `$BBBUDGET_DIR`, or `-dir`). Nothing personal ever needs to be in the repo.
@@ -150,7 +159,8 @@ internal/store/      Store interface + FileStore (atomic writes, flock, revision
 internal/app/        Use cases shared by every transport
 internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards
 internal/mcpserver/  MCP tools and resources
-web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html
+web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html,
+                     manifest.webmanifest and icons (icon.svg is the source of the PNGs)
 ```
 
 Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← transports. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
