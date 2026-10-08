@@ -188,6 +188,10 @@ The tests include:
 
 The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
 
+## Contributing and security
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, checks and the ground rules that keep the numbers exact. Found a vulnerability? Please report it privately as described in [SECURITY.md](SECURITY.md), which also spells out the threat model.
+
 ## License
 
 Copyright (C) 2026 Ivanko1608

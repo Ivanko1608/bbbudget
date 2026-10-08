@@ -33,6 +33,10 @@ p{margin:0}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 section{background:var(--card);border-radius:14px;padding:18px 16px;margin-top:14px}
 section > .muted{margin:-6px 0 8px}
+.foot{margin-top:32px;text-align:center}
+.foot a{color:inherit;text-underline-offset:2px}
+.foot a:hover{color:var(--accent)}
+.nowrap{white-space:nowrap}
 
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .top-actions{display:flex;gap:8px;align-items:center}

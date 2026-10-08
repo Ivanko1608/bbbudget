@@ -1,0 +1,61 @@
+# Contributing to bbbudget
+
+Thanks for wanting to help! Bug reports, fixes, new currencies, insights and UI polish are all welcome.
+
+## Before you start
+
+- **Security issues** go through private reporting, not public issues. See [SECURITY.md](SECURITY.md).
+- **Keep your real finances out of it.** Issues, PRs, test fixtures and screenshots are public forever. Reproduce with the fictional `example` template, or swap in made-up numbers, names and currencies before you share a budget.
+- **For bigger changes** (a new storage backend, a new transport, model changes), please open an issue first so we can agree on the shape before you write the code.
+
+## Setup
+
+You need Go 1.25+ and nothing else: no Node, no database. The UI is plain JS with no build step.
+
+```
+git clone https://github.com/Ivanko1608/bbbudget
+cd bbbudget
+make hooks     # optional: pre-commit leak check, see below
+make run       # builds and serves http://127.0.0.1:8080
+```
+
+Use a throwaway data directory while developing, so you don't touch your real budgets:
+
+```
+./bin/bbbudget init home -template example -dir /tmp/bb
+./bin/bbbudget serve -dir /tmp/bb
+```
+
+## Checks
+
+`make check` has to pass before a PR is merged. It runs `gofmt`, `go vet` and `go test -race ./...`. For changes to money parsing, also run the fuzzer for a bit:
+
+```
+go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
+```
+
+`make hooks` enables `.githooks/pre-commit`, which scans staged changes for secrets and personal data with leakscan (see [Development](README.md#development) for where it looks for the scanner). If it flags a false positive, either commit with `--no-verify` or add its fingerprint to `.leakscanignore`.
+
+## Ground rules for the code
+
+These are what keep the numbers trustworthy, so PRs that break them won't be merged:
+
+- **No floating point in money.** Amounts are `money.Money` (int64 minor units), and rates and percentages are exact rationals. Parse numbers from their text, never through `float64`.
+- **Round pessimistically, once per conversion.** Money you pay rounds up and money you receive rounds down.
+- **All calculations live in `internal/budget`.** Transports (HTTP, MCP, CLI, UI) call `app.App` and never re-implement maths.
+- **Dependencies point inward:** `money` ← `budget` ← `store`/`app` ← transports.
+- **Nothing phones home.** No telemetry, analytics, CDNs or third-party requests in the UI or the binary. The UI's CSP enforces this; don't loosen it.
+- **Tests come with behaviour changes.** Projection changes need a hand-checked golden or an invariant, not just "the output looks right".
+- **Built-in templates are generic and fictional.**
+
+The README's [Extending](README.md#extending) section shows where currencies, insights, edit types and storage backends plug in.
+
+## Pull requests
+
+- Keep each PR to one topic. A small focused PR gets reviewed much faster than a big one.
+- Say what changed and why, and how you tested it. For UI changes, a screenshot using the example budget helps.
+- Update the README when you change user-visible behaviour, CLI flags, the API or MCP tools.
+
+## License
+
+bbbudget is licensed under the [GNU AGPL v3.0 or later](LICENSE). By contributing, you agree that your contribution is licensed under the same terms. You keep your copyright; there's no CLA.
