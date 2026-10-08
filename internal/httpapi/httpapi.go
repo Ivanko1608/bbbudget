@@ -19,6 +19,12 @@ import (
 
 const maxBody = 1 << 20
 
+// uiCSP keeps the UI to its own origin: no third-party scripts, fonts, images
+// or requests. Inline styles stay allowed because the UI renders them.
+const uiCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
+	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
 // Options configures the handler.
 type Options struct {
 	// Static is the web UI file system (served at /). Nil disables the UI.
@@ -67,6 +73,8 @@ func New(a *app.App, opts Options) http.Handler {
 				writeErr(w, http.StatusMethodNotAllowed, "method not allowed", nil)
 				return
 			}
+			w.Header().Set("Content-Security-Policy", uiCSP)
+			w.Header().Set("Referrer-Policy", "no-referrer")
 			files.ServeHTTP(w, r)
 		})
 	}

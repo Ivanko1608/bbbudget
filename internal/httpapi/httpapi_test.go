@@ -177,6 +177,9 @@ func TestStaticAndMeta(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "<title>ui</title>") {
 		t.Fatalf("index: %d %s", w.Code, w.Body)
 	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("UI without a same-origin CSP: %q", csp)
+	}
 	if w := c.req("POST", "/mcp", `{}`, nil); w.Code != 299 {
 		t.Fatalf("mcp not mounted alongside the UI: %d", w.Code)
 	}
