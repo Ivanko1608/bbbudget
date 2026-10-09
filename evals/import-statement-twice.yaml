@@ -1,0 +1,26 @@
+template: example
+turns:
+  - |
+    Log this card statement:
+    date,description,amount
+    2026-10-02,LIDL 4412,-38.40
+    2026-10-03,SHELL FUEL,-60.00
+    2026-10-04,BOOKSHOP SCHOOL BOOKS,-22.90
+  - |
+    Oops, here it is again, I'm not sure it went through:
+    date,description,amount
+    2026-10-02,LIDL 4412,-38.40
+    2026-10-03,SHELL FUEL,-60.00
+    2026-10-04,BOOKSHOP SCHOOL BOOKS,-22.90
+reference:
+  - - {tool: log_transactions, input: {transactions: [
+        {date: "2026-10-02", amount: "38.40", category: home, note: LIDL, external_id: "2026-10-02|-38.40|LIDL 4412"},
+        {date: "2026-10-03", amount: "60.00", category: home, note: fuel, external_id: "2026-10-03|-60.00|SHELL FUEL"},
+        {date: "2026-10-04", amount: "22.90", category: education, note: school books, external_id: "2026-10-04|-22.90|BOOKSHOP SCHOOL BOOKS"}]}}
+  - - {tool: log_transactions, input: {transactions: [
+        {date: "2026-10-02", amount: "38.40", category: home, note: LIDL, external_id: "2026-10-02|-38.40|LIDL 4412"},
+        {date: "2026-10-03", amount: "60.00", category: home, note: fuel, external_id: "2026-10-03|-60.00|SHELL FUEL"},
+        {date: "2026-10-04", amount: "22.90", category: education, note: school books, external_id: "2026-10-04|-22.90|BOOKSHOP SCHOOL BOOKS"}]}}
+expect:
+  transactions: 3
+  transaction: {category: education, amount: "22.9"}

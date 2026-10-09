@@ -340,6 +340,13 @@ make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
 
+**Assistant evals.** Once an AI assistant is the main way in, the tool descriptions are the product. `evals/` holds conversations with checks on what should happen: a rent change lands on the right line, a what-if saves nothing, a statement pasted twice logs nothing twice, undo puts things back, and a question in Russian gets a Russian answer. `make eval` runs them against a real model and prints a pass rate. `make check` replays each case's reference solution through the same loop and tools, so the cases themselves stay correct. See [evals/README.md](evals/README.md).
+
+```
+make eval                 # the model your settings choose, else Claude with ANTHROPIC_API_KEY
+make eval EVAL_RUNS=5     # each case five times, for a steadier pass rate
+```
+
 The tests include:
 
 - hand-computed goldens: the example household's numbers, a month-by-month debt payoff, and a foreign-currency extra payment;

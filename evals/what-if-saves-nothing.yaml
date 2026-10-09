@@ -1,0 +1,11 @@
+template: example
+turns:
+  - What would happen to my savings if tuition went down to 450? Don't change anything yet.
+reference:
+  - - {tool: what_if, input: {ops: [{op: set_line, target: tuition, value: {amount: "450"}}]}}
+reference_reply: Your savings would end 5,100 higher, and nothing was changed.
+expect:
+  saved: false
+  lines:
+    tuition: {amount: "900"}
+  reply_contains: ["5100"]

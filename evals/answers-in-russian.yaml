@@ -1,0 +1,10 @@
+template: example
+turns:
+  - Сколько я откладываю в этом месяце?
+reference:
+  - - {tool: get_budget, input: {view: months, from: "2026-10", to: "2026-10"}}
+reference_reply: В октябре вы откладываете около 317 €.
+expect:
+  saved: false
+  reply_script: cyrillic
+  reply_contains: ["317"]

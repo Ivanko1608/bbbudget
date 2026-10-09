@@ -1,0 +1,9 @@
+template: example
+turns:
+  - I spent 45.20 on groceries on October 5th.
+reference:
+  - - {tool: log_transactions, input: {transactions: [{date: "2026-10-05", amount: "45.20", category: home, note: groceries}]}}
+expect:
+  transactions: 1
+  transaction: {category: home, amount: "45.2", date: "2026-10-05"}
+  saved: false
