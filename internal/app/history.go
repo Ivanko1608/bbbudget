@@ -98,11 +98,7 @@ func (a *App) Undo(ctx context.Context, id string, change int64, force bool) (*V
 	}
 	c.Msg = &i18n.Msg{Key: "change.undid", Args: map[string]i18n.Arg{"what": i18n.Text(what), "change": undone}}
 	// Guarded by the revision we read, so a write in between is a conflict, not lost.
-	r, err := a.Store.Update(store.WithChange(ctx, c), id, cur.Revision, func(budget.Budget) (budget.Budget, error) { return b, nil })
-	if err != nil {
-		return nil, err
-	}
-	return a.view(ctx, r)
+	return a.update(store.WithChange(ctx, c), id, cur.Revision, func(budget.Budget) (budget.Budget, error) { return b, nil })
 }
 
 func sourceLabel(s string) string {

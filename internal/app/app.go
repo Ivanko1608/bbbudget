@@ -52,6 +52,36 @@ type View struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	Budget    budget.Budget  `json:"budget"`
 	Report    *budget.Report `json:"report"`
+	// Before is the budget as it was just before this write, read inside the
+	// same transaction; nil for reads. Transports diff against it.
+	Before *budget.Budget `json:"-"`
+}
+
+// update runs fn on the current budget inside one store transaction and
+// returns the saved view with the version it replaced.
+func (a *App) update(ctx context.Context, id string, revision int64, fn func(budget.Budget) (budget.Budget, error)) (*View, error) {
+	var before budget.Budget
+	r, err := a.Store.Update(ctx, id, revision, func(b budget.Budget) (budget.Budget, error) {
+		var err error
+		if before, err = budget.Clone(b); err != nil {
+			return budget.Budget{}, err
+		}
+		return fn(b)
+	})
+	if err != nil {
+		return nil, err
+	}
+	v, err := a.view(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	v.Before = &before
+	return v, nil
+}
+
+// Analyze projects any budget document, with text in the caller's language.
+func (a *App) Analyze(ctx context.Context, b budget.Budget) (*budget.Report, error) {
+	return a.analyze(ctx, b)
 }
 
 // view analyzes a stored budget, with its text in the caller's language.
@@ -119,21 +149,13 @@ func (a *App) Delete(ctx context.Context, id string) error { return a.Store.Dele
 
 // Replace overwrites the whole document (the web editor's save), guarded by revision.
 func (a *App) Replace(ctx context.Context, id string, revision int64, b budget.Budget) (*View, error) {
-	r, err := a.Store.Update(ctx, id, revision, func(budget.Budget) (budget.Budget, error) { return b, nil })
-	if err != nil {
-		return nil, err
-	}
-	return a.view(ctx, r)
+	return a.update(ctx, id, revision, func(budget.Budget) (budget.Budget, error) { return b, nil })
 }
 
 // Apply runs ops against the latest budget and saves the result atomically.
 // Pass store.AnyRevision to apply on top of whatever is current.
 func (a *App) Apply(ctx context.Context, id string, revision int64, ops []budget.Op) (*View, error) {
-	r, err := a.Store.Update(ctx, id, revision, func(b budget.Budget) (budget.Budget, error) { return budget.Apply(b, ops...) })
-	if err != nil {
-		return nil, err
-	}
-	return a.view(ctx, r)
+	return a.update(ctx, id, revision, func(b budget.Budget) (budget.Budget, error) { return budget.Apply(b, ops...) })
 }
 
 func (a *App) analyze(ctx context.Context, b budget.Budget) (*budget.Report, error) {
@@ -165,7 +187,7 @@ func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Bu
 // SetDebt updates the debt matching ref, or creates one named ref if none
 // matches. Both happen inside one store transaction.
 func (a *App) SetDebt(ctx context.Context, id, ref string, patch budget.DebtPatch) (*View, error) {
-	r, err := a.Store.Update(ctx, id, store.AnyRevision, func(b budget.Budget) (budget.Budget, error) {
+	return a.update(ctx, id, store.AnyRevision, func(b budget.Budget) (budget.Budget, error) {
 		_, err := budget.FindDebt(b, ref)
 		var nm *budget.NoMatchError
 		if !errors.As(err, &nm) {
@@ -187,10 +209,6 @@ func (a *App) SetDebt(ctx context.Context, id, ref string, patch budget.DebtPatc
 		}
 		return budget.Apply(b, budget.NewOp("add_debt", "", d))
 	})
-	if err != nil {
-		return nil, err
-	}
-	return a.view(ctx, r)
 }
 
 // ScenarioReport projects a saved scenario without saving.
@@ -229,13 +247,9 @@ func (a *App) Compare(ctx context.Context, id string, scenarios []string) ([]bud
 }
 
 func (a *App) AdoptScenario(ctx context.Context, id, scenario string) (*View, error) {
-	r, err := a.Store.Update(ctx, id, store.AnyRevision, func(b budget.Budget) (budget.Budget, error) {
+	return a.update(ctx, id, store.AnyRevision, func(b budget.Budget) (budget.Budget, error) {
 		return budget.AdoptScenario(b, scenario)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return a.view(ctx, r)
 }
 
 func (a *App) DeleteScenario(ctx context.Context, id, scenario string) error {

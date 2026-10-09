@@ -116,7 +116,7 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 		fetched[c.Code] = c
 	}
 	var skipped map[string]bool
-	saved, err := a.Store.Update(ctx, id, store.AnyRevision, func(cur budget.Budget) (budget.Budget, error) {
+	v, err := a.update(ctx, id, store.AnyRevision, func(cur budget.Budget) (budget.Budget, error) {
 		if cur.BaseCurrency != r.Budget.BaseCurrency {
 			return budget.Budget{}, fmt.Errorf("the base currency changed to %s while rates were fetched; refresh again", cur.BaseCurrency)
 		}
@@ -144,8 +144,7 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 			updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
 		}
 	}
-	v, err := a.view(ctx, saved)
-	return v, updates, err
+	return v, updates, nil
 }
 
 // PreviewRates is RefreshRates without saving: the same currencies, sources
