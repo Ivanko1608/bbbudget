@@ -30,6 +30,7 @@
               ./go.sum
               ./cmd
               ./internal
+              ./evals # test data for internal/evals
               ./web
               ./packaging/systemd
             ];
