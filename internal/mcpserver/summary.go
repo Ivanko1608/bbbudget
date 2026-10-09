@@ -36,13 +36,55 @@ type Summary struct {
 }
 
 // insightRow is an insight as text in the configured language, plus its
-// message key and typed arguments: the exact amounts and months behind it.
+// message key and arguments: the exact amounts ("1906.6 EUR"), months
+// ("2027-03") and counts behind the text.
 type insightRow struct {
-	ID   string              `json:"id"`
-	Tone string              `json:"tone"`
-	Text string              `json:"text"`
-	Key  string              `json:"key"`
-	Args map[string]i18n.Arg `json:"args,omitempty"`
+	ID   string         `json:"id"`
+	Tone string         `json:"tone"`
+	Text string         `json:"text"`
+	Key  string         `json:"key"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
+func newInsightRow(in budget.Insight) insightRow {
+	return insightRow{in.ID, in.Tone, plain(in.Text), in.Key, flatArgs(in.Args)}
+}
+
+// flatArgs turns typed message arguments into plain values: exact money as
+// "amount CODE", months as "YYYY-MM", counts as numbers, lists as lists.
+func flatArgs(args map[string]i18n.Arg) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(args))
+	for k, a := range args {
+		out[k] = flatArg(a)
+	}
+	return out
+}
+
+func flatArg(a i18n.Arg) any {
+	switch {
+	case a.Money != nil:
+		return a.Money.String() + " " + a.Money.Currency().Code
+	case a.Month != "":
+		return a.Month
+	case a.Int != nil:
+		return *a.Int
+	case a.Number != "":
+		return a.Number
+	case a.List != nil:
+		items := make([]any, len(a.List))
+		for i, m := range a.List {
+			if len(m.Args) == 0 {
+				items[i] = m.Key
+			} else {
+				items[i] = flatArgs(m.Args)
+			}
+		}
+		return items
+	}
+	return a.Text
 }
 
 type lineRow struct {
@@ -150,7 +192,7 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 		"saved": t.Saved.String(), "end_savings": t.EndSavings.String(), "interest": t.TotalInterest.String(),
 	}
 	for _, in := range r.Insights {
-		s.Insights = append(s.Insights, insightRow{in.ID, in.Tone, plain(in.Text), in.Key, in.Args})
+		s.Insights = append(s.Insights, newInsightRow(in))
 	}
 	return s
 }

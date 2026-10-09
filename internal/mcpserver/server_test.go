@@ -129,19 +129,19 @@ func TestGetBudget(t *testing.T) {
 
 func TestEditTools(t *testing.T) {
 	h := setup(t)
-	s := h.call("update_line", map[string]any{"line": "school supplies", "amount": "60"}, false)
+	s := h.call("update_line", map[string]any{"detail": "full", "line": "school supplies", "amount": "60"}, false)
 	if line(s, "supplies")["amount"] != "60.00" {
 		t.Fatalf("update_line: %v", line(s, "supplies"))
 	}
-	s = h.call("add_line", map[string]any{"name": "Insurance", "amount": "120", "category": "home", "every": 3, "starts": "2026-12"}, false)
+	s = h.call("add_line", map[string]any{"detail": "full", "name": "Insurance", "amount": "120", "category": "home", "every": 3, "starts": "2026-12"}, false)
 	if l := line(s, "insurance"); l == nil || l["schedule"] != "quarterly from Dec 2026" {
 		t.Fatalf("add_line: %v", l)
 	}
-	s = h.call("set_currency", map[string]any{"code": "USD", "per_base": "1.2"}, false)
+	s = h.call("set_currency", map[string]any{"detail": "full", "code": "USD", "per_base": "1.2"}, false)
 	if line(s, "supplies")["base"] != "51.00" { // 60 × 1.02 / 1.2
 		t.Fatalf("set_currency: %v", line(s, "supplies"))
 	}
-	s = h.call("remove_line", map[string]any{"line": "holiday"}, false)
+	s = h.call("remove_line", map[string]any{"detail": "full", "line": "holiday"}, false)
 	if line(s, "holiday") != nil {
 		t.Fatal("remove_line")
 	}
@@ -159,12 +159,12 @@ func TestEditTools(t *testing.T) {
 
 func TestDebtUpsert(t *testing.T) {
 	h := setup(t)
-	s := h.call("set_debt", map[string]any{"debt": "Credit cards", "currency": "USD", "balance": "4000", "apr_pct": "24", "min_payment": "250"}, false)
+	s := h.call("set_debt", map[string]any{"detail": "full", "debt": "Credit cards", "currency": "USD", "balance": "4000", "apr_pct": "24", "min_payment": "250"}, false)
 	debts := s["debts"].([]any)
 	if len(debts) != 1 || debts[0].(map[string]any)["id"] != "credit-cards" {
 		t.Fatalf("create: %v", debts)
 	}
-	s = h.call("set_debt", map[string]any{"debt": "cards", "apr_pct": "25"}, false)
+	s = h.call("set_debt", map[string]any{"detail": "full", "debt": "cards", "apr_pct": "25"}, false)
 	debts = s["debts"].([]any)
 	if len(debts) != 1 || debts[0].(map[string]any)["apr_pct"] != "25" {
 		t.Fatalf("update: %v", debts)
@@ -173,7 +173,7 @@ func TestDebtUpsert(t *testing.T) {
 
 func TestWhatIfDoesNotSave(t *testing.T) {
 	h := setup(t)
-	s := h.call("what_if", map[string]any{"ops": []any{
+	s := h.call("what_if", map[string]any{"detail": "full", "ops": []any{
 		map[string]any{"op": "set_currency", "target": "USD", "value": map[string]any{"per_base": "1"}},
 	}}, false)
 	if !strings.Contains(s["id"].(string), "not saved") {
@@ -198,7 +198,7 @@ func TestApplyOpsIsAtomic(t *testing.T) {
 	h.call("apply_ops", map[string]any{"expected_revision": 99, "ops": []any{
 		map[string]any{"op": "set_line", "target": "rent", "value": map[string]any{"amount": "1"}},
 	}}, true)
-	s = h.call("apply_ops", map[string]any{"ops": []any{
+	s = h.call("apply_ops", map[string]any{"detail": "full", "ops": []any{
 		map[string]any{"op": "add_goal", "value": map[string]any{"name": "Emergency", "target": "3000"}},
 	}}, false)
 	if len(s["goals"].([]any)) != 2 {
@@ -215,7 +215,7 @@ func TestScenarioFlow(t *testing.T) {
 	if len(cmp) != 2 || cmp[1].(map[string]any)["delta_end_savings_vs_baseline"] != "5100.00" {
 		t.Fatalf("compare: %v", cmp)
 	}
-	s := h.call("adopt_scenario", map[string]any{"scenario": "cut-tuition"}, false)
+	s := h.call("adopt_scenario", map[string]any{"detail": "full", "scenario": "cut-tuition"}, false)
 	if line(s, "tuition")["amount"] != "450.00" || s["scenarios"] != nil {
 		t.Fatalf("adopt: %v", s["scenarios"])
 	}
@@ -239,12 +239,12 @@ func TestCreateAndResource(t *testing.T) {
 func TestCryptoIncomeAndRates(t *testing.T) {
 	h := setup(t)
 	// A new currency without a rate gets one fetched.
-	s := h.call("set_currency", map[string]any{"code": "btc", "cash_out_fee_pct": "1"}, false)
+	s := h.call("set_currency", map[string]any{"detail": "full", "code": "btc", "cash_out_fee_pct": "1"}, false)
 	cur := s["settings"].(map[string]any)["currencies"].([]any)[2].(map[string]any)
 	if cur["code"] != "BTC" || cur["per_base"] != "0.00001" || cur["source"] != "auto" || cur["cash_out_fee_pct"] != "1" {
 		t.Fatalf("set_currency: %v", cur)
 	}
-	s = h.call("add_line", map[string]any{"name": "Staking", "amount": "0.002", "currency": "BTC", "category": "income"}, false)
+	s = h.call("add_line", map[string]any{"detail": "full", "name": "Staking", "amount": "0.002", "currency": "BTC", "category": "income"}, false)
 	if l := line(s, "staking"); l["base"] != "198.00" { // 0.002 BTC = €200, less 1%
 		t.Fatalf("crypto income: %v", l)
 	}
@@ -283,7 +283,7 @@ func TestHistoryAndUndoTools(t *testing.T) {
 	if last["source"] != "mcp" || !strings.Contains(last["summary"].(string), "1150 → 1200") {
 		t.Fatalf("history: %v", last)
 	}
-	s := h.call("undo", map[string]any{}, false)
+	s := h.call("undo", map[string]any{"detail": "full"}, false)
 	if line(s, "rent")["amount"] != "1150.00" {
 		t.Fatalf("undo: %v", line(s, "rent"))
 	}

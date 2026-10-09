@@ -204,6 +204,19 @@ The editor saves as you type, so its saves within two minutes of each other merg
 
 Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`. There is also a resource, `budget://{id}`, with the raw document.
 
+**Responses are sized for a model's context.** A write returns what changed and what that did, not the whole budget again:
+
+```json
+{"budget":"home","revision":3,"saved":true,"change":"Rent: amount 1150 → 1200","currency":"EUR",
+ "effect":{"totals":{"end_savings":{"before":"10409.88","after":"9771.60","change":"-638.28"}},
+           "first_month":{"left":{"before":"317.49","after":"264.30","change":"-53.19"}},
+           "updated_insights":[{"id":"biggest_line","text":"Biggest recurring line: Rent at €1,277 a month (33% of income).","args":{"name":"Rent","amount":"1276.6 EUR","pct":33}}]}}
+```
+
+`effect` also lists insights that appeared or went away, and debt payoff and goal dates that moved. `what_if` answers in the same shape with `"saved": false`. Pass `"detail": "full"` to a write for the whole budget instead. For a 600-month budget an edit returns about 2 KB rather than 87 KB.
+
+`get_budget` returns an overview by default: everything, but only the first three months and the last. Use `view` (`lines`, `months`, `debts`, `goals`, `insights`, `all`) and `from`/`to` (`YYYY-MM`) to get exactly the part you need.
+
 `-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Lines are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
 The web UI and the MCP server can run as separate processes on the same data directory. Writes are serialised with a file lock and guarded by revision numbers. The UI polls and picks up Claude's edits within a few seconds. If you were mid-edit when a change arrived, the UI reloads and tells you, rather than overwriting the other change.
