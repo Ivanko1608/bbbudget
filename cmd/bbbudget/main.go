@@ -34,6 +34,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/i18n"
@@ -125,6 +126,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		opts := httpapi.Options{Static: web.FS(), Log: log, Paths: map[string]string{"data": *dir, "templates": *tplDir, "settings": *settingsFile}}
 		go a.RunAutoRefresh(ctx, log)
+		opts.Assistant = &assistant.Assistant{App: a, Provider: func() (assistant.Provider, error) {
+			st, err := a.Settings() // re-read: a change in Settings applies to the next conversation
+			if err != nil {
+				return nil, err
+			}
+			return assistant.FromSettings(st)
+		}}
 		if *hosts != "" {
 			opts.AllowedHosts = strings.Split(*hosts, ",")
 		}
@@ -395,7 +403,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "settings":
 		var sets []string
-		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale", func(v string) error {
+		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale, assistant_provider, assistant_model, assistant_url, assistant_api_key", func(v string) error {
 			sets = append(sets, v)
 			return nil
 		})
@@ -430,6 +438,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
 			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.Locale(ctx), strings.Join(i18n.Locales(), ", "))
+		akey := "not set"
+		if s.AssistantAPIKey != "" {
+			akey = "set"
+		}
+		ast := assistant.StatusOf(s)
+		fmt.Fprintf(tw, "assistant_provider\t%s\tin-app chat; %s\nassistant_model\t%s\nassistant_url\t%s\nassistant_api_key\t%s\n",
+			orDefault(s.AssistantProvider, "off"), map[bool]string{true: "on, model " + ast.Model, false: "off"}[ast.Enabled], s.AssistantModel, s.AssistantURL, akey)
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 
@@ -443,6 +458,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprint(stderr, usage)
 	return fmt.Errorf("unknown command %q", cmd)
+}
+
+func orDefault(v, d string) string {
+	if v == "" {
+		return d
+	}
+	return v
 }
 
 // parseArgs parses flags anywhere among the positional arguments
@@ -515,6 +537,14 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 			p.AutoRefresh = &v
 		case "locale":
 			p.Locale = &v
+		case "assistant_provider":
+			p.AssistantProvider = &v
+		case "assistant_model":
+			p.AssistantModel = &v
+		case "assistant_url":
+			p.AssistantURL = &v
+		case "assistant_api_key":
+			p.AssistantAPIKey = &v
 		case "coingecko_api_key":
 			p.CoinGeckoAPIKey = &v
 		default:

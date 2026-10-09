@@ -31,6 +31,33 @@
       </div>
     </section>
 
+    <section aria-labelledby="h-ai">
+      <h2 id="h-ai" data-i18n="prefs.assistant.heading">AI assistant</h2>
+      <p class="muted" data-i18n="prefs.assistant.text"></p>
+      <div class="grid settings-grid">
+        <label class="f"><span data-i18n="prefs.assistant.provider">Assistant</span>
+          <select name="assistant_provider">
+            <option value="off" data-i18n="prefs.assistant.off">Off</option>
+            <option value="anthropic" data-i18n="prefs.assistant.anthropic">Claude</option>
+            <option value="openai-compatible" data-i18n="prefs.assistant.local">Local model</option>
+          </select>
+        </label>
+        <label class="f"><span data-i18n="prefs.assistant.model">Model</span>
+          <input name="assistant_model" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:prefs.assistant.model_hint">
+        </label>
+        <label class="f" id="aiUrlRow"><span data-i18n="prefs.assistant.url">Server URL</span>
+          <input name="assistant_url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+        </label>
+      </div>
+      <div class="key-row">
+        <label class="f"><span><span data-i18n="prefs.assistant.key">API key</span> <span id="aiKeyState"></span></span>
+          <input name="assistant_api_key" type="password" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:prefs.assistant.key_placeholder">
+        </label>
+        <button type="button" id="clearAiKey" class="danger" data-i18n="prefs.assistant.remove_key">Remove key</button>
+      </div>
+      <p class="muted hint" id="aiStatus"></p>
+    </section>
+
     <section aria-labelledby="h-rates">
       <h2 id="h-rates" data-i18n="prefs.rates.heading">Exchange rates</h2>
       <p class="muted" data-i18n="prefs.rates.text"></p>

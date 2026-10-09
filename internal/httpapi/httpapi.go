@@ -5,6 +5,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
@@ -39,6 +41,9 @@ type Options struct {
 	Log          *slog.Logger
 	// Paths are shown on the settings page (e.g. "data", "templates", "settings").
 	Paths map[string]string
+	// Assistant, if set, serves the in-app chat (it is still off until the
+	// settings choose a provider).
+	Assistant *assistant.Assistant
 }
 
 type server struct {
@@ -70,6 +75,8 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTx)
 	mux.HandleFunc("DELETE /api/budgets/{id}/transactions", s.deleteTx)
 	mux.HandleFunc("GET /api/budgets/{id}/status", s.status)
+	mux.HandleFunc("GET /api/assistant", s.assistantStatus)
+	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
 	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
@@ -498,6 +505,7 @@ type settingsView struct {
 	AutoRefresh       string                `json:"auto_refresh"`
 	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
 	Locale            string                `json:"locale"`
+	Assistant         assistantSettings     `json:"assistant"`
 	Status            app.AutoRefreshStatus `json:"auto_refresh_status"`
 	Paths             map[string]string     `json:"paths"`
 }
@@ -511,7 +519,81 @@ func (s *server) settingsView(st settings.Settings) settingsView {
 	if locale == "" {
 		locale = settings.LocaleAuto
 	}
-	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", locale, s.app.AutoRefresh(), paths}
+	as := assistantSettings{Provider: st.AssistantProvider, Model: st.AssistantModel, URL: st.AssistantURL, KeySet: st.AssistantAPIKey != "", Status: assistant.StatusOf(st)}
+	if as.Provider == "" {
+		as.Provider = settings.AssistantOff
+	}
+	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", locale, as, s.app.AutoRefresh(), paths}
+}
+
+// assistantSettings is the assistant part of the settings, as the UI sees
+// it: the key only as set or not.
+type assistantSettings struct {
+	Provider string           `json:"provider"`
+	Model    string           `json:"model"`
+	URL      string           `json:"url"`
+	KeySet   bool             `json:"api_key_set"`
+	Status   assistant.Status `json:"status"`
+}
+
+func (s *server) assistantStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := s.app.Settings()
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := assistant.StatusOf(st)
+	if s.opts.Assistant == nil {
+		out = assistant.Status{Provider: settings.AssistantOff}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// chat answers one message as a stream of server-sent events: a "session"
+// event with the conversation id, then "text", "tool" and "changed" events
+// as the assistant works, and "done" (or "error") at the end. The browser
+// talks only to this server; only this server talks to the model.
+func (s *server) chat(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Assistant == nil {
+		writeErr(w, http.StatusNotFound, "the assistant is not available in this server", nil)
+		return
+	}
+	var in struct {
+		Session string `json:"session"`
+		Message string `json:"message"`
+	}
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if st, err := s.app.Settings(); err != nil || !assistant.StatusOf(st).Enabled {
+		writeErr(w, http.StatusConflict, assistant.ErrOff.Error(), nil)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "streaming unsupported", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	send := func(e assistant.Event) {
+		raw, _ := json.Marshal(e)
+		fmt.Fprintf(w, "data: %s\n\n", raw)
+		flusher.Flush()
+	}
+	ctx := store.WithChange(r.Context(), store.Change{Source: assistant.Source})
+	id, err := s.opts.Assistant.Reply(ctx, in.Session, r.PathValue("id"), in.Message, func(e assistant.Event) {
+		send(e)
+	})
+	send(assistant.Event{Type: "session", Text: id})
+	if err != nil {
+		s.opts.Log.Warn("assistant", "budget", r.PathValue("id"), "err", err)
+		send(assistant.Event{Type: "error", Text: err.Error()})
+		return
+	}
+	send(assistant.Event{Type: "done"})
 }
 
 func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {

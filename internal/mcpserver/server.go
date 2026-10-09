@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -38,6 +39,9 @@ type Options struct {
 	// DefaultBudget is used when a tool call omits "budget".
 	DefaultBudget string
 	Version       string
+	// Source labels this server's writes in the change history: "mcp"
+	// (default) for external clients, "assistant" for the in-app chat.
+	Source string
 }
 
 // New builds an MCP server over the app.
@@ -47,8 +51,11 @@ func New(a *app.App, opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "bbbudget", Title: "Budget planner", Version: opts.Version},
 		&mcp.ServerOptions{Instructions: instructions})
+	if opts.Source == "" {
+		opts.Source = "mcp"
+	}
 	h := &handlers{app: a, def: opts.DefaultBudget}
-	h.register(s)
+	h.register(s, opts.Source)
 	return s
 }
 
@@ -62,6 +69,10 @@ var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschem
 	reflect.TypeFor[json.RawMessage](): {Type: "object"},
 }}
 
+// sources holds each server's history label (Options.Source). Several
+// servers can run in one process: the MCP endpoint and the in-app assistant.
+var sources sync.Map // *mcp.Server → string
+
 // tool registers a handler whose input schema is inferred from In with the
 // money-aware type mapping above. Handlers return any JSON-able value.
 func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In) (any, error)) {
@@ -71,7 +82,8 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			out, err := fn(store.WithChange(ctx, store.Change{Source: "mcp"}), in)
+			src, _ := sources.Load(s)
+			out, err := fn(store.WithChange(ctx, store.Change{Source: src.(string)}), in)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
@@ -219,7 +231,8 @@ func opsHelp() string {
 Value fields: Line{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
 }
 
-func (h *handlers) register(s *mcp.Server) {
+func (h *handlers) register(s *mcp.Server, source string) {
+	sources.Store(s, source)
 	tool(s, "list_budgets", "List stored budgets.", func(ctx context.Context, _ struct{}) (any, error) {
 		return h.app.List(ctx)
 	})

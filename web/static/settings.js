@@ -30,6 +30,15 @@ function render(s) {
   form.locale.innerHTML = [["auto", t("prefs.language.auto")], ...META.locales.map((l) => [l.code, l.name])]
     .map(([v, n]) => `<option value="${v}">${n.replace(/[&<>"]/g, "")}</option>`).join("");
   form.locale.value = s.locale || "auto";
+  const ai = s.assistant || { provider: "off", status: {} };
+  form.assistant_provider.value = ai.provider || "off";
+  form.assistant_model.value = ai.model || "";
+  form.assistant_url.value = ai.url || "";
+  form.assistant_api_key.value = "";
+  $("#aiKeyState").textContent = t(ai.api_key_set ? "prefs.cg.set" : "prefs.cg.none");
+  $("#clearAiKey").hidden = !ai.api_key_set;
+  $("#aiStatus").textContent = ai.status?.enabled ? t("prefs.assistant.status_on", { model: ai.status.model }) : t("prefs.assistant.status_off");
+  syncAssistant();
   form.fetch_rates.checked = s.fetch_rates;
   form.default_rate_source.value = s.default_rate_source;
   form.auto_refresh.value = s.auto_refresh;
@@ -59,6 +68,13 @@ function render(s) {
   $("#h-files").parentElement.hidden = !dl.children.length;
 }
 
+// The server URL is only for an OpenAI-compatible server.
+function syncAssistant() {
+  const p = form.assistant_provider.value;
+  $("#aiUrlRow").hidden = p !== "openai-compatible";
+  for (const name of ["assistant_model", "assistant_api_key"]) form[name].disabled = p === "off";
+}
+
 // Rate options mean nothing while fetching is off.
 function syncDisabled() {
   const off = !form.fetch_rates.checked;
@@ -78,16 +94,23 @@ async function save(patch, done) {
 }
 
 form.fetch_rates.addEventListener("change", syncDisabled);
+form.assistant_provider.addEventListener("change", syncAssistant);
+$("#clearAiKey").addEventListener("click", () => save({ assistant_api_key: "" }, t("prefs.key_removed")));
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   const patch = {
     locale: form.locale.value,
+    assistant_provider: form.assistant_provider.value,
+    assistant_model: form.assistant_model.value.trim(),
+    assistant_url: form.assistant_url.value.trim(),
     fetch_rates: form.fetch_rates.checked,
     default_rate_source: form.default_rate_source.value,
     auto_refresh: form.auto_refresh.value,
   };
   const key = form.coingecko_api_key.value.trim();
   if (key) patch.coingecko_api_key = key; // empty means "keep the current key"
+  const aiKey = form.assistant_api_key.value.trim();
+  if (aiKey) patch.assistant_api_key = aiKey;
   const relang = patch.locale !== CURRENT;
   save(patch, t("prefs.saved")).then((ok) => { if (ok && relang) location.reload(); }); // show the page in the new language
 });

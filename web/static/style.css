@@ -69,6 +69,14 @@ section > .muted{margin:-6px 0 8px}
 .ins.good{background:var(--tint-good)}
 .ins b{font-weight:600}
 .activity{list-style:none;margin:0;padding:0}
+.chat-log{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;margin:8px 0}
+.chat-msg{padding:8px 12px;border-radius:10px;font-size:.92rem;max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-msg.me{align-self:flex-end;background:var(--accent);color:#fff}
+.chat-msg.bot{align-self:flex-start;background:var(--tint-info)}
+.chat-msg.tool,.chat-msg.note{align-self:flex-start;color:var(--muted);font-size:.8rem;padding:2px 12px}
+.chat-msg.err{align-self:flex-start;background:var(--tint-warn)}
+.chat-form{display:flex;gap:8px;align-items:flex-end}
+.chat-form textarea{flex:1;resize:vertical;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink)}
 h3.sub{font-size:.9rem;margin:16px 0 6px}
 #nowFlags{margin-bottom:10px}
 .now-row{padding:6px 0}

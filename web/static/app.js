@@ -97,6 +97,7 @@ async function open(id) {
   $("#picker").value = id;
   try { localStorage.setItem("bbbudget.last", id); } catch {}
   history.replaceState(null, "", `#${encodeURIComponent(id)}`);
+  if (S.chatBudget !== id) { S.chatSession = ""; S.chatBudget = id; $("#chatLog").replaceChildren(); }
   status(t("status.saved", { revision: S.revision }));
   loadCompare();
   loadActivity();
@@ -672,6 +673,74 @@ async function saveWhatIf() {
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
 }
 
+// ---------- assistant ----------
+
+async function initChat() {
+  let st;
+  try { st = await api("GET", "/api/assistant"); } catch { return; }
+  $("#chatSection").hidden = !st.enabled;
+  if (!st.enabled) return;
+  $("#chatPrivacy").textContent = st.local ? t("chat.privacy_local", { model: st.model }) : t("chat.privacy_hosted", { model: st.model, provider: st.provider === "anthropic" ? "Anthropic" : st.provider });
+}
+
+function chatLine(cls, text, html = false) {
+  const el = document.createElement("div");
+  el.className = `chat-msg ${cls}`;
+  if (html) el.innerHTML = text; else el.textContent = text;
+  $("#chatLog").append(el);
+  el.scrollIntoView({ block: "nearest" });
+  return el;
+}
+
+// sendChat posts a message and reads the server-sent events as they come:
+// the assistant's text, the tools it uses, and "changed" when it wrote to
+// the budget (the page reloads it at the end).
+async function sendChat(text) {
+  if (S.timer) { clearTimeout(S.timer); S.timer = null; }
+  if (S.pending) await save(); // the assistant must see what is on screen
+  chatLine("me", text);
+  const working = chatLine("note", t("chat.working"));
+  $("#chatSend").disabled = true;
+  let changed = false;
+  try {
+    const res = await fetch(`/api/budgets/${encodeURIComponent(S.id)}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "bbbudget" },
+      body: JSON.stringify({ session: S.chatSession || "", message: text }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error || res.statusText);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).replace(/^data: /, "");
+        buf = buf.slice(i + 2);
+        if (!line.trim()) continue;
+        const e = JSON.parse(line);
+        if (e.type === "text") chatLine("bot", bold(e.text), true);
+        else if (e.type === "tool") chatLine("tool", e.detail ? `${e.tool}: ${e.detail}` : e.tool);
+        else if (e.type === "changed") changed = true;
+        else if (e.type === "session") S.chatSession = e.text;
+        else if (e.type === "error") chatLine("err", t("chat.error", { error: e.text }));
+      }
+    }
+  } catch (e) {
+    chatLine("err", t("chat.error", { error: e.message }));
+  } finally {
+    working.remove();
+    $("#chatSend").disabled = false;
+    if (changed) await open(S.id);
+  }
+}
+
 // ---------- this month: plan versus actual ----------
 
 async function loadNow() {
@@ -830,6 +899,16 @@ document.addEventListener("click", (e) => {
   ACTIONS[btn.dataset.action]?.(Number(btn.dataset.i), btn);
 });
 $("#picker").addEventListener("change", (e) => open(e.target.value));
+$("#chatForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#chatInput").value.trim();
+  if (!text || $("#chatSend").disabled) return;
+  $("#chatInput").value = "";
+  sendChat(text);
+});
+$("#chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#chatForm").requestSubmit(); }
+});
 $("#newBtn").addEventListener("click", openNewDialog);
 $("#newDialog").addEventListener("close", () => { if ($("#newDialog").returnValue === "ok") createFromDialog(); });
 $("#exportBtn").addEventListener("click", exportJSON);
@@ -844,6 +923,7 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
     $("#license").innerHTML = esc(t("app.license", { license: "\u0001" })).replace("\u0001",
       `<a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a>`);
     S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
+    initChat();
     await loadList();
     if (!S.list.length) { status(t("status.no_budgets_yet")); return; }
     let want = decodeURIComponent(location.hash.slice(1));

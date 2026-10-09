@@ -73,7 +73,8 @@ func (h *handlers) registerWhatsNew(s *mcp.Server) {
 		Description: "What changed in a budget since the assistant's last change, and this month's flags (same as the whats_new tool).",
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		id := strings.TrimPrefix(req.Params.URI, "whats-new://")
-		out, err := h.whatsNew(store.WithChange(ctx, store.Change{Source: "mcp"}), id, 0)
+		src, _ := sources.Load(s)
+		out, err := h.whatsNew(store.WithChange(ctx, store.Change{Source: src.(string)}), id, 0)
 		if err != nil {
 			return nil, mcp.ResourceNotFoundError(req.Params.URI)
 		}

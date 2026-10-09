@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bbbudget/internal/assistant"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -377,5 +380,74 @@ func TestTransactionsAPI(t *testing.T) {
 	c.do("DELETE", "/api/budgets/home/transactions/t1", "", 200)
 	if d := c.do("DELETE", "/api/budgets/home/transactions?batch=b1", "", 200); d["removed"].(float64) != 1 {
 		t.Fatalf("delete batch: %v", d)
+	}
+}
+
+type fakeModel struct{ turns []assistant.Turn }
+
+func (f *fakeModel) Name() string                                          { return "fake" }
+func (f *fakeModel) Model() string                                         { return "fake-1" }
+func (f *fakeModel) Start(string, []assistant.Tool) assistant.Conversation { return f }
+func (f *fakeModel) Send(context.Context, string, []assistant.ToolResult) (assistant.Turn, error) {
+	t := f.turns[0]
+	f.turns = f.turns[1:]
+	return t, nil
+}
+
+func TestAssistantChat(t *testing.T) {
+	st, _ := store.NewFileStore(t.TempDir())
+	a := app.New(st, nil)
+	a.Rates = offlineRates()
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	model := &fakeModel{turns: []assistant.Turn{
+		{Calls: []assistant.ToolCall{{ID: "1", Name: "update_line", Input: json.RawMessage(`{"line":"rent","amount":"1200"}`)}}},
+		{Text: "Rent is 1200 now."},
+	}}
+	as := &assistant.Assistant{App: a, Provider: func() (assistant.Provider, error) { return model, nil }}
+	c := &client{t, New(a, Options{Assistant: as, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})}
+	c.do("POST", "/api/budgets", `{"id":"home","template":"example"}`, 201)
+
+	// Off by default: the page shows no chat, and chatting is refused.
+	if s := c.do("GET", "/api/assistant", "", 200); s["enabled"] != false {
+		t.Fatalf("status: %v", s)
+	}
+	c.do("POST", "/api/budgets/home/chat", `{"message":"hi"}`, 409)
+
+	c.do("PUT", "/api/settings", `{"assistant_provider":"anthropic","assistant_api_key":"sk-secret-123"}`, 200)
+	if s := c.do("GET", "/api/assistant", "", 200); s["enabled"] != true || s["model"] != assistant.DefaultAnthropicModel {
+		t.Fatalf("status: %v", s)
+	}
+	// The key is never sent back.
+	for _, path := range []string{"/api/settings", "/api/assistant", "/api/meta"} {
+		if w := c.req("GET", path, "", nil); strings.Contains(w.Body.String(), "sk-secret") {
+			t.Fatalf("%s leaks the key", path)
+		}
+	}
+	if s := c.do("GET", "/api/settings", "", 200)["assistant"].(map[string]any); s["api_key_set"] != true {
+		t.Fatalf("settings: %v", s)
+	}
+
+	w := c.req("POST", "/api/budgets/home/chat", `{"message":"raise rent to 1200"}`, nil)
+	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("chat: %d %s", w.Code, w.Header())
+	}
+	var kinds []string
+	for _, line := range strings.Split(w.Body.String(), "\n\n") {
+		if line = strings.TrimPrefix(strings.TrimSpace(line), "data: "); line == "" {
+			continue
+		}
+		var e assistant.Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("bad event %q: %v", line, err)
+		}
+		kinds = append(kinds, e.Type)
+	}
+	if got := strings.Join(kinds, ","); got != "tool,changed,text,session,done" {
+		t.Fatalf("events: %s\n%s", got, w.Body)
+	}
+	var h []map[string]any
+	json.Unmarshal(c.req("GET", "/api/budgets/home/history?limit=1", "", nil).Body.Bytes(), &h)
+	if h[0]["source"] != "assistant" {
+		t.Fatalf("history: %v", h[0])
 	}
 }

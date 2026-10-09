@@ -45,11 +45,12 @@ Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27).
 A budget is about as personal as data gets, so bbbudget is built to keep it on your machine:
 
 - **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
-- **Zero third-party requests.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **Zero third-party requests from the browser.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **The server phones out only when you tell it to.** It fetches exchange rates if that is on (`fetch_rates`, see [Settings](#settings)), and it talks to an AI model if you turn the [in-app assistant](#in-app-assistant) on. Both are your choice, and both are off-able in Settings.
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file. Each budget's change history sits next to it (`home.jsonl`), holding copies of its last 200 versions, so something you remove from a budget stays in its history until it ages out. Deleting the budget deletes its history too.
 - **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
 
-One honest caveat: when you use the MCP server with a hosted AI assistant, the MCP server itself still runs locally, but whatever budget data the assistant reads is sent to that assistant's provider as part of the conversation. If that matters to you, use a local MCP client or stick to the web UI and CLI.
+One honest caveat about AI: with a **hosted** model, whether that's the in-app assistant using Claude or an external MCP client like Claude Desktop, bbbudget itself still runs locally, but your messages and whatever budget data the assistant reads are sent to the model's provider. If that matters to you, point the in-app assistant at a model on your own machine (Ollama, LM Studio), where nothing leaves it, or stick to the web UI and CLI.
 
 ## What it models
 
@@ -105,6 +106,10 @@ App-wide preferences live on the **Settings** page (top right of the UI), in `bb
 | `default_rate_source` | `auto` | The source a newly added currency gets. |
 | `auto_refresh` | `off` | `hourly` or `daily`: while `bbbudget serve` runs, refresh every budget's non-manual rates. The page shows the last run. |
 | `coingecko_api_key` | — | Optional CoinGecko demo key. The file is written with mode 0600, and the key is never sent back to the browser or printed. |
+| `assistant_provider` | `off` | `anthropic` (Claude, with your API key) or `openai-compatible` (Ollama, LM Studio, llama.cpp, vLLM…) turns on the [in-app assistant](#in-app-assistant). |
+| `assistant_model` | — | Model name. Default for `anthropic`: `claude-opus-5-5`; required for `openai-compatible` (e.g. `llama3.1`). |
+| `assistant_url` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible server (Ollama's, by default). |
+| `assistant_api_key` | — | The provider's key. Like the CoinGecko key: stored with mode 0600, never sent back to the browser or printed. Without one, `anthropic` uses `ANTHROPIC_API_KEY` or an `ant auth login` profile. |
 | `locale` | `auto` | The language for text. `auto` follows the browser in the UI, and `$LANG` for the CLI and MCP server. See [Languages](#languages). |
 
 ```
@@ -211,6 +216,18 @@ bbbudget undo home -change 12    # a specific one (refused if later changes exis
 ```
 
 The editor saves as you type, so its saves within two minutes of each other merge into one entry. Each budget keeps its last 200 changes, each with a full copy of the budget as it was, so any of them can be restored.
+
+## In-app assistant
+
+Turn it on in Settings (or `bbbudget settings -set assistant_provider=anthropic -set assistant_api_key=…`). A chat box then appears at the top of the budget page: ask questions, run what-ifs, log spending ("I spent 40 on groceries"), or have it change the plan.
+
+- **Same tools as MCP.** The agent loop runs in the bbbudget server, using the same MCP tools any external client gets, connected in-process. The chat and Claude Desktop can't drift apart.
+- **The browser never talks to the provider.** Only the server does, so the page's strict CSP is unchanged.
+- **Changes are attributed and undoable.** The assistant's changes appear under **Recent changes** as "AI assistant" and can be undone like any other.
+- **Nothing is stored.** Conversations live in memory and expire after an hour idle.
+- **Two kinds of provider:**
+  - `anthropic` uses Claude (`claude-opus-5-5` by default) through the Messages API, with adaptive thinking at medium effort, prompt caching of the stable system prompt and tools, and server-side refusal fallbacks enabled.
+  - `openai-compatible` works with any server that speaks `/v1/chat/completions` with tool calling. Pointed at `127.0.0.1`, everything stays on your machine, and the chat says so. Small local models are noticeably weaker at multi-step tool use than Claude.
 
 ## Using it with Claude
 

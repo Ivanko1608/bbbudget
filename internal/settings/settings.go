@@ -42,11 +42,28 @@ type Settings struct {
 	// UI, $LANG elsewhere) or a language tag such as "en" or "de". Empty
 	// means auto.
 	Locale string `json:"locale"`
+	// AssistantProvider turns on the in-app AI chat: "off" (default),
+	// "anthropic" (Claude, with your API key) or "openai-compatible" (a
+	// server such as Ollama at AssistantURL, which can be on your machine).
+	AssistantProvider string `json:"assistant_provider"`
+	// AssistantModel overrides the provider's default model.
+	AssistantModel string `json:"assistant_model,omitempty"`
+	// AssistantURL is the base URL of an OpenAI-compatible server.
+	AssistantURL string `json:"assistant_url,omitempty"`
+	// AssistantAPIKey is the provider's key. Never sent back to the UI.
+	AssistantAPIKey string `json:"assistant_api_key,omitempty"`
 }
+
+// Assistant providers.
+const (
+	AssistantOff       = "off"
+	AssistantAnthropic = "anthropic"
+	AssistantLocal     = "openai-compatible"
+)
 
 // Defaults are used when there is no settings file.
 func Defaults() Settings {
-	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto}
+	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto, AssistantProvider: AssistantOff}
 }
 
 // LocaleAuto picks the language from the reader's browser or environment.
@@ -83,6 +100,18 @@ func (s Settings) Validate() error {
 	if s.Locale != LocaleAuto && s.Locale != "" && !localeRe.MatchString(s.Locale) {
 		errs = append(errs, errors.New(`locale must be "auto" or a language tag such as "en" or "de"`))
 	}
+	if !slices.Contains([]string{"", AssistantOff, AssistantAnthropic, AssistantLocal}, s.AssistantProvider) {
+		errs = append(errs, errors.New("assistant_provider must be off, anthropic or openai-compatible"))
+	}
+	if s.AssistantURL != "" && !strings.HasPrefix(s.AssistantURL, "http://") && !strings.HasPrefix(s.AssistantURL, "https://") {
+		errs = append(errs, errors.New("assistant_url must start with http:// or https://"))
+	}
+	if len(s.AssistantModel) > 200 || strings.ContainsAny(s.AssistantModel, " \t\r\n") {
+		errs = append(errs, errors.New("assistant_model must be a single name without spaces"))
+	}
+	if len(s.AssistantAPIKey) > 500 || strings.ContainsAny(s.AssistantAPIKey, " \t\r\n") {
+		errs = append(errs, errors.New("assistant_api_key must be a single token without spaces"))
+	}
 	if len(s.CoinGeckoAPIKey) > 200 || strings.ContainsAny(s.CoinGeckoAPIKey, " \t\r\n") {
 		errs = append(errs, errors.New("coingecko_api_key must be a single token without spaces"))
 	}
@@ -97,6 +126,10 @@ type Patch struct {
 	AutoRefresh       *string `json:"auto_refresh,omitempty"`
 	CoinGeckoAPIKey   *string `json:"coingecko_api_key,omitempty"`
 	Locale            *string `json:"locale,omitempty"`
+	AssistantProvider *string `json:"assistant_provider,omitempty"`
+	AssistantModel    *string `json:"assistant_model,omitempty"`
+	AssistantURL      *string `json:"assistant_url,omitempty"`
+	AssistantAPIKey   *string `json:"assistant_api_key,omitempty"`
 }
 
 // Apply returns s with p applied, validated.
@@ -113,6 +146,10 @@ func (s Settings) Apply(p Patch) (Settings, error) {
 	set(&s.AutoRefresh, p.AutoRefresh)
 	set(&s.CoinGeckoAPIKey, p.CoinGeckoAPIKey)
 	set(&s.Locale, p.Locale)
+	set(&s.AssistantProvider, p.AssistantProvider)
+	set(&s.AssistantModel, p.AssistantModel)
+	set(&s.AssistantURL, p.AssistantURL)
+	set(&s.AssistantAPIKey, p.AssistantAPIKey)
 	return s, s.Validate()
 }
 
