@@ -224,7 +224,7 @@ The editor saves as you type, so its saves within two minutes of each other merg
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`, `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status`. There is also a resource, `budget://{id}`, with the raw document.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`, `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status`, `whats_new`. Resources: `budget://{id}` (the raw document) and `whats-new://{id}`.
 
 **Responses are sized for a model's context.** A write returns what changed and what that did, not the whole budget again:
 
@@ -234,6 +234,20 @@ Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_lin
            "first_month":{"left":{"before":"317.49","after":"264.30","change":"-53.19"}},
            "updated_insights":[{"id":"biggest_line","text":"Biggest recurring line: Rent at €1,277 a month (33% of income).","args":{"name":"Rent","amount":"1276.6 EUR","pct":33}}]}}
 ```
+
+**Prompts** show up as slash commands in Claude Desktop and Claude Code (and in any MCP client that supports prompts):
+
+| Prompt | What it does |
+|---|---|
+| `onboard` | Builds a new budget from a short interview instead of forms. |
+| `monthly_review` | Where this month stands against the plan, what changed, and up to two adjustments, quantified with `what_if`. |
+| `can_i_afford` | `item`, `amount`, `when`: checks a purchase against the plan without saving anything. |
+| `debt_plan` | Compares avalanche and snowball, and how much extra to pay, as scenarios. |
+| `import_statement` | Turns a pasted bank statement into logged transactions, asking about ambiguous rows first. |
+
+Each takes an optional `language`. Without one, the assistant answers in whatever language you write in.
+
+**`whats_new`** is for coming back to a budget. It reports what changed since the assistant's own last edit: changes you made in the browser or on the command line, scheduled rate refreshes, what all of that did to the outcome (the same `effect` as a write), and this month's plan-versus-actual flags. The same data is available as the resource `whats-new://{id}`.
 
 Tools for actual spending: `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status` (see [Actual spending](#actual-spending)).
 

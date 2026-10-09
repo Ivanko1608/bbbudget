@@ -30,6 +30,7 @@ Rates: a currency's source is "manual" (typed) or a provider (auto = official EC
 
 Workflow: call list_budgets, then get_budget before answering about numbers. Writes and what_if return what changed and its effect (totals, first month, debt payoff, goal dates, insights that appeared or went away), not the whole budget: use that to answer, and get_budget (with a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
 Actual money: the budget is a plan; log_transactions records what was really spent or received ("I spent 40 on groceries", or a pasted bank statement: one call with every row, each with an external_id so a re-import is skipped). month_status compares the month with the plan. Choose categories from the budget; if one is unclear, ask. Correct mistakes with update_transaction or delete_transactions (a whole batch for a bad import).
+When you come back to a budget you have worked on, start with whats_new: it says what others changed since your last edit and what that did.
 Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
@@ -393,6 +394,8 @@ func (h *handlers) register(s *mcp.Server) {
 		})
 
 	h.registerLedger(s)
+	h.registerWhatsNew(s)
+	registerPrompts(s)
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name: "budget", URITemplate: "budget://{id}", MIMEType: "application/json",
