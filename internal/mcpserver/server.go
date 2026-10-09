@@ -71,6 +71,9 @@ external_id so a re-import is skipped). month_status compares the month with the
 categories from the budget; if one is unclear, ask. Correct mistakes with update_transaction or
 delete_transactions (a whole batch for a bad import).
 
+When you come back to a budget you have worked on, start with whats_new: it says what others
+changed since your last edit and what that did.
+
 Every write is recorded in the budget's history with who made it (mcp = you, web = the person in
 the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person
 says "undo that", undo your own last change; if someone else changed the budget since, undo
@@ -446,6 +449,8 @@ func (h *handlers) register(s *mcp.Server) {
 		})
 
 	h.registerLedger(s)
+	h.registerWhatsNew(s)
+	registerPrompts(s)
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name: "budget", URITemplate: "budget://{id}", MIMEType: "application/json",
