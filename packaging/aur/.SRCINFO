@@ -1,0 +1,15 @@
+pkgbase = bbbudget
+	pkgdesc = Multi-currency budget planner with exact money math: web UI, CLI and MCP server, fully local
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/Ivanko1608/bbbudget
+	arch = x86_64
+	arch = aarch64
+	license = AGPL-3.0-or-later
+	makedepends = git
+	makedepends = go
+	depends = glibc
+	source = git+https://github.com/Ivanko1608/bbbudget.git#tag=v0.1.0
+	sha256sums = SKIP
+
+pkgname = bbbudget
