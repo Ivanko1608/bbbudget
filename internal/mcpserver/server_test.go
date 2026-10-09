@@ -11,6 +11,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/budget"
+	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
@@ -96,7 +98,7 @@ func TestToolsAreListedWithStringAmounts(t *testing.T) {
 		names[tl.Name] = tl
 	}
 	for _, want := range []string{"list_budgets", "create_budget", "get_budget", "add_line", "update_line", "remove_line", "set_currency",
-		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario", "refresh_rates"} {
+		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario", "refresh_rates", "history", "undo"} {
 		if names[want] == nil {
 			t.Errorf("missing tool %s", want)
 		}
@@ -271,4 +273,27 @@ func TestRatesWhenOffline(t *testing.T) {
 		t.Fatal(r["rate_updates"])
 	}
 	h.call("set_currency", map[string]any{"code": "BTC", "per_base": "0.00001"}, false)
+}
+
+func TestHistoryAndUndoTools(t *testing.T) {
+	h := setup(t)
+	h.call("update_line", map[string]any{"line": "rent", "amount": "1200"}, false)
+	hist := h.call("history", map[string]any{}, false)["items"].([]any)
+	last := hist[0].(map[string]any)
+	if last["source"] != "mcp" || !strings.Contains(last["summary"].(string), "1150 → 1200") {
+		t.Fatalf("history: %v", last)
+	}
+	s := h.call("undo", map[string]any{}, false)
+	if line(s, "rent")["amount"] != "1150.00" {
+		t.Fatalf("undo: %v", line(s, "rent"))
+	}
+	// Someone else edits after the assistant: undoing the assistant's change
+	// is refused, and the error names the other change.
+	h.call("update_line", map[string]any{"line": "rent", "amount": "1300"}, false) // r4
+	ctx := store.WithChange(context.Background(), store.Change{Source: "web"})
+	a := money.MustDecimal("1350")
+	h.app.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_line", "rent", budget.LinePatch{Amount: &a})})
+	if e := h.call("undo", map[string]any{"change": 4}, true)["error"].(string); !strings.Contains(e, "(web)") {
+		t.Fatalf("conflict error: %s", e)
+	}
 }

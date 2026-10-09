@@ -27,7 +27,8 @@ Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months a
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
-Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
+Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
+Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
 type Options struct {
@@ -67,7 +68,7 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			out, err := fn(ctx, in)
+			out, err := fn(store.WithChange(ctx, store.Change{Source: "mcp"}), in)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
@@ -176,6 +177,17 @@ type ScenarioIn struct {
 type CompareIn struct {
 	Ref
 	Scenarios []string `json:"scenarios,omitempty" jsonschema:"scenario ids or names; omit for all"`
+}
+
+type HistoryIn struct {
+	Ref
+	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20"`
+}
+
+type UndoIn struct {
+	Ref
+	Change int64 `json:"change,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
+	Force  bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
 }
 
 type ScenarioRef struct {
@@ -327,6 +339,26 @@ func (h *handlers) register(s *mcp.Server) {
 		}
 		return map[string]string{"deleted": in.Scenario}, nil
 	})
+
+	tool(s, "history", "Recent changes to the budget, newest first: revision, time, who made it (mcp, web, cli, auto-refresh) and what changed.",
+		func(ctx context.Context, in HistoryIn) (any, error) {
+			id, err := h.id(in.Budget)
+			if err != nil {
+				return nil, err
+			}
+			if in.Limit <= 0 {
+				in.Limit = 20
+			}
+			return h.app.History(ctx, id, in.Limit)
+		})
+	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns the updated budget.",
+		func(ctx context.Context, in UndoIn) (any, error) {
+			id, err := h.id(in.Budget)
+			if err != nil {
+				return nil, err
+			}
+			return sum(h.app.Undo(ctx, id, in.Change, in.Force))
+		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name: "budget", URITemplate: "budget://{id}", MIMEType: "application/json",

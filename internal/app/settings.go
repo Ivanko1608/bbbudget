@@ -10,6 +10,7 @@ import (
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/settings"
+	"bbbudget/internal/store"
 )
 
 // ErrRatesOff means fetching rates is turned off in the app settings.
@@ -121,6 +122,7 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 // RunAutoRefresh calls RefreshIfDue every minute until ctx ends. The settings
 // are re-read each time, so turning auto-refresh on or off needs no restart.
 func (a *App) RunAutoRefresh(ctx context.Context, log *slog.Logger) {
+	ctx = store.WithChange(ctx, store.Change{Source: "auto-refresh"})
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

@@ -6,6 +6,8 @@
 //	bbbudget list             list budgets
 //	bbbudget report <id>      print a budget's projection and insights
 //	bbbudget rates <id>       fetch current exchange rates into a budget
+//	bbbudget history <id>     list recent changes and who made them
+//	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
 package main
 
@@ -62,6 +64,8 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
+  history  list recent changes and who made them:  bbbudget history home [-n 20]
+  undo     undo a change:  bbbudget undo home [-change REV] [-force]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
@@ -75,6 +79,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("missing command")
 	}
 	cmd, args := args[0], args[1:]
+	ctx = store.WithChange(ctx, store.Change{Source: "cli"}) // serve and mcp relabel their own writes
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
@@ -270,6 +275,49 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stdout, "no currencies to refresh: every rate is manual (name some with -only to fetch them)")
 		}
 		return err
+
+	case "history":
+		n := fs.Int("n", 20, "how many changes to show (0 for all kept)")
+		id, err := parseWithID(fs, args, "history <id> [-n 20]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		h, err := a.History(ctx, id, *n)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
+		for _, e := range h {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, e.At.Local().Format("2006-01-02 15:04"), e.Source, e.Summary)
+		}
+		return tw.Flush()
+
+	case "undo":
+		change := fs.Int64("change", 0, "revision of the change to undo (default: the latest)")
+		force := fs.Bool("force", false, "also undo every change made after it")
+		id, err := parseWithID(fs, args, "undo <id> [-change REV] [-force]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		v, err := a.Undo(ctx, id, *change, *force)
+		if err != nil {
+			return err
+		}
+		h, err := a.History(ctx, id, 1)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
+		return nil
 
 	case "settings":
 		var sets []string

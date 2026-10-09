@@ -68,6 +68,15 @@ section > .muted{margin:-6px 0 8px}
 .ins.warn{background:var(--tint-warn);color:inherit;font-weight:400;margin:0}
 .ins.good{background:var(--tint-good)}
 .ins b{font-weight:600}
+.activity{list-style:none;margin:0;padding:0}
+.act{display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:.9rem}
+.act:first-child{border-top:0}
+.act .who{font-weight:600;white-space:nowrap}
+.act.mcp .who,.act.assistant .who{color:var(--accent)}
+.act .what{overflow-wrap:anywhere}
+.act .when{white-space:nowrap;font-size:.8rem}
+.act .linkish{padding:2px 8px;font-size:.8rem}
+@media (max-width:600px){.act{grid-template-columns:1fr auto}.act .who{grid-area:1/1}.act .when{grid-area:1/2;text-align:right}.act .what{grid-area:2/1}.act>:last-child{grid-area:2/2;align-self:center}}
 
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 @media (min-width:560px){.grid{grid-template-columns:repeat(3,1fr)}}

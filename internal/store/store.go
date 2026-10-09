@@ -49,7 +49,7 @@ type Meta struct {
 const AnyRevision int64 = -1
 
 // Store is implemented by FileStore. Other backends (SQLite, a remote API)
-// only need these five methods.
+// only need these methods.
 type Store interface {
 	List(ctx context.Context) ([]Meta, error)
 	Get(ctx context.Context, id string) (Record, error)
@@ -59,6 +59,13 @@ type Store interface {
 	// returns *ConflictError without calling fn.
 	Update(ctx context.Context, id string, expected int64, fn func(budget.Budget) (budget.Budget, error)) (Record, error)
 	Delete(ctx context.Context, id string) error
+	// History returns a budget's recent writes, newest first, without their
+	// documents. Every Create and Update is recorded with the Change on its
+	// context; limit <= 0 means all that are kept.
+	History(ctx context.Context, id string, limit int) ([]Entry, error)
+	// Snapshot returns the budget as of a revision still in the history, or
+	// ErrNoSnapshot.
+	Snapshot(ctx context.Context, id string, rev int64) (budget.Budget, error)
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)

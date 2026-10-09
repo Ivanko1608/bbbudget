@@ -285,3 +285,29 @@ func TestMetaListsCrypto(t *testing.T) {
 		t.Fatalf("crypto %v, sources %v", crypto, sources)
 	}
 }
+
+func TestHistoryAndUndo(t *testing.T) {
+	c := setup(t)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"rent","value":{"amount":"1200"}}]}`, 200)
+	var h []map[string]any
+	w := c.req("GET", "/api/budgets/home/history", "", nil)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &h) != nil || len(h) != 2 {
+		t.Fatalf("history: %d %s", w.Code, w.Body)
+	}
+	if h[0]["source"] != "web" || !strings.Contains(h[0]["summary"].(string), "1150 → 1200") || h[0]["budget"] != nil {
+		t.Fatalf("latest entry: %v", h[0])
+	}
+	c.do("GET", "/api/budgets/home/history?limit=x", "", 400)
+
+	// Undoing r2 while r3 exists needs force; the 409 lists what would be lost.
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"rent","value":{"amount":"1300"}}]}`, 200)
+	if v := c.do("POST", "/api/budgets/home/undo", `{"change":2}`, 409); len(v["later"].([]any)) != 1 {
+		t.Fatalf("conflict: %v", v)
+	}
+	v := c.do("POST", "/api/budgets/home/undo", `{"change":2,"force":true}`, 200)
+	if v["revision"].(float64) != 4 {
+		t.Fatalf("undo: %v", v["revision"])
+	}
+	c.do("POST", "/api/budgets/home/undo", `{"change":1}`, 409) // the creation
+	c.do("POST", "/api/budgets/home/undo", `{"change":99}`, 400)
+}

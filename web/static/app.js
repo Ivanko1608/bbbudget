@@ -24,6 +24,7 @@ const S = {
   notice: null, // an error to keep showing after the next save, instead of "Saved"
   timer: null,
   wi: [], // what-if draft ops
+  history: [], // recent changes, newest first (Activity)
 };
 
 // ---------- API ----------
@@ -95,6 +96,7 @@ async function open(id) {
   history.replaceState(null, "", `#${encodeURIComponent(id)}`);
   status(`Saved · revision ${S.revision}`);
   loadCompare();
+  loadActivity();
 }
 
 function adopt(view, rerenderEditors) {
@@ -133,6 +135,7 @@ async function save() {
     else status(`Saved · revision ${S.revision}`);
     S.notice = null;
     loadCompare();
+    loadActivity();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -162,6 +165,7 @@ async function poll() {
       adopt(v, true);
       status(`Updated just now (changed elsewhere) · revision ${S.revision}`);
       loadCompare();
+      loadActivity();
     }
   } catch {}
 }
@@ -487,6 +491,7 @@ const ACTIONS = {
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
   "save-wi"() { saveWhatIf(); },
+  undo(i, el) { undoChange(i, el); },
   async "adopt-scenario"(i, el) {
     if (!confirm(`Apply “${el.dataset.name}” to the real budget?`)) return;
     await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}/adopt`, {}));
@@ -658,6 +663,43 @@ async function saveWhatIf() {
   S.wi = [];
   $("#wiResult").innerHTML = "";
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
+}
+
+// ---------- activity ----------
+
+// Who made a change, as the history records it (see store.Change).
+const SOURCES = { web: "You (browser)", mcp: "AI assistant", assistant: "AI assistant", cli: "Command line", "auto-refresh": "Rate refresh", earlier: "Earlier" };
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+async function loadActivity() {
+  if (!S.id) return;
+  const box = $("#activity");
+  try {
+    S.history = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}/history?limit=15`);
+  } catch {
+    return; // keep what is shown; the next refresh retries
+  }
+  const h = S.history;
+  box.innerHTML = h.map((e, i) => `<li class="act ${esc(e.source)}">
+      <span class="who">${esc(SOURCES[e.source] || e.source || "Unknown")}</span>
+      <span class="what">${esc(e.summary)}</span>
+      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">r${e.revision} · ${esc(ago(e.at))}</span>
+      ${i < h.length - 1 ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>` : "<span></span>"}
+    </li>`).join("") || `<li class="muted">No changes yet.</li>`;
+}
+
+async function undoChange(i, el) {
+  const rev = Number(el.dataset.rev);
+  const later = S.history.slice(0, i);
+  if (later.length && !confirm(`This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${later.map((e) => `• ${e.summary}`).join("\n")}\n\nUndo them all?`)) return;
+  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { change: rev, force: later.length > 0 }));
 }
 
 async function loadCompare() {

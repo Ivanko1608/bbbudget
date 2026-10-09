@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"bbbudget/internal/app"
@@ -61,6 +62,8 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("PUT /api/budgets/{id}", s.replace)
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
+	mux.HandleFunc("GET /api/budgets/{id}/history", s.history)
+	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
 	mux.HandleFunc("GET /api/budgets/{id}/compare", s.compare)
@@ -108,6 +111,9 @@ func (s *server) guard(next http.Handler) http.Handler {
 			}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		// Writes through the API are recorded as made in the browser; the
+		// MCP endpoint relabels its own as "mcp".
+		r = r.WithContext(store.WithChange(r.Context(), store.Change{Source: "web"}))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
@@ -161,12 +167,17 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		se *json.SyntaxError
 		te *json.UnmarshalTypeError
 		re *app.RateError
+		ue *app.UndoConflictError
 	)
 	switch {
 	case errors.As(err, &oe): // checked first: a bad target inside an op is the caller's mistake
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	case errors.As(err, &ve):
 		writeErr(w, http.StatusUnprocessableEntity, err.Error(), ve.Issues)
+	case errors.As(err, &ue):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": ue.Later})
+	case errors.Is(err, app.ErrNothingToUndo):
+		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": ce.Actual})
 	case errors.Is(err, store.ErrNotFound), errors.As(err, &nm):
@@ -273,7 +284,9 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "revision is required (the revision you loaded)", nil)
 		return
 	}
-	v, err := s.app.Replace(r.Context(), r.PathValue("id"), *in.Revision, in.Budget)
+	// The editor saves as you type; its saves merge into one history entry.
+	ctx := store.WithChange(r.Context(), store.Change{Source: "web", Autosave: true})
+	v, err := s.app.Replace(ctx, r.PathValue("id"), *in.Revision, in.Budget)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -287,6 +300,44 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) history(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 0 {
+			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
+			return
+		}
+		limit = n
+	}
+	h, err := s.app.History(r.Context(), r.PathValue("id"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if h == nil {
+		h = []store.Entry{}
+	}
+	writeJSON(w, http.StatusOK, h)
+}
+
+func (s *server) undo(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Change int64 `json:"change"`
+		Force  bool  `json:"force"`
+	}
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Change, in.Force)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (s *server) ops(w http.ResponseWriter, r *http.Request) {

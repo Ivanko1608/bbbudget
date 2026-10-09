@@ -23,6 +23,9 @@ type FileStore struct {
 	dir string
 	mu  sync.Mutex // serialises this process; the file lock serialises processes
 	now func() time.Time
+	// HistoryLimit is how many history entries each budget keeps
+	// (DefaultHistoryLimit when zero).
+	HistoryLimit int
 }
 
 // NewFileStore opens (and creates if needed) a store directory.
@@ -73,12 +76,17 @@ func (s *FileStore) write(r Record) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(s.dir, "."+r.ID+".*.tmp")
+	return s.writeFile(s.path(r.ID), append(raw, '\n'))
+}
+
+// writeFile replaces path atomically: temp file, fsync, rename, fsync dir.
+func (s *FileStore) writeFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(s.dir, "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name()) // no-op after a successful rename
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -89,7 +97,7 @@ func (s *FileStore) write(r Record) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), s.path(r.ID)); err != nil {
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return err
 	}
 	return syncDir(s.dir)
@@ -138,6 +146,12 @@ func (s *FileStore) Create(ctx context.Context, id string, b budget.Budget) (r R
 			return err
 		}
 		r = Record{ID: id, Revision: 1, UpdatedAt: s.now().UTC(), Budget: b}
+		if _, err := budget.Compile(b); err != nil {
+			return err
+		}
+		if err := s.record(ctx, nil, r); err != nil {
+			return err
+		}
 		return s.write(r)
 	})
 	return r, err
@@ -152,11 +166,21 @@ func (s *FileStore) Update(ctx context.Context, id string, expected int64, fn fu
 		if expected != AnyRevision && expected != cur.Revision {
 			return &ConflictError{Expected: expected, Actual: cur.Revision}
 		}
-		nb, err := fn(cur.Budget)
+		work, err := budget.Clone(cur.Budget) // fn may edit in place; cur stays the "before"
+		if err != nil {
+			return err
+		}
+		nb, err := fn(work)
 		if err != nil {
 			return err
 		}
 		r = Record{ID: id, Revision: cur.Revision + 1, UpdatedAt: s.now().UTC(), Budget: nb}
+		if _, err := budget.Compile(nb); err != nil {
+			return err // before recording: an invalid write leaves no trace
+		}
+		if err := s.record(ctx, &cur, r); err != nil {
+			return err
+		}
 		return s.write(r)
 	})
 	return r, err
@@ -171,7 +195,13 @@ func (s *FileStore) Delete(ctx context.Context, id string) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return ErrNotFound
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(s.historyPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
 	})
 }
 
