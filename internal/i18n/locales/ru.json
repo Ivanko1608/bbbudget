@@ -62,6 +62,13 @@
   "thing.goal": "цель",
   "thing.scenario": "сценарий",
 
+  "issue.date_format": "должно быть в формате ГГГГ-ММ-ДД, а не \"{value}\"",
+  "issue.too_long": "слишком длинно (не больше {max} символов)",
+  "status.over": "{category}: потрачено {actual} из запланированных {planned}, **перерасход {over}**.",
+  "status.pace": "{category}: в таком темпе к концу месяца будет около **{projected}** при плане {planned}.",
+  "status.unplanned": "{category}: потрачено **{actual}**, хотя ничего не планировалось.",
+  "status.short": "{category}: поступило {actual}, **меньше запланированных {planned}**.",
+
   "issue.error": "{error}",
   "issue.required": "обязательное поле",
   "issue.negative": "не может быть отрицательным",
@@ -85,5 +92,6 @@
   "issue.scenario_ops": "в сценарии должно быть хотя бы одно изменение",
   "issue.schedule": "нужно: start ≥ 0, every ≥ 0 и end ≥ start",
 
+  "cli.status.header": "КАТЕГОРИЯ\tПЛАН\tФАКТ\tОСТАЛОСЬ\tСТАТУС\t",
   "cli.report.header": "МЕСЯЦ\tДОХОД\tРАСХОДЫ\tНА ДОЛГИ\tОСТАТОК\tОТЛОЖЕНО\tСБЕРЕЖЕНИЯ\t"
 }

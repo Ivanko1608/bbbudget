@@ -6,6 +6,8 @@
 //	bbbudget list             list budgets
 //	bbbudget report <id>      print a budget's projection and insights
 //	bbbudget rates <id>       fetch current exchange rates into a budget
+//	bbbudget log <id> <amount> <category>   record money actually spent or received
+//	bbbudget status <id>      this month's plan versus actual
 //	bbbudget history <id>     list recent changes and who made them
 //	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
@@ -36,6 +38,7 @@ import (
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/mcpserver"
+	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 	"bbbudget/internal/templates"
@@ -65,6 +68,8 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
+  log      record money spent or received:  bbbudget log home 40 home [-date 2026-10-03] [-currency USD] [-note "Lidl"]
+  status   this month's plan versus actual:  bbbudget status home [-month 2026-10]
   history  list recent changes and who made them:  bbbudget history home [-n 20]
   undo     undo a change:  bbbudget undo home [-change REV] [-force]
   version  print the version
@@ -276,6 +281,74 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stdout, "no currencies to refresh: every rate is manual (name some with -only to fetch them)")
 		}
 		return err
+
+	case "log":
+		date := fs.String("date", "", "day it happened, YYYY-MM-DD (default today)")
+		cur := fs.String("currency", "", "currency (default the base currency)")
+		note := fs.String("note", "", "a note")
+		line := fs.String("line", "", "the planned line it pays (id or name)")
+		pos, err := parseArgs(fs, args, 3, "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-line ref]")
+		if err != nil {
+			return err
+		}
+		amt, err := money.ParseDecimal(pos[1])
+		if err != nil {
+			return fmt.Errorf("amount: %w", err)
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		if *date == "" {
+			*date = a.Now().Format("2006-01-02")
+		}
+		res, err := a.LogTransactions(ctx, pos[0], []budget.TransactionInput{{Date: *date, Amount: amt, Currency: *cur, Category: pos[2], Note: *note, Line: *line}})
+		if err != nil {
+			return err
+		}
+		t := res.Logged[0]
+		out := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
+		st, err := a.MonthStatus(ctx, pos[0], t.Date[:7])
+		if err == nil && t.Currency != st.Spent.Currency().Code {
+			out += fmt.Sprintf("  → %s %s", t.Base, st.Spent.Currency().Code)
+		}
+		fmt.Fprintln(stdout, out)
+		if err == nil {
+			for _, f := range st.Flags {
+				fmt.Fprintf(stdout, "! %s\n", strings.ReplaceAll(f.Text, "**", ""))
+			}
+		}
+		return nil
+
+	case "status":
+		month := fs.String("month", "", "YYYY-MM (default this month)")
+		id, err := parseWithID(fs, args, "status <id> [-month YYYY-MM]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		st, err := a.MonthStatus(ctx, id, *month)
+		if err != nil {
+			return err
+		}
+		l := a.Localizer(ctx)
+		fmt.Fprintf(stdout, "%s · %d/%d\n\n", l.Month(st.Month), st.Elapsed, st.Days)
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', tabwriter.AlignRight)
+		fmt.Fprintln(tw, l.Text("cli.status.header", nil))
+		for _, c := range st.Categories {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t\n", c.Label, l.MoneyExact(c.Planned), l.MoneyExact(c.Actual), l.MoneyExact(c.Remaining), c.State)
+		}
+		tw.Flush()
+		for _, f := range st.Flags {
+			fmt.Fprintf(stdout, "\n! %s", strings.ReplaceAll(f.Text, "**", ""))
+		}
+		if len(st.Flags) > 0 {
+			fmt.Fprintln(stdout)
+		}
+		return nil
 
 	case "history":
 		n := fs.Int("n", 20, "how many changes to show (0 for all kept)")

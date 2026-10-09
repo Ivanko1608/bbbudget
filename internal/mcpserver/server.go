@@ -29,6 +29,7 @@ Rounding is pessimistic: costs round up, income/receipts round down, to the mino
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
 Workflow: call list_budgets, then get_budget before answering about numbers. Writes and what_if return what changed and its effect (totals, first month, debt payoff, goal dates, insights that appeared or went away), not the whole budget: use that to answer, and get_budget (with a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
+Actual money: the budget is a plan; log_transactions records what was really spent or received ("I spent 40 on groceries", or a pasted bank statement: one call with every row, each with an external_id so a re-import is skipped). month_status compares the month with the plan. Choose categories from the budget; if one is unclear, ask. Correct mistakes with update_transaction or delete_transactions (a whole batch for a bad import).
 Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
@@ -390,6 +391,8 @@ func (h *handlers) register(s *mcp.Server) {
 			v, err := h.app.Undo(ctx, id, in.Change, in.Force)
 			return h.written(ctx, in.WriteRef, v, err)
 		})
+
+	h.registerLedger(s)
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name: "budget", URITemplate: "budget://{id}", MIMEType: "application/json",

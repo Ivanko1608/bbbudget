@@ -96,6 +96,7 @@ func TestUIKeysExist(t *testing.T) {
 		"scenarios.kind.": {"line", "rate", "extra", "remove"},
 		"source.":         {"web", "mcp", "assistant", "cli", "auto-refresh", "earlier", "unknown"},
 		"prefs.files.":    {"data", "templates", "settings"},
+		"now.state.":      {"over", "pace", "unplanned", "short"},
 	}
 	for prefix, members := range families {
 		for _, m := range members {

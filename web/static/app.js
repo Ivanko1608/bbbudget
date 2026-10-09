@@ -100,6 +100,7 @@ async function open(id) {
   status(t("status.saved", { revision: S.revision }));
   loadCompare();
   loadActivity();
+  loadNow();
 }
 
 function adopt(view, rerenderEditors) {
@@ -139,6 +140,7 @@ async function save() {
     S.notice = null;
     loadCompare();
     loadActivity();
+  loadNow();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -169,6 +171,7 @@ async function poll() {
       status(t("status.updated_elsewhere", { revision: S.revision }));
       loadCompare();
       loadActivity();
+  loadNow();
     }
   } catch {}
 }
@@ -667,6 +670,38 @@ async function saveWhatIf() {
   S.wi = [];
   $("#wiResult").innerHTML = "";
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
+}
+
+// ---------- this month: plan versus actual ----------
+
+async function loadNow() {
+  if (!S.id) return;
+  const id = encodeURIComponent(S.id);
+  let st, txs;
+  try {
+    [st, txs] = await Promise.all([api("GET", `/api/budgets/${id}/status`), api("GET", `/api/budgets/${id}/transactions?limit=8`)]);
+  } catch {
+    $("#nowSection").hidden = true; // e.g. today is outside the budget's window
+    return;
+  }
+  $("#nowSection").hidden = false;
+  $("#h-now").textContent = t("now.heading", { month: monthName(st.month) });
+  $("#nowSub").textContent = st.transactions
+    ? t("now.sub", { spent: money(st.spent), planned: money(st.planned_spending), day: st.elapsed, days: st.days })
+    : t("now.empty");
+  $("#nowFlags").innerHTML = st.flags.map((f) => `<div class="ins ${esc(f.tone)}">${bold(f.text)}</div>`).join("");
+  const cats = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
+  $("#nowCats").innerHTML = st.categories.filter((c) => c.kind !== "income").map((c) => {
+    const planned = parseFloat(c.planned.amount), actual = parseFloat(c.actual.amount); // bar widths only
+    const pct = planned > 0 ? Math.min(100, (actual / planned) * 100) : actual > 0 ? 100 : 0;
+    const color = c.state === "over" || c.state === "unplanned" ? "var(--neg)" : cats[c.category]?.color || "var(--accent)";
+    const badge = c.state === "ok" ? "" : `<span class="badge ${esc(c.state)}">${esc(t(`now.state.${c.state}`))}</span>`;
+    return `<div class="now-row"><div class="now-head"><span>${esc(c.label)} ${badge}</span><span class="muted">${esc(t("now.of", { actual: money(c.actual), planned: money(c.planned) }))}</span></div>
+      <div class="now-bar"><div style="width:${pct}%;background:${esc(color)}"></div></div></div>`;
+  }).join("");
+  $("#nowTx").innerHTML = txs.length
+    ? txs.map((x) => `<tr><td>${esc(x.date)}</td><td>${esc(cats[x.category]?.label || x.category)}</td><td>${esc(money({ amount: x.amount, currency: x.currency }))}</td><td class="muted">${esc(x.note || "")}</td></tr>`).join("")
+    : `<tr><td class="muted">${esc(t("now.none_logged"))}</td></tr>`;
 }
 
 // ---------- activity ----------

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/rates"
@@ -350,4 +351,31 @@ func TestLocaleNegotiation(t *testing.T) {
 		t.Fatalf("setting should win: %v", m["locale"])
 	}
 	c.do("PUT", "/api/settings", `{"locale":"not a tag!"}`, 400)
+}
+
+func TestTransactionsAPI(t *testing.T) {
+	c := setup(t)
+	m := time.Now().Format("2006-01") // the example budget starts this month
+	v := c.do("POST", "/api/budgets/home/transactions", `{"transactions":[{"date":"`+m+`-02","amount":"45.20","category":"home","external_id":"r1"},{"date":"`+m+`-03","amount":"12","currency":"USD","category":"education"}]}`, 201)
+	if v["batch"] != "b1" || len(v["logged"].([]any)) != 2 {
+		t.Fatalf("log: %v", v)
+	}
+	c.do("POST", "/api/budgets/home/transactions", `{"transactions":[{"date":"`+m+`-02","amount":"1","category":"nope"}]}`, 422)
+	var list []map[string]any
+	w := c.req("GET", "/api/budgets/home/transactions?from="+m+"&to="+m, "", nil)
+	if json.Unmarshal(w.Body.Bytes(), &list) != nil || len(list) != 2 || list[0]["date"] != m+"-03" {
+		t.Fatalf("list: %s", w.Body)
+	}
+	if u := c.do("PUT", "/api/budgets/home/transactions/t1", `{"note":"Lidl"}`, 200); u["note"] != "Lidl" || u["base"] != "45.2" {
+		t.Fatalf("update: %v", u)
+	}
+	c.do("PUT", "/api/budgets/home/transactions/t9", `{"note":"x"}`, 404)
+	if st := c.do("GET", "/api/budgets/home/status?month="+m, "", 200); st["transactions"].(float64) != 2 {
+		t.Fatalf("status: %v", st)
+	}
+	c.do("GET", "/api/budgets/home/status?month=1999-01", "", 400)
+	c.do("DELETE", "/api/budgets/home/transactions/t1", "", 200)
+	if d := c.do("DELETE", "/api/budgets/home/transactions?batch=b1", "", 200); d["removed"].(float64) != 1 {
+		t.Fatalf("delete batch: %v", d)
+	}
 }
