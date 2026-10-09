@@ -44,7 +44,7 @@ These are what keep the numbers trustworthy, so PRs that break them won't be mer
 - **Round pessimistically, once per conversion.** Money you pay rounds up and money you receive rounds down.
 - **All calculations live in `internal/budget`.** Transports (HTTP, MCP, CLI, UI) call `app.App` and never re-implement maths.
 - **Dependencies point inward:** `money` ← `budget` ← `store`/`app` ← transports.
-- **Nothing phones home.** No telemetry, analytics, CDNs or third-party requests in the UI or the binary. The UI's CSP enforces this; don't loosen it.
+- **Nothing phones home.** No telemetry, analytics or CDNs, and no third-party requests from the UI (its CSP enforces this; don't loosen it). The only outbound requests are the rate providers in `internal/rates`, which are off until the user turns on `fetch_rates`, then run only when they ask or have turned on auto-refresh, and carry currency codes, never budget data. Keep it opt-in.
 - **Tests come with behaviour changes.** Projection changes need a hand-checked golden or an invariant, not just "the output looks right".
 - **Built-in templates are generic and fictional.**
 
