@@ -12,8 +12,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// runCLI runs a command in-process. Tests never read the user's own settings.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	if os.Getenv("BBBUDGET_SETTINGS") == "" {
+		t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	}
 	var out, errb bytes.Buffer
 	err := run(context.Background(), args, &out, &errb)
 	return out.String() + errb.String(), err
@@ -63,11 +67,63 @@ func TestCLI(t *testing.T) {
 	}
 }
 
+func TestSettingsAndRatesCLI(t *testing.T) {
+	dir, conf := t.TempDir(), filepath.Join(t.TempDir(), "settings.json")
+	if out, err := runCLI(t, "init", "home", "-template", "example", "-dir", dir, "-settings", conf); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	out, err := runCLI(t, "settings", "-settings", conf)
+	if err != nil || !strings.Contains(out, "default_rate_source  auto") || !strings.Contains(out, "coingecko_api_key    not set") {
+		t.Fatalf("defaults: %v\n%s", err, out)
+	}
+	out, err = runCLI(t, "settings", "-settings", conf, "-set", "auto_refresh=daily", "-set", "fetch_rates=false", "-set", "coingecko_api_key=CG-x")
+	if err != nil || !strings.Contains(out, "auto_refresh         daily") || !strings.Contains(out, "fetch_rates          false") {
+		t.Fatalf("set: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "CG-x") || !strings.Contains(out, "coingecko_api_key    set") {
+		t.Fatalf("the key must not be printed:\n%s", out)
+	}
+	raw, _ := os.ReadFile(conf)
+	if !strings.Contains(string(raw), `"auto_refresh": "daily"`) {
+		t.Fatalf("not saved:\n%s", raw)
+	}
+	for _, bad := range [][]string{{"-set", "auto_refresh=weekly"}, {"-set", "colour=blue"}, {"-set", "fetch_rates=maybe"}, {"-set", "novalue"}, {"extra"}} {
+		if _, err := runCLI(t, append([]string{"settings", "-settings", conf}, bad...)...); err == nil {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+
+	// Rates: nothing to do while every rate is manual; offline mode refuses a fetch
+	// without touching the network.
+	out, err = runCLI(t, "rates", "home", "-dir", dir, "-settings", conf)
+	if err != nil || !strings.Contains(out, "every rate is manual") {
+		t.Fatalf("all manual: %v\n%s", err, out)
+	}
+	if out, err := runCLI(t, "rates", "home", "-only", "usd", "-dir", dir, "-settings", conf); err == nil || !strings.Contains(err.Error(), "turned off") {
+		t.Fatalf("offline: %v\n%s", err, out)
+	}
+	if out, err := runCLI(t, "rates", "home", "-only", "usd", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
+		t.Fatalf("offline dry run: %s", out)
+	}
+	// Dry runs check currencies exactly like real runs.
+	if out, err := runCLI(t, "rates", "home", "-only", "XYZ", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
+		t.Fatalf("dry run accepted an unknown currency: %s", out)
+	}
+
+	// A broken settings file is reported, not silently replaced by defaults.
+	os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)
+	if _, err := runCLI(t, "list", "-dir", dir, "-settings", conf); err == nil || !strings.Contains(err.Error(), conf) {
+		t.Fatalf("broken settings file: %v", err)
+	}
+}
+
 // TestStdioMCP builds the real binary and talks to it the way Claude does.
 func TestStdioMCP(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the binary")
 	}
+	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json")) // inherited by the binary
 	bin := filepath.Join(t.TempDir(), "bbbudget")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)

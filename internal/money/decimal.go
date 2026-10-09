@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
-// MaxScale bounds the fractional digits accepted in a Decimal literal.
-const MaxScale = 12
+// MaxScale bounds the fractional digits accepted in a Decimal literal. It is
+// large enough for a crypto rate quoted per unit of fiat (0.0000135 BTC per €)
+// to keep ten significant digits.
+const MaxScale = 18
 
 // Decimal is an exact, immutable decimal number used for exchange rates,
 // percentages and as the wire format of amounts. The zero value is 0.
@@ -58,6 +60,28 @@ func MustDecimal(s string) Decimal {
 	return d
 }
 
+// RoundSignificant rounds r (half-even) to sig significant digits, or to
+// MaxScale fractional digits if that is coarser. It turns a computed rate,
+// such as 1/72565, into a Decimal that a document can store exactly.
+func RoundSignificant(r *big.Rat, sig int) Decimal {
+	if r.Sign() == 0 {
+		return Decimal{new(big.Rat)}
+	}
+	abs := new(big.Rat).Abs(r)
+	// Count integer digits: the smallest e with |r| < 10^e (e may be negative).
+	e := 0
+	for abs.Cmp(new(big.Rat).SetInt(pow10(max(e, 0)))) >= 0 {
+		e++
+	}
+	for e > -MaxScale && new(big.Rat).Mul(abs, new(big.Rat).SetInt(pow10(-e+1))).Cmp(big.NewRat(1, 1)) < 0 {
+		e--
+	}
+	scale := min(max(sig-e, 0), MaxScale)
+	f := new(big.Rat).SetInt(pow10(scale))
+	n := RoundInt(new(big.Rat).Mul(r, f), HalfEven)
+	return Decimal{new(big.Rat).SetFrac(n, pow10(scale))}
+}
+
 // DecimalFromInt returns n as a Decimal.
 func DecimalFromInt(n int64) Decimal { return Decimal{new(big.Rat).SetInt64(n)} }
 
@@ -75,6 +99,9 @@ func (d Decimal) Sign() int {
 	}
 	return d.r.Sign()
 }
+
+// IsZero reports whether d is 0 (it also makes `json:",omitzero"` omit it).
+func (d Decimal) IsZero() bool { return d.Sign() == 0 }
 
 func (d Decimal) Cmp(o Decimal) int { return d.Rat().Cmp(o.Rat()) }
 
