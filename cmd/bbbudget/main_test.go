@@ -15,8 +15,16 @@ import (
 // runCLI runs a command in-process. Tests never read the user's own settings.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	// Keep commands that omit -dir, -templates or -settings out of the real home
+	// (which is unwritable in sandboxed builds such as Nix).
 	if os.Getenv("BBBUDGET_SETTINGS") == "" {
 		t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	}
+	if os.Getenv("BBBUDGET_DIR") == "" {
+		t.Setenv("BBBUDGET_DIR", t.TempDir())
+	}
+	if os.Getenv("BBBUDGET_TEMPLATES") == "" {
+		t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	}
 	var out, errb bytes.Buffer
 	err := run(context.Background(), args, &out, &errb)

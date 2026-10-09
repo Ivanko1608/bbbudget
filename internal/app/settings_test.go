@@ -30,11 +30,12 @@ func withSettings(t *testing.T, a *App, p settings.Patch) {
 
 func TestUpdateSettings(t *testing.T) {
 	a := testApp(t)
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json") // no file yet
 	if s, err := a.Settings(); err != nil || s != settings.Defaults() {
 		t.Fatalf("no file: %+v %v", s, err)
 	}
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
-	if s, _ := a.Settings(); s.AutoRefresh != "daily" || !s.FetchRates {
+	if s, _ := a.Settings(); s.AutoRefresh != "daily" || s.FetchRates {
 		t.Fatalf("%+v", s)
 	}
 	if _, err := a.UpdateSettings(settings.Patch{DefaultRateSource: ptr("google")}); !errors.Is(err, ErrBadInput) {
@@ -150,7 +151,7 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 
 	a := New(nil, nil) // the real registry, as the binary builds it
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
-	withSettings(t, a, settings.Patch{CoinGeckoAPIKey: ptr("CG-test")})
+	withSettings(t, a, settings.Patch{FetchRates: ptr(true), CoinGeckoAPIKey: ptr("CG-test")})
 	cg := a.Rates[rates.CoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
 	cg.URL = srv.URL
 	q, err := a.Quote(context.Background(), "EUR", "coingecko", []string{"BTC"})
