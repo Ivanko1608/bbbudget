@@ -1,7 +1,6 @@
 package budget
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -62,33 +61,5 @@ func TestDocumentRejectsSurprises(t *testing.T) {
 	bomb := "a: &a [x,x,x,x,x,x,x,x,x,x]\nb: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]\nc: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]\nd: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c,*c]\ne: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d,*d]\nf: [*e,*e,*e,*e,*e,*e,*e,*e,*e,*e]\n"
 	if _, err := ParseDocument([]byte(bomb), "yaml"); err == nil {
 		t.Error("alias bomb accepted")
-	}
-}
-
-// Budgets saved before "lines" became "items" still load, in both formats,
-// and save under the new name.
-func TestOldLinesKeyStillLoads(t *testing.T) {
-	for format, doc := range map[string]string{
-		"yaml": "name: T\nbase_currency: EUR\ncategories: [{label: Living}]\nlines: [{name: Rent, amount: 950, category: living}]\n",
-		"json": `{"name":"T","base_currency":"EUR","categories":[{"label":"Living"}],"lines":[{"name":"Rent","amount":"950","category":"living"}]}`,
-	} {
-		b, err := ParseDocument([]byte(doc), format)
-		if err != nil {
-			t.Fatalf("%s: %v", format, err)
-		}
-		if len(b.Items) != 1 || b.Items[0].ID != "rent" || b.Items[0].Amount.String() != "950" {
-			t.Fatalf("%s: %+v", format, b.Items)
-		}
-		out, _ := json.Marshal(b)
-		if !strings.Contains(string(out), `"items":[`) || strings.Contains(string(out), `"lines"`) {
-			t.Fatalf("%s: saved as %s", format, out)
-		}
-	}
-	both := "name: T\nbase_currency: EUR\nitems: []\nlines: []\n"
-	if _, err := ParseDocument([]byte(both), "yaml"); err == nil || !strings.Contains(err.Error(), "lines") {
-		t.Fatalf("items and lines together: %v", err)
-	}
-	if _, err := ParseDocument([]byte("name: T\nitemz: []\n"), "yaml"); err == nil {
-		t.Fatal("unknown field accepted")
 	}
 }

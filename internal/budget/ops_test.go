@@ -204,19 +204,3 @@ func TestBudgetJSONRoundTrip(t *testing.T) {
 		t.Fatal("round trip changed the numbers")
 	}
 }
-
-// Ops named before the rename (stored in old scenarios) still apply.
-func TestOldLineOpNames(t *testing.T) {
-	b := fixture(t)
-	nb, err := Apply(b,
-		Op{Op: "set_line", Target: "rent", Value: json.RawMessage(`{"amount":"1200"}`)},
-		Op{Op: "remove_line", Target: "holiday"},
-		Op{Op: "add_line", Value: json.RawMessage(`{"name":"Gym","amount":"35","category":"home"}`)},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if itemByID(nb, "rent").Amount.String() != "1200" || itemByID(nb, "holiday").ID != "" || itemByID(nb, "gym").ID != "gym" {
-		t.Fatalf("old op names not applied: %+v", nb.Items)
-	}
-}

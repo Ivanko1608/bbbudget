@@ -3,7 +3,6 @@ package budget
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -104,31 +103,6 @@ func Normalize(b *Budget) {
 			b.Goals[i].ID = uniqueID(b.Goals[i].Name, ids(b.Goals, goalKey))
 		}
 	}
-}
-
-// UnmarshalJSON reads a budget strictly (unknown fields are errors) and
-// accepts "lines", the name "items" had before it was renamed, so budgets
-// saved by older versions still load. They are written back as "items".
-func (b *Budget) UnmarshalJSON(data []byte) error {
-	type plain Budget // no methods: avoids recursion
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	if old, ok := fields["lines"]; ok {
-		if _, both := fields["items"]; both {
-			return errors.New(`a budget has "items" and its old name "lines"; keep one`)
-		}
-		delete(fields, "lines")
-		fields["items"] = old
-		var err error
-		if data, err = json.Marshal(fields); err != nil {
-			return err
-		}
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	return d.Decode((*plain)(b))
 }
 
 // UnmarshalJSON makes an omitted schedule mean "monthly" (the common case)

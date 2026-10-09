@@ -168,14 +168,7 @@ func decodeStrict(raw json.RawMessage, v any) error {
 	return d.Decode(v)
 }
 
-// legacyOps maps op names from before "lines" were renamed "items", so
-// scenarios saved back then (and older clients) keep working.
-var legacyOps = map[string]string{"add_line": "add_item", "set_line": "set_item", "remove_line": "remove_item"}
-
 func applyOne(b *Budget, op Op) error {
-	if name, ok := legacyOps[op.Op]; ok {
-		op.Op = name
-	}
 	switch op.Op {
 	case "set_settings":
 		var v SettingsPatch
