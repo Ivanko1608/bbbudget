@@ -1,0 +1,88 @@
+# Release with `git tag vX.Y.Z && git push --tags`; .github/workflows/release.yml runs this.
+# Local dry run: goreleaser release --snapshot --clean
+version: 2
+project_name: bbbudget
+
+before:
+  hooks:
+    - go mod tidy -diff
+    - go test ./...
+
+builds:
+  - id: bbbudget
+    main: ./cmd/bbbudget
+    binary: bbbudget
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: tarball
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - packaging/systemd/bbbudget.service
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - id: packages
+    package_name: bbbudget
+    file_name_template: "{{ .ConventionalFileName }}"
+    formats: [deb, rpm, archlinux]
+    vendor: Ivanko1608
+    homepage: https://github.com/Ivanko1608/bbbudget
+    maintainer: Ivanko1608 <29154527+Ivanko1608@users.noreply.github.com>
+    description: |-
+      Multi-currency budget planner with exact money math.
+      Month-by-month projections, debt payoff and what-if scenarios, with a
+      web UI, a CLI and an MCP server. Runs on localhost and is offline by
+      default; fetching exchange rates is opt-in.
+    license: AGPL-3.0-or-later
+    section: utils
+    priority: optional
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/bbbudget.service
+        dst: /usr/lib/systemd/user/bbbudget.service
+        file_info: { mode: 0644 }
+      - src: README.md
+        dst: /usr/share/doc/bbbudget/README.md
+        file_info: { mode: 0644 }
+      # Debian keeps the license as doc/<pkg>/copyright; RPM and Arch under licenses/.
+      - src: LICENSE
+        dst: /usr/share/doc/bbbudget/copyright
+        file_info: { mode: 0644 }
+        packager: deb
+      - src: LICENSE
+        dst: /usr/share/licenses/bbbudget/LICENSE
+        file_info: { mode: 0644 }
+        packager: rpm
+      - src: LICENSE
+        dst: /usr/share/licenses/bbbudget/LICENSE
+        file_info: { mode: 0644 }
+        packager: archlinux
+    rpm:
+      group: Applications/Productivity
+    archlinux:
+      packager: Ivanko1608 <29154527+Ivanko1608@users.noreply.github.com>
+
+release:
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge pull request"
