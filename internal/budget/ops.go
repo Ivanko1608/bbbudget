@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"bbbudget/internal/money"
 )
@@ -30,7 +31,95 @@ type LinePatch struct {
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
 	Category *string        `json:"category,omitempty"`
-	Schedule *Schedule      `json:"schedule,omitempty"`
+	Schedule *ScheduleSpec  `json:"schedule,omitempty"`
+}
+
+// LineInput is the value of add_line: a Line whose schedule is a ScheduleSpec.
+// An omitted schedule means monthly from the first month.
+type LineInput struct {
+	ID       string        `json:"id,omitempty"`
+	Name     string        `json:"name"`
+	Amount   money.Decimal `json:"amount"`
+	Currency string        `json:"currency,omitempty"`
+	Category string        `json:"category"`
+	Schedule *ScheduleSpec `json:"schedule,omitempty"`
+}
+
+// ScheduleSpec is a schedule as ops describe it, in one of two forms:
+//
+//   - by calendar month (preferred): {"starts":"2026-03","ends":"2026-12","every":1}.
+//     Months are resolved against the budget's start_month when the op is
+//     applied, so a stored scenario keeps pointing at the same calendar months.
+//     Omitted fields keep the line's current values (monthly from the first
+//     month for a new line), and "ends": "" removes the end. A spec with only
+//     "every" is in this form too.
+//   - by month index from start_month, whenever start or end is given:
+//     {"start":2,"every":0,"end":5}. This is the stored form; omitted fields
+//     are 0 (so no every means one-off) and the whole schedule is replaced.
+//
+// Mixing the two forms is an error, never a guess.
+type ScheduleSpec struct {
+	Start  *int    `json:"start,omitempty"`
+	Every  *int    `json:"every,omitempty"`
+	End    *int    `json:"end,omitempty"`
+	Starts string  `json:"starts,omitempty"`
+	Ends   *string `json:"ends,omitempty"`
+}
+
+// resolve turns the spec into a Schedule for a budget starting at startMonth.
+// cur is the schedule being edited (set_line), nil for a new line.
+func (s ScheduleSpec) resolve(startMonth string, cur *Schedule) (Schedule, error) {
+	byIndex := s.Start != nil || s.End != nil
+	if byIndex && (s.Starts != "" || s.Ends != nil) {
+		return Schedule{}, fmt.Errorf("schedule: use either starts/ends (YYYY-MM) or start/end (month indexes), not both")
+	}
+	if byIndex {
+		out := Schedule{End: s.End}
+		setIf(&out.Start, s.Start)
+		setIf(&out.Every, s.Every)
+		return out, nil
+	}
+	out := Monthly()
+	if cur != nil {
+		out = *cur
+	}
+	setIf(&out.Every, s.Every)
+	if s.Starts != "" {
+		i, err := MonthIndex(startMonth, s.Starts)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("schedule.starts: %w", err)
+		}
+		out.Start = i
+	}
+	if s.Ends != nil {
+		out.End = nil
+		if *s.Ends != "" {
+			i, err := MonthIndex(startMonth, *s.Ends)
+			if err != nil {
+				return Schedule{}, fmt.Errorf("schedule.ends: %w", err)
+			}
+			out.End = &i
+		}
+	}
+	return out, nil
+}
+
+// MonthIndex is the 0-based index of month ym ("YYYY-MM") in a budget that
+// starts in startMonth. Months before the start are an error.
+func MonthIndex(startMonth, ym string) (int, error) {
+	s, err := time.Parse("2006-01", startMonth)
+	if err != nil {
+		return 0, fmt.Errorf("budget start_month %q is not YYYY-MM", startMonth)
+	}
+	t, err := time.Parse("2006-01", strings.TrimSpace(ym))
+	if err != nil {
+		return 0, fmt.Errorf("month must be YYYY-MM, got %q", ym)
+	}
+	i := (t.Year()-s.Year())*12 + int(t.Month()-s.Month())
+	if i < 0 {
+		return 0, fmt.Errorf("%s is before the budget starts (%s)", ym, startMonth)
+	}
+	return i, nil
 }
 
 // CurrencyPatch edits a currency. Setting per_base without a source makes the
@@ -97,8 +186,8 @@ var OpKinds = map[string]string{
 	"add_category":    "value: Category",
 	"set_category":    "target: category; value: CategoryPatch",
 	"remove_category": "target: category (must be unused)",
-	"add_line":        "value: Line (id optional)",
-	"set_line":        "target: line; value: LinePatch",
+	"add_line":        "value: Line (id optional; schedule optional, default monthly)",
+	"set_line":        "target: line; value: LinePatch (schedule: only the given fields change when using starts/ends)",
 	"remove_line":     "target: line",
 	"add_debt":        "value: Debt (id optional)",
 	"set_debt":        "target: debt; value: DebtPatch",
@@ -259,9 +348,17 @@ func applyOne(b *Budget, op Op) error {
 		b.Categories = remove(b.Categories, i)
 
 	case "add_line":
-		var v Line // an omitted schedule decodes as monthly (see Line.UnmarshalJSON)
-		if err := decodeStrict(op.Value, &v); err != nil {
+		var in LineInput
+		if err := decodeStrict(op.Value, &in); err != nil {
 			return err
+		}
+		v := Line{ID: in.ID, Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: Monthly()}
+		if in.Schedule != nil {
+			s, err := in.Schedule.resolve(b.StartMonth, nil)
+			if err != nil {
+				return err
+			}
+			v.Schedule = s
 		}
 		if v.ID == "" {
 			v.ID = uniqueID(v.Name, ids(b.Lines, lineKey))
@@ -288,7 +385,13 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&l.Amount, v.Amount)
 		setIf(&l.Currency, v.Currency)
 		setIf(&l.Category, v.Category)
-		setIf(&l.Schedule, v.Schedule)
+		if v.Schedule != nil {
+			s, err := v.Schedule.resolve(b.StartMonth, &l.Schedule)
+			if err != nil {
+				return err
+			}
+			l.Schedule = s
+		}
 
 	case "remove_line":
 		i, err := find("line", op.Target, ids(b.Lines, lineKey))

@@ -272,3 +272,37 @@ func TestRatesWhenOffline(t *testing.T) {
 	}
 	h.call("set_currency", map[string]any{"code": "BTC", "per_base": "0.00001"}, false)
 }
+
+// update_line with only an end date used to rebuild the schedule from
+// "monthly from the first month", silently moving the line's start.
+func TestUpdateLineEndKeepsStart(t *testing.T) {
+	h := setup(t)
+	h.call("add_line", map[string]any{"name": "Insurance", "amount": "120", "category": "home", "every": 3, "starts": "2026-12"}, false)
+	s := h.call("update_line", map[string]any{"line": "insurance", "ends": "2027-12"}, false)
+	if l := line(s, "insurance"); l["schedule"] != "quarterly from Dec 2026 until Dec 2027" {
+		t.Fatalf("ends only: %v", l)
+	}
+	s = h.call("update_line", map[string]any{"line": "insurance", "ends": ""}, false)
+	if l := line(s, "insurance"); l["schedule"] != "quarterly from Dec 2026" {
+		t.Fatalf("clearing ends: %v", l)
+	}
+	s = h.call("update_line", map[string]any{"line": "insurance", "every": 12}, false)
+	if l := line(s, "insurance"); l["schedule"] != "yearly from Dec 2026" {
+		t.Fatalf("every only: %v", l)
+	}
+}
+
+func TestApplyOpsTakesCalendarMonths(t *testing.T) {
+	h := setup(t)
+	s := h.call("apply_ops", map[string]any{"ops": []any{
+		map[string]any{"op": "add_line", "value": map[string]any{"name": "Bonus", "amount": "500", "category": "income",
+			"schedule": map[string]any{"starts": "2027-03", "every": 0}}},
+	}}, false)
+	if l := line(s, "bonus"); l["schedule"] != "once, Mar 2027" {
+		t.Fatalf("bonus: %v", l)
+	}
+	h.call("apply_ops", map[string]any{"ops": []any{
+		map[string]any{"op": "add_line", "value": map[string]any{"name": "X", "amount": "1", "category": "home",
+			"schedule": map[string]any{"starts": "2027-03", "start": 2}}},
+	}}, true)
+}
