@@ -2,7 +2,7 @@
 
 # bbbudget
 
-**A budget planner that does exact money math and never phones home.**
+**A budget planner that does exact money math and keeps your numbers on your machine.**
 
 Multi-currency household budgets, month-by-month projections, debt payoff and what-if scenarios.
 A web UI, a CLI and an MCP server in a single Go binary that runs on your machine and keeps your numbers there.
@@ -22,7 +22,7 @@ A web UI, a CLI and an MCP server in a single Go binary that runs on your machin
 
 ## Why bbbudget
 
-- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory, and the app makes no outbound requests.
+- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory. The only network traffic is exchange-rate lookups you ask for, and one setting turns even those off.
 - 🧮 **Exact to the cent.** No floating point anywhere. Rounding is explicit and pessimistic, so the plan never looks better than reality.
 - 💱 **Built for messy, multi-currency lives.** Get paid in one currency, pay rent in another and tuition in a third. bbbudget prices in the FX rate *and* the transfer fees you lose along the way.
 - 📉 **Debts, goals and what-ifs.** Avalanche or snowball payoff, savings goal ETAs, and scenarios you compare side by side before changing anything.
@@ -112,7 +112,8 @@ bbbudget report home                     # projection + insights in the terminal
 A budget is about as personal as data gets, so bbbudget is built to keep it on your machine:
 
 - **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
-- **Zero third-party requests.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **Rates are the only thing that goes online.** The app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up. Set `fetch_rates` to `false` (see [Settings](#settings)) to make bbbudget fully offline.
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file.
 - **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
 
