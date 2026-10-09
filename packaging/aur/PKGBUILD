@@ -1,0 +1,40 @@
+# Maintainer: Ivanko1608 <29154527+Ivanko1608@users.noreply.github.com>
+pkgname=bbbudget
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Multi-currency budget planner with exact money math: web UI, CLI and MCP server, fully local'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Ivanko1608/bbbudget'
+license=('AGPL-3.0-or-later')
+depends=('glibc')
+makedepends=('git' 'go')
+source=("git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname"
+  export GOPATH="$srcdir/gopath"
+  go mod download -modcacherw
+}
+
+build() {
+  cd "$pkgname"
+  export GOPATH="$srcdir/gopath"
+  export CGO_CPPFLAGS="$CPPFLAGS" CGO_CFLAGS="$CFLAGS" CGO_CXXFLAGS="$CXXFLAGS" CGO_LDFLAGS="$LDFLAGS"
+  export GOFLAGS='-buildmode=pie -trimpath -mod=readonly -modcacherw'
+  go build -ldflags "-linkmode=external -X main.version=$pkgver" -o bbbudget ./cmd/bbbudget
+}
+
+check() {
+  cd "$pkgname"
+  export GOPATH="$srcdir/gopath"
+  export GOFLAGS='-trimpath -mod=readonly -modcacherw'
+  go test ./...
+}
+
+package() {
+  cd "$pkgname"
+  install -Dm755 bbbudget "$pkgdir/usr/bin/bbbudget"
+  install -Dm644 packaging/systemd/bbbudget.service "$pkgdir/usr/lib/systemd/user/bbbudget.service"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

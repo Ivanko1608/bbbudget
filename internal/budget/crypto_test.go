@@ -205,3 +205,15 @@ func TestManualRateHasNoFetchMetadata(t *testing.T) {
 		}
 	}
 }
+
+// A budget with nothing in it is what every new user starts from, and the UI
+// calls .map on these lists.
+func TestEmptyReportHasNoNullLists(t *testing.T) {
+	raw, err := json.Marshal(mustReport(t, blank()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), ":null") {
+		t.Errorf("lists must be [] rather than null in JSON: %s", raw)
+	}
+}
