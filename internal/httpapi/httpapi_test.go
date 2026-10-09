@@ -26,6 +26,7 @@ func offlineRates() map[string]rates.Provider {
 
 func TestRates(t *testing.T) {
 	c := setup(t)
+	c.do("PUT", "/api/settings", `{"fetch_rates":true}`, 200) // off by default
 	var q []map[string]any
 	w := c.req("GET", "/api/rates?base=EUR&codes=usd,BTC", "", nil)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &q) != nil || len(q) != 2 || q[1]["new"] != "0.00001352" {
@@ -235,7 +236,7 @@ func TestStaticAndMeta(t *testing.T) {
 func TestSettings(t *testing.T) {
 	c := setup(t)
 	v := c.do("GET", "/api/settings", "", 200)
-	if v["fetch_rates"] != true || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
+	if v["fetch_rates"] != false || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
 		t.Fatalf("defaults: %v", v)
 	}
 	if v["paths"].(map[string]any)["data"] != "/d" || v["auto_refresh_status"] == nil {
