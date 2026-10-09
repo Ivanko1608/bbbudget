@@ -12,7 +12,7 @@ const POLL_MS = 3000;
 
 const S = {
   meta: null,
-  prefs: { fetch_rates: true, default_rate_source: "auto" }, // app settings (settings.html)
+  prefs: { fetch_rates: false, default_rate_source: "auto" }, // app settings (settings.html); offline until loaded
   list: [],
   id: null,
   revision: 0,

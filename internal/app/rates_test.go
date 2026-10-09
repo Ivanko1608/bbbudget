@@ -37,6 +37,7 @@ func testApp(t *testing.T) *App {
 	if _, err := a.Create(context.Background(), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
+	withSettings(t, a, settings.Patch{FetchRates: ptr(true)}) // off by default; these tests fetch
 	return a
 }
 

@@ -33,6 +33,11 @@ func setup(t *testing.T) *harness {
 	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001"}}
 	a.Rates = map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: f, rates.CoinGecko: f}
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	on := true // fetching is off by default; these tests fetch
+	if _, err := a.UpdateSettings(settings.Patch{FetchRates: &on}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.Create(ctx, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}

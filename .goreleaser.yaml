@@ -44,9 +44,8 @@ nfpms:
     description: |-
       Multi-currency budget planner with exact money math.
       Month-by-month projections, debt payoff and what-if scenarios, with a
-      web UI, a CLI and an MCP server. Runs on localhost; the only network
-      traffic is exchange-rate lookups you ask for, and those can be
-      switched off.
+      web UI, a CLI and an MCP server. Runs on localhost and is offline by
+      default; fetching exchange rates is opt-in.
     license: AGPL-3.0-or-later
     section: utils
     priority: optional

@@ -22,7 +22,7 @@ A web UI, a CLI and an MCP server in a single Go binary that runs on your machin
 
 ## Why bbbudget
 
-- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory. The only network traffic is exchange-rate lookups you ask for, and one setting turns even those off.
+- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory. Out of the box it never touches the network. Fetching exchange rates is opt-in.
 - 🧮 **Exact to the cent.** No floating point anywhere. Rounding is explicit and pessimistic, so the plan never looks better than reality.
 - 💱 **Built for messy, multi-currency lives.** Get paid in one currency, pay rent in another and tuition in a third. bbbudget prices in the FX rate *and* the transfer fees you lose along the way.
 - 📉 **Debts, goals and what-ifs.** Avalanche or snowball payoff, savings goal ETAs, and scenarios you compare side by side before changing anything.
@@ -113,7 +113,7 @@ A budget is about as personal as data gets, so bbbudget is built to keep it on y
 
 - **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
 - **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
-- **Rates are the only thing that goes online.** The app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up. Set `fetch_rates` to `false` (see [Settings](#settings)) to make bbbudget fully offline.
+- **Offline by default.** Fetching exchange rates is off until you turn it on in [Settings](#settings) (`fetch_rates`). Until then you type rates by hand and nothing goes online. Once it's on, the app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default too. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up.
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file.
 - **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
 
@@ -155,7 +155,7 @@ Rates can be typed by hand or fetched. Each currency has a `source`:
 | `coingecko` | CoinGecko live market prices. The keyless API is rate-limited; set `COINGECKO_API_KEY` to a free demo key to raise the limit. | Crypto only |
 | `auto` | ECB where it has a rate, otherwise currency-api. | Everything |
 
-Rates are refreshed when you ask, or on a schedule if you turn that on in [Settings](#settings):
+Fetching is **off by default**, so bbbudget stays fully offline until you turn on `fetch_rates` in [Settings](#settings) (or run `bbbudget settings -set fetch_rates=true`). After that, rates are refreshed when you ask, or on a schedule if you turn that on too:
 
 - **UI:** choose **Rate from** per currency, then **Update rates now**. Adding a currency or changing its source fetches its rate straight away. Typing a rate yourself switches that currency to manual.
 - **CLI:** `bbbudget rates home` refreshes every non-manual currency. `-only USD,BTC` names currencies (a manual one named here switches to `auto`), and `-dry-run` shows the rates without saving. Put it in cron to keep a budget current.
@@ -169,7 +169,7 @@ App-wide preferences live on the **Settings** page (top right of the UI), in `bb
 
 | Setting | Default | |
 |---|---|---|
-| `fetch_rates` | `true` | `false` is fully offline: nothing contacts a rate provider. |
+| `fetch_rates` | `false` | Off is fully offline: nothing contacts a rate provider and every rate is typed by hand. Turn it on to fetch rates. |
 | `default_rate_source` | `auto` | The source a newly added currency gets. |
 | `auto_refresh` | `off` | `hourly` or `daily`: while `bbbudget serve` runs, refresh every budget's non-manual rates. The page shows the last run. |
 | `coingecko_api_key` | — | Optional CoinGecko demo key. The file is written with mode 0600, and the key is never sent back to the browser or printed. |
