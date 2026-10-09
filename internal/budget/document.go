@@ -3,6 +3,7 @@ package budget
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -44,7 +45,7 @@ func ParseDocument(data []byte, format string) (Budget, error) {
 }
 
 // Normalize fills in what a hand-written document may leave out: empty lists,
-// ids derived from names, the base currency on lines and debts, the default
+// ids derived from names, the base currency on items and debts, the default
 // debt strategy and a 12-month window. It never changes a value that was set.
 func Normalize(b *Budget) {
 	if b.Months == 0 {
@@ -59,8 +60,8 @@ func Normalize(b *Budget) {
 	if b.Categories == nil {
 		b.Categories = []Category{}
 	}
-	if b.Lines == nil {
-		b.Lines = []Line{}
+	if b.Items == nil {
+		b.Items = []Item{}
 	}
 	if b.Debts == nil {
 		b.Debts = []Debt{}
@@ -80,10 +81,10 @@ func Normalize(b *Budget) {
 			c.Kind = KindExpense
 		}
 	}
-	for i := range b.Lines {
-		l := &b.Lines[i]
+	for i := range b.Items {
+		l := &b.Items[i]
 		if l.ID == "" {
-			l.ID = uniqueID(l.Name, ids(b.Lines, lineKey))
+			l.ID = uniqueID(l.Name, ids(b.Items, itemKey))
 		}
 		if l.Currency == "" {
 			l.Currency = b.BaseCurrency
@@ -105,10 +106,35 @@ func Normalize(b *Budget) {
 	}
 }
 
+// UnmarshalJSON reads a budget strictly (unknown fields are errors) and
+// accepts "lines", the name "items" had before it was renamed, so budgets
+// saved by older versions still load. They are written back as "items".
+func (b *Budget) UnmarshalJSON(data []byte) error {
+	type plain Budget // no methods: avoids recursion
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if old, ok := fields["lines"]; ok {
+		if _, both := fields["items"]; both {
+			return errors.New(`a budget has "items" and its old name "lines"; keep one`)
+		}
+		delete(fields, "lines")
+		fields["items"] = old
+		var err error
+		if data, err = json.Marshal(fields); err != nil {
+			return err
+		}
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	return d.Decode((*plain)(b))
+}
+
 // UnmarshalJSON makes an omitted schedule mean "monthly" (the common case)
 // rather than the zero value, which would be a one-off in the first month.
-func (l *Line) UnmarshalJSON(data []byte) error {
-	type plain Line // no methods: avoids recursion
+func (l *Item) UnmarshalJSON(data []byte) error {
+	type plain Item // no methods: avoids recursion
 	var in struct {
 		plain
 		Schedule *Schedule `json:"schedule"`
@@ -118,7 +144,7 @@ func (l *Line) UnmarshalJSON(data []byte) error {
 	if err := d.Decode(&in); err != nil {
 		return err
 	}
-	*l = Line(in.plain)
+	*l = Item(in.plain)
 	l.Schedule = Monthly()
 	if in.Schedule != nil {
 		l.Schedule = *in.Schedule

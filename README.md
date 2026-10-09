@@ -127,12 +127,12 @@ One honest caveat: when you use the MCP server with a hosted AI assistant, the M
 | **Currencies** | Fiat or crypto (BTC, ETH, SOL, LTC, BNB, XRP, ADA, TRX, DOGE, USDT, USDC, DAI). `per_base` rate (e.g. US$ per €), `transfer_fee_pct` (the share lost on every payment in that currency) and `cash_out_fee_pct` (the share lost when income in it is converted to base, such as fees for selling crypto). |
 | **Rate source** | Per currency: `manual` (typed) or fetched from `ecb`, `currency-api`, `coingecko` or `auto`. See [Exchange rates](#exchange-rates). |
 | **Categories** | `income` or `expense`, with a label and colour. |
-| **Lines** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
+| **Items** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
 | **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
 | **Goals** | Savings targets: when they're reached, or the monthly rate needed to reach them. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest line, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
 
 ## Money handling
 
@@ -141,7 +141,7 @@ Insights cover category shares, transfer losses, cash-out losses, how much incom
 - **Rounding is explicit and pessimistic.** There is one rounding per conversion. Money you pay rounds **up**, money you receive rounds **down**, and interest charged to you rounds up. A plan therefore never looks better than reality, and is off by at most one minor unit per conversion.
 - **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `saved = left − extra debt payment`, and `savings = previous + saved`. Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies and schedules.
 - **Overflow can't wrap.** Arithmetic is checked: overflow and currency mismatches become errors, never wrapped values or crashes. Inputs are bounded (amounts ≤ 10¹² units and ≤ 10¹⁵ minor units, ≤ 600 months).
-- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`lines[3].amount`). The UI highlights the matching fields.
+- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`items[3].amount`). The UI highlights the matching fields.
 
 ## Exchange rates
 
@@ -183,12 +183,12 @@ A broken settings file is an error naming the file, never silently replaced by d
 
 ### Crypto income
 
-Add the coin as a currency and write the income line in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
+Add the coin as a currency and write the income item in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
 
 ```yaml
 currencies:
   - {code: BTC, source: auto, per_base: 0.0000135, cash_out_fee_pct: 1.5}
-lines:
+items:
   - {name: Freelance (paid in BTC), amount: 0.012, currency: BTC, category: income}
 ```
 
@@ -207,7 +207,7 @@ currencies:
 categories:
   - {label: Income, kind: income}
   - {label: Home}                                        # kind defaults to expense
-lines:
+items:
   - {name: Salary, amount: 3900, category: income}       # currency defaults to base
   - {name: Rent, amount: 1150, category: home}           # schedule defaults to monthly
   - {name: Insurance, amount: 240, category: home, schedule: {every: 12, start: 2}}
@@ -238,9 +238,9 @@ Ids are derived from names when omitted. YAML numbers keep their exact text: `45
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`. There is also a resource, `budget://{id}`, with the raw document.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`. There is also a resource, `budget://{id}`, with the raw document.
 
-`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Lines are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
+`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Items are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
 The web UI and the MCP server can run as separate processes on the same data directory. Writes are serialised with a file lock and guarded by revision numbers. The UI polls and picks up Claude's edits within a few seconds. If you were mid-edit when a change arrived, the UI reloads and tells you, rather than overwriting the other change.
 

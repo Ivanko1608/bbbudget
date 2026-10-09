@@ -16,7 +16,7 @@ categories:
   - {id: education, label: Education, kind: expense, color: "#d99a00"}
   - {id: travel, label: Travel, kind: expense, color: "#7a6ff0"}
   - {id: cards, label: Cards, kind: expense, color: "#c2412d"}
-lines:
+items:
   - {id: salary, name: Salary, amount: 3900, currency: EUR, category: income}
   - {id: rent, name: Rent, amount: 1150, currency: CHF, category: home}
   - {id: utilities, name: Utilities, amount: 80, currency: EUR, category: home}

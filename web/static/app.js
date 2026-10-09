@@ -250,22 +250,22 @@ function renderEditors() {
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
 
   const cats = b.categories.map((c) => [c.id, `${c.label}${c.kind === "income" ? " (income)" : ""}`]);
-  $("#lines").innerHTML = b.lines.map((l, i) => {
+  $("#items").innerHTML = b.items.map((l, i) => {
     const color = b.categories.find((c) => c.id === l.category)?.color || "var(--line)";
     const sch = l.schedule;
-    return `<div class="row row-line" style="box-shadow:inset 3px 0 0 ${esc(color)}">
-      ${field("Name", `lines.${i}.name`, { cls: "name" })}
-      ${field("Amount", `lines.${i}.amount`, { type: "decimal" })}
-      ${select("Currency", `lines.${i}.currency`, currencyOptions())}
-      ${select("Category", `lines.${i}.category`, cats, { structural: true })}
-      ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
-      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+    return `<div class="row row-item" style="box-shadow:inset 3px 0 0 ${esc(color)}">
+      ${field("Name", `items.${i}.name`, { cls: "name" })}
+      ${field("Amount", `items.${i}.amount`, { type: "decimal" })}
+      ${select("Currency", `items.${i}.currency`, currencyOptions())}
+      ${select("Category", `items.${i}.category`, cats, { structural: true })}
+      ${select("Repeats", `items.${i}.schedule.every`, EVERY, { structural: true })}
+      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="items.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
       ${sch.every === 0 ? "<span></span>" :
-        `<label class="f">Until<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+        `<label class="f">Until<input type="month" data-path="items.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
       <span class="base" data-base="${esc(l.id)}"></span>
-      ${del("del-line", i, l.name)}
+      ${del("del-item", i, l.name)}
     </div>`;
-  }).join("") || `<p class="muted">No lines yet.</p>`;
+  }).join("") || `<p class="muted">No items yet.</p>`;
 
   $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" style="box-shadow:inset 3px 0 0 var(--debt)">
       ${field("Name", `debts.${i}.name`)}
@@ -290,7 +290,7 @@ function renderEditors() {
     </div>`).join("");
 
   renderWhatIf();
-  renderLineBases();
+  renderItemBases();
   renderRateNotes();
 }
 
@@ -427,14 +427,14 @@ function renderRateNotes() {
 }
 
 const ACTIONS = {
-  "add-line"() {
+  "add-item"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
-    b.lines.push({ id: newId("New line", b.lines), name: "New line", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
+    b.items.push({ id: newId("New item", b.items), name: "New item", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
-    focusLast("#lines input[data-path$='.name']");
+    focusLast("#items input[data-path$='.name']");
   },
-  "del-line"(i) { S.budget.lines.splice(i, 1); edited({ structural: true }); },
+  "del-item"(i) { S.budget.items.splice(i, 1); edited({ structural: true }); },
   "add-currency"() {
     const b = S.budget;
     const used = new Set([b.base_currency, ...b.currencies.map((c) => c.code)]);
@@ -478,12 +478,12 @@ const ACTIONS = {
   },
   "del-category"(i) {
     const c = S.budget.categories[i];
-    if (S.budget.lines.some((l) => l.category === c.id)) { status(`“${c.label}” is still used by a line.`, true); return; }
+    if (S.budget.items.some((l) => l.category === c.id)) { status(`“${c.label}” is still used by an item.`, true); return; }
     S.budget.categories.splice(i, 1);
     edited({ structural: true });
   },
   new() { openNewDialog(); },
-  "add-wi"() { S.wi.push({ kind: "line", target: S.budget.lines[0]?.id || "", value: "" }); renderWhatIf(); },
+  "add-wi"() { S.wi.push({ kind: "item", target: S.budget.items[0]?.id || "", value: "" }); renderWhatIf(); },
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
   "save-wi"() { saveWhatIf(); },
@@ -516,9 +516,9 @@ function focusLast(sel) {
 
 // ---------- outputs ----------
 
-function renderLineBases() {
+function renderItemBases() {
   if (!S.report) return;
-  const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
+  const byId = Object.fromEntries(S.report.items.map((l) => [l.id, l]));
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
     el.textContent = l && l.amount.currency !== S.report.base_currency ? `≈ ${l.per_occurrence_base.display}` : "";
@@ -568,7 +568,7 @@ function renderOutputs() {
     h += `<tr><td>${esc(m.label)}</td><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td><td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td class="${neg(m.savings)}">${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
   }
   $("#table").innerHTML = h;
-  renderLineBases();
+  renderItemBases();
 }
 
 function drawChart(r) {
@@ -606,15 +606,15 @@ function drawChart(r) {
 
 // ---------- scenarios ----------
 
-const WI_KINDS = [["line", "Change a line's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove a line"]];
+const WI_KINDS = [["item", "Change an item's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove an item"]];
 
 function renderWhatIf() {
   const b = S.budget;
-  const lineOpts = b.lines.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  const itemOpts = b.items.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
   const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} (now ${esc(c.per_base)})</option>`).join("");
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
       <label class="f">Change<select data-wi="${i}" data-k="kind">${WI_KINDS.map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Line"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
+      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Item"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
       ${o.kind === "remove" ? "<span></span>" : `<label class="f">New value<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
       ${del("del-wi", i, "change")}
     </div>`).join("") || `<p class="muted">Add a change to see what it would do.</p>`;
@@ -626,10 +626,10 @@ function wiOps() {
     if (o.kind !== "remove" && !DEC_RE.test(String(o.value).trim())) throw new Error("Each new value must be a plain number like 800 or 92.5");
     const value = String(o.value).trim();
     switch (o.kind) {
-      case "line": return { op: "set_line", target: o.target, value: { amount: value } };
+      case "item": return { op: "set_item", target: o.target, value: { amount: value } };
       case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
       case "extra": return { op: "set_settings", value: { extra_to_debt_pct: value } };
-      case "remove": return { op: "remove_line", target: o.target };
+      case "remove": return { op: "remove_item", target: o.target };
     }
   });
 }
