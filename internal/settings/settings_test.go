@@ -21,7 +21,7 @@ func TestMissingFileGivesDefaults(t *testing.T) {
 			t.Fatalf("Load(%q) = %+v, %v", path, s, err)
 		}
 	}
-	if d := Defaults(); !d.FetchRates || d.DefaultRateSource != "auto" || d.AutoRefresh != RefreshOff || d.Validate() != nil {
+	if d := Defaults(); d.FetchRates || d.DefaultRateSource != "auto" || d.AutoRefresh != RefreshOff || d.Validate() != nil {
 		t.Fatalf("defaults: %+v", d)
 	}
 }
@@ -52,7 +52,7 @@ func TestPartialFileKeepsDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	os.WriteFile(path, []byte(`{"auto_refresh": "hourly"}`), 0o600)
 	s, err := Load(path)
-	if err != nil || !s.FetchRates || s.DefaultRateSource != "auto" || s.AutoRefresh != RefreshHourly {
+	if err != nil || s.FetchRates || s.DefaultRateSource != "auto" || s.AutoRefresh != RefreshHourly {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 }
