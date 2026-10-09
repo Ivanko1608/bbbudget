@@ -80,6 +80,7 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	r = &Report{
 		Name: p.Doc.Name, BaseCurrency: p.Base.Code, StartMonth: p.Doc.StartMonth, Months: pr.Months,
 		Debts: pr.DebtSummaries(), Goals: pr.GoalStatuses(), Insights: Insights(pr, DefaultRules),
+		Lines: []LineReport{},
 	}
 	for _, l := range p.Lines {
 		per := p.PayCost(l.Amt, roundPay)
