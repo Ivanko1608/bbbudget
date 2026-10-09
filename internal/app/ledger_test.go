@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -130,5 +131,19 @@ func TestUpdateAndDeleteTransactions(t *testing.T) {
 	}
 	if list, _ := a.ListTransactions(ctx, "home", TxFilter{}); len(list) != 1 || list[0].ID != "t3" {
 		t.Fatalf("left: %+v", list)
+	}
+}
+
+// A month with nothing to flag must say so with an empty list: the page
+// iterates over flags, and null broke it.
+func TestMonthStatusWithoutFlagsIsAnEmptyList(t *testing.T) {
+	a := testApp(t)
+	st, err := a.MonthStatus(context.Background(), "home", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(st)
+	if !strings.Contains(string(raw), `"flags":[]`) || strings.Contains(string(raw), `"categories":null`) {
+		t.Fatalf("status JSON: %s", raw)
 	}
 }
