@@ -63,7 +63,7 @@ const (
 
 // Defaults are used when there is no settings file.
 func Defaults() Settings {
-	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto, AssistantProvider: AssistantOff}
+	return Settings{FetchRates: false, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto, AssistantProvider: AssistantOff}
 }
 
 // LocaleAuto picks the language from the reader's browser or environment.
