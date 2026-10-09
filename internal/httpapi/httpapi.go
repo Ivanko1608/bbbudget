@@ -14,6 +14,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
@@ -113,10 +114,23 @@ func (s *server) guard(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		// Writes through the API are recorded as made in the browser; the
 		// MCP endpoint relabels its own as "mcp".
-		r = r.WithContext(store.WithChange(r.Context(), store.Change{Source: "web"}))
+		ctx := store.WithChange(r.Context(), store.Change{Source: "web"})
+		r = r.WithContext(i18n.WithLocale(ctx, s.locale(r)))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// locale is the language to answer in: the app setting if one is chosen,
+// else the browser's Accept-Language, else the server's own environment.
+func (s *server) locale(r *http.Request) string {
+	if st, err := s.app.Settings(); err == nil && st.Locale != "" && st.Locale != settings.LocaleAuto {
+		return i18n.Match(st.Locale)
+	}
+	if l := i18n.MatchAcceptLanguage(r.Header.Get("Accept-Language")); l != "" {
+		return l
+	}
+	return i18n.FromEnv()
 }
 
 func (s *server) hostAllowed(hostport string) bool {
@@ -173,7 +187,12 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &oe): // checked first: a bad target inside an op is the caller's mistake
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	case errors.As(err, &ve):
-		writeErr(w, http.StatusUnprocessableEntity, err.Error(), ve.Issues)
+		l := i18n.For(i18n.FromContext(r.Context()))
+		issues := make([]budget.Issue, len(ve.Issues))
+		for i, is := range ve.Issues {
+			issues[i] = is.Localized(l)
+		}
+		writeErr(w, http.StatusUnprocessableEntity, err.Error(), issues)
 	case errors.As(err, &ue):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": ue.Later})
 	case errors.Is(err, app.ErrNothingToUndo):
@@ -215,11 +234,26 @@ func decode(r *http.Request, v any) error {
 
 // --- handlers ---
 
+type localeInfo struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+func locales() []localeInfo {
+	var out []localeInfo
+	for _, code := range i18n.Locales() {
+		out = append(out, localeInfo{code, i18n.Catalogs()[code].Meta.Name})
+	}
+	return out
+}
+
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources,
 		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
 		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
+		"locale":     i18n.FromContext(r.Context()),
+		"locales":    locales(),
 	})
 }
 
@@ -384,6 +418,7 @@ type settingsView struct {
 	DefaultRateSource string                `json:"default_rate_source"`
 	AutoRefresh       string                `json:"auto_refresh"`
 	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
+	Locale            string                `json:"locale"`
 	Status            app.AutoRefreshStatus `json:"auto_refresh_status"`
 	Paths             map[string]string     `json:"paths"`
 }
@@ -393,7 +428,11 @@ func (s *server) settingsView(st settings.Settings) settingsView {
 	if paths == nil {
 		paths = map[string]string{}
 	}
-	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", s.app.AutoRefresh(), paths}
+	locale := st.Locale
+	if locale == "" {
+		locale = settings.LocaleAuto
+	}
+	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", locale, s.app.AutoRefresh(), paths}
 }
 
 func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {

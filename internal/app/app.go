@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
@@ -53,8 +54,9 @@ type View struct {
 	Report    *budget.Report `json:"report"`
 }
 
-func view(r store.Record) (*View, error) {
-	rep, err := budget.Analyze(r.Budget)
+// view analyzes a stored budget, with its text in the caller's language.
+func (a *App) view(ctx context.Context, r store.Record) (*View, error) {
+	rep, err := a.analyze(ctx, r.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +77,25 @@ func (a *App) Create(ctx context.Context, id, name, template string) (*View, err
 	if err != nil {
 		return nil, err
 	}
+	localizeCategories(&b, a.Localizer(ctx))
 	r, err := a.Store.Create(ctx, id, b)
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
+}
+
+// localizeCategories translates category labels a template left as they
+// are in English ("Income" for id income) into the reader's language. A
+// label anyone changed is theirs and stays as it is.
+func localizeCategories(b *budget.Budget, l *i18n.Localizer) {
+	en := i18n.For(i18n.Default)
+	for i, c := range b.Categories {
+		key := "category." + c.ID
+		if t := en.Text(key, nil); t != key && t == c.Label {
+			b.Categories[i].Label = l.Text(key, nil)
+		}
+	}
 }
 
 // Import stores a full budget document as a new budget.
@@ -88,7 +104,7 @@ func (a *App) Import(ctx context.Context, id string, b budget.Budget) (*View, er
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 func (a *App) Get(ctx context.Context, id string) (*View, error) {
@@ -96,7 +112,7 @@ func (a *App) Get(ctx context.Context, id string) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 func (a *App) Delete(ctx context.Context, id string) error { return a.Store.Delete(ctx, id) }
@@ -107,7 +123,7 @@ func (a *App) Replace(ctx context.Context, id string, revision int64, b budget.B
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 // Apply runs ops against the latest budget and saves the result atomically.
@@ -117,7 +133,18 @@ func (a *App) Apply(ctx context.Context, id string, revision int64, ops []budget
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
+}
+
+func (a *App) analyze(ctx context.Context, b budget.Budget) (*budget.Report, error) {
+	rep, err := budget.Analyze(b)
+	if err != nil {
+		return nil, err
+	}
+	if l := a.Localizer(ctx); l.Locale() != i18n.Default {
+		rep.Localize(l)
+	}
+	return rep, nil
 }
 
 // WhatIf previews ops without saving anything. It returns the hypothetical
@@ -131,7 +158,7 @@ func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Bu
 	if err != nil {
 		return budget.Budget{}, nil, err
 	}
-	rep, err := budget.Analyze(nb)
+	rep, err := a.analyze(ctx, nb)
 	return nb, rep, err
 }
 
@@ -163,7 +190,7 @@ func (a *App) SetDebt(ctx context.Context, id, ref string, patch budget.DebtPatc
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 // ScenarioReport projects a saved scenario without saving.
@@ -180,7 +207,7 @@ func (a *App) ScenarioReport(ctx context.Context, id, scenario string) (*budget.
 	if err != nil {
 		return nil, err
 	}
-	return budget.Analyze(nb)
+	return a.analyze(ctx, nb)
 }
 
 func (a *App) SaveScenario(ctx context.Context, id, name, description string, ops []budget.Op) (budget.Scenario, error) {
@@ -198,7 +225,7 @@ func (a *App) Compare(ctx context.Context, id string, scenarios []string) ([]bud
 	if err != nil {
 		return nil, err
 	}
-	return budget.Compare(r.Budget, scenarios)
+	return budget.Compare(r.Budget, scenarios, a.Localizer(ctx))
 }
 
 func (a *App) AdoptScenario(ctx context.Context, id, scenario string) (*View, error) {
@@ -208,7 +235,7 @@ func (a *App) AdoptScenario(ctx context.Context, id, scenario string) (*View, er
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 func (a *App) DeleteScenario(ctx context.Context, id, scenario string) error {

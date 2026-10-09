@@ -5,6 +5,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
@@ -31,7 +32,17 @@ type Summary struct {
 	Scenarios  []scenarioRow     `json:"scenarios,omitempty"`
 	Months     []monthRow        `json:"months"`
 	Totals     map[string]string `json:"totals"`
-	Insights   []string          `json:"insights"`
+	Insights   []insightRow      `json:"insights"`
+}
+
+// insightRow is an insight as text in the configured language, plus its
+// message key and typed arguments: the exact amounts and months behind it.
+type insightRow struct {
+	ID   string              `json:"id"`
+	Tone string              `json:"tone"`
+	Text string              `json:"text"`
+	Key  string              `json:"key"`
+	Args map[string]i18n.Arg `json:"args,omitempty"`
 }
 
 type lineRow struct {
@@ -139,7 +150,7 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 		"saved": t.Saved.String(), "end_savings": t.EndSavings.String(), "interest": t.TotalInterest.String(),
 	}
 	for _, in := range r.Insights {
-		s.Insights = append(s.Insights, "["+in.Tone+"] "+plain(in.Text))
+		s.Insights = append(s.Insights, insightRow{in.ID, in.Tone, plain(in.Text), in.Key, in.Args})
 	}
 	return s
 }

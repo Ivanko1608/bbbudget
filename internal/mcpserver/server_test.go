@@ -297,3 +297,15 @@ func TestHistoryAndUndoTools(t *testing.T) {
 		t.Fatalf("conflict error: %s", e)
 	}
 }
+
+func TestInsightsAreStructured(t *testing.T) {
+	h := setup(t)
+	s := h.call("get_budget", map[string]any{}, false)
+	in := s["insights"].([]any)[0].(map[string]any)
+	if in["key"] == "" || in["text"] == "" || in["tone"] == "" || in["args"] == nil {
+		t.Fatalf("insight: %v", in)
+	}
+	if strings.Contains(in["text"].(string), "**") {
+		t.Errorf("markdown left in text: %q", in["text"])
+	}
+}

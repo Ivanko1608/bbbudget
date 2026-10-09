@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 )
 
 // Change says who is making a write, for the history. Transports put one on
@@ -19,8 +20,8 @@ import (
 type Change struct {
 	// Source is who wrote: "web", "mcp", "cli", "auto-refresh", "assistant".
 	Source string
-	// Summary overrides the summary computed from the diff ("undid r12: …").
-	Summary string
+	// Msg overrides the summary computed from the diff ("undid r12 (…)").
+	Msg *i18n.Msg
 	// Autosave marks an editor's save-as-you-type write. Consecutive
 	// autosaves from one source merge into one history entry.
 	Autosave bool
@@ -45,7 +46,10 @@ type Entry struct {
 	Revision int64     `json:"revision"`
 	At       time.Time `json:"at"`
 	Source   string    `json:"source"`
+	// Summary is what changed, in English as stored; History renders it
+	// from Msg in the reader's language.
 	Summary  string    `json:"summary"`
+	Msg      *i18n.Msg `json:"msg,omitempty"`
 	Autosave bool      `json:"autosave,omitempty"`
 	// Budget is the document as of Revision. History listings leave it out.
 	Budget *budget.Budget `json:"budget,omitempty"`
@@ -121,24 +125,32 @@ func (s *FileStore) record(ctx context.Context, prev *Record, next Record) error
 		}
 		if len(entries) == 0 { // a budget from before history was kept
 			b := prev.Budget
-			entries = []Entry{{Revision: prev.Revision, At: prev.UpdatedAt, Source: SourceEarlier, Summary: "as it was before history was kept", Budget: &b}}
+			base := i18n.Msg{Key: "change.baseline"}
+			entries = []Entry{{Revision: prev.Revision, At: prev.UpdatedAt, Source: SourceEarlier, Msg: &base, Budget: &b}}
 		}
 	}
 	c := ChangeFrom(ctx)
-	e := Entry{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: c.Summary, Autosave: c.Autosave, Budget: &next.Budget}
-	if n := len(entries); c.Autosave && c.Summary == "" && n >= 2 {
+	e := Entry{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Msg: c.Msg, Autosave: c.Autosave, Budget: &next.Budget}
+	if n := len(entries); c.Autosave && c.Msg == nil && n >= 2 {
 		last := entries[n-1]
 		if last.Autosave && last.Source == c.Source && last.Revision == next.Revision-1 && next.UpdatedAt.Sub(last.At) < coalesceWindow {
 			entries = entries[:n-1] // folded into this entry, described from the one before
 		}
 	}
-	if e.Summary == "" {
+	if e.Msg == nil {
+		m := i18n.Msg{Key: "change.created"}
 		if n := len(entries); n > 0 && entries[n-1].Budget != nil {
-			e.Summary = budget.DescribeChange(*entries[n-1].Budget, next.Budget)
-		} else {
-			e.Summary = "created"
+			m = budget.ChangeMsg(*entries[n-1].Budget, next.Budget)
+		}
+		e.Msg = &m
+	}
+	english := i18n.For(i18n.Default)
+	for i := range entries {
+		if entries[i].Msg != nil && entries[i].Summary == "" {
+			entries[i].Summary = english.T(*entries[i].Msg)
 		}
 	}
+	e.Summary = english.T(*e.Msg)
 	entries = append(entries, e)
 	if over := len(entries) - s.limit(); over > 0 {
 		entries = entries[over:]

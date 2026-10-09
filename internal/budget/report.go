@@ -1,9 +1,9 @@
 package budget
 
 import (
-	"fmt"
 	"math/big"
 
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
@@ -34,14 +34,16 @@ type Totals struct {
 
 // Report is everything a UI or an assistant needs, computed in one place.
 type Report struct {
-	Name         string        `json:"name"`
-	BaseCurrency string        `json:"base_currency"`
-	Months       []Month       `json:"months"`
-	Lines        []LineReport  `json:"lines"`
-	Debts        []DebtSummary `json:"debts"`
-	Goals        []GoalStatus  `json:"goals"`
-	Totals       Totals        `json:"totals"`
-	Insights     []Insight     `json:"insights"`
+	Name         string `json:"name"`
+	BaseCurrency string `json:"base_currency"`
+	// StartMonth is the first projected month, "YYYY-MM".
+	StartMonth string        `json:"start_month"`
+	Months     []Month       `json:"months"`
+	Lines      []LineReport  `json:"lines"`
+	Debts      []DebtSummary `json:"debts"`
+	Goals      []GoalStatus  `json:"goals"`
+	Totals     Totals        `json:"totals"`
+	Insights   []Insight     `json:"insights"`
 	// Currencies lists each foreign currency with what one unit is worth.
 	Currencies []CurrencyReport `json:"currencies"`
 }
@@ -76,7 +78,7 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	defer money.Recover(&err)
 	p := pr.Plan
 	r = &Report{
-		Name: p.Doc.Name, BaseCurrency: p.Base.Code, Months: pr.Months,
+		Name: p.Doc.Name, BaseCurrency: p.Base.Code, StartMonth: p.Doc.StartMonth, Months: pr.Months,
 		Debts: pr.DebtSummaries(), Goals: pr.GoalStatuses(), Insights: Insights(pr, DefaultRules),
 	}
 	for _, l := range p.Lines {
@@ -87,7 +89,7 @@ func buildReport(pr *Projection) (r *Report, err error) {
 		r.Lines = append(r.Lines, LineReport{
 			ID: l.ID, Name: l.Name, Category: l.Category, Income: l.Income, Amount: l.Amt,
 			PerOccurrence: per, MonthlyEquivalent: p.MonthlyEquivalent(l),
-			Schedule: l.Schedule, ScheduleText: describeSchedule(p, l.Schedule),
+			Schedule: l.Schedule,
 		})
 	}
 	r.Currencies = []CurrencyReport{}
@@ -106,30 +108,8 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	t.EndSavings = pr.Last().Savings
 	t.TotalInterest = pr.TotalInterestBase()
 	r.Totals = t
+	r.Localize(i18n.For(i18n.Default))
 	return r, nil
-}
-
-func describeSchedule(p *Plan, s Schedule) string {
-	var txt string
-	switch s.Every {
-	case 0:
-		return "once, " + p.MonthLabel(s.Start)
-	case 1:
-		txt = "monthly"
-	case 3:
-		txt = "quarterly"
-	case 12:
-		txt = "yearly"
-	default:
-		txt = fmt.Sprintf("every %d months", s.Every)
-	}
-	if s.Start > 0 {
-		txt += " from " + p.MonthLabel(s.Start)
-	}
-	if s.End != nil {
-		txt += " until " + p.MonthLabel(*s.End)
-	}
-	return txt
 }
 
 // unitValue finds the smallest 10^k units of cur worth at least 0.1 in base.

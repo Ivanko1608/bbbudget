@@ -3,16 +3,17 @@ package budget
 import (
 	"strings"
 
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
 // AddScenario stores a named set of ops. The ops must apply cleanly now.
 func AddScenario(b Budget, name, description string, ops []Op) (Budget, Scenario, error) {
 	if strings.TrimSpace(name) == "" {
-		return Budget{}, Scenario{}, &ValidationError{[]Issue{{"name", "scenario name is required"}}}
+		return Budget{}, Scenario{}, &ValidationError{[]Issue{issue("name", "issue.scenario_name", nil)}}
 	}
 	if len(ops) == 0 {
-		return Budget{}, Scenario{}, &ValidationError{[]Issue{{"ops", "a scenario needs at least one op"}}}
+		return Budget{}, Scenario{}, &ValidationError{[]Issue{issue("ops", "issue.scenario_ops", nil)}}
 	}
 	if _, err := Apply(b, ops...); err != nil {
 		return Budget{}, Scenario{}, err
@@ -82,12 +83,18 @@ type Outcome struct {
 
 // Compare evaluates the baseline and the given scenarios (all if refs is
 // empty). Every outcome is computed from the same baseline independently.
-func Compare(b Budget, refs []string) ([]Outcome, error) {
+//
+// Labels are rendered with l (nil means English).
+func Compare(b Budget, refs []string, l *i18n.Localizer) ([]Outcome, error) {
+	if l == nil {
+		l = i18n.For(i18n.Default)
+	}
 	baseRep, err := Analyze(b)
 	if err != nil {
 		return nil, err
 	}
-	baseline := outcome("baseline", "Current budget", baseRep, nil)
+	baseRep.Localize(l)
+	baseline := outcome("baseline", l.Text("compare.baseline", nil), baseRep, nil)
 	out := []Outcome{baseline}
 
 	var scen []Scenario
@@ -112,6 +119,7 @@ func Compare(b Budget, refs []string) ([]Outcome, error) {
 			out = append(out, Outcome{ID: s.ID, Name: s.Name, Error: err.Error()})
 			continue
 		}
+		rep.Localize(l)
 		out = append(out, outcome(s.ID, s.Name, rep, baseline.EndSavings))
 	}
 	return out, nil

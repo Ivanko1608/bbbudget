@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Budget planner</title>
+<title data-i18n="app.title">Budget planner</title>
 <link rel="preload" href="fonts/golos-text-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%224%22 fill=%22%231f8a5b%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
@@ -12,20 +12,20 @@
 <main>
   <header class="top">
     <div>
-      <h1 id="title">Budget planner</h1>
-      <p id="status" class="muted" role="status" aria-live="polite">Loading…</p>
+      <h1 id="title" data-i18n="app.title">Budget planner</h1>
+      <p id="status" class="muted" role="status" aria-live="polite" data-i18n="app.loading">Loading…</p>
     </div>
     <div class="top-actions">
-      <label class="sr" for="picker">Budget</label>
-      <select id="picker" aria-label="Budget"></select>
-      <button id="newBtn" type="button">New</button>
-      <a class="btn" href="settings.html" aria-label="App settings">Settings</a>
+      <label class="sr" for="picker" data-i18n="app.budget">Budget</label>
+      <select id="picker" aria-label="Budget" data-i18n-attr="aria-label:app.budget"></select>
+      <button id="newBtn" type="button" data-i18n="app.new">New</button>
+      <a class="btn" href="settings.html" aria-label="App settings" data-i18n="app.settings" data-i18n-attr="aria-label:app.settings_aria">Settings</a>
       <details class="menu">
-        <summary aria-label="More actions">⋯</summary>
+        <summary aria-label="More actions" data-i18n-attr="aria-label:app.more">⋯</summary>
         <div class="menu-body">
-          <button id="exportBtn" type="button">Download JSON</button>
-          <label class="filebtn">Import JSON<input id="importFile" type="file" accept="application/json,.json"></label>
-          <button id="deleteBtn" type="button" class="danger">Delete this budget</button>
+          <button id="exportBtn" type="button" data-i18n="app.export">Download JSON</button>
+          <label class="filebtn"><span data-i18n="app.import">Import JSON</span><input id="importFile" type="file" accept="application/json,.json"></label>
+          <button id="deleteBtn" type="button" class="danger" data-i18n="app.delete">Delete this budget</button>
         </div>
       </details>
     </div>
@@ -35,91 +35,91 @@
 
   <div id="empty" hidden>
     <section>
-      <h2>No budgets yet</h2>
-      <p class="muted">Create one from a template to get started.</p>
-      <button type="button" class="primary" data-action="new" style="margin-top:12px">Create a budget</button>
+      <h2 data-i18n="empty.title">No budgets yet</h2>
+      <p class="muted" data-i18n="empty.text">Create one from a template to get started.</p>
+      <button type="button" class="primary" data-action="new" style="margin-top:12px" data-i18n="empty.create">Create a budget</button>
     </section>
   </div>
 
   <div id="workspace" hidden>
     <section aria-labelledby="h-month">
-      <h2 id="h-month">Where <span id="monthName"></span>'s money goes</h2>
+      <h2 id="h-month"></h2>
       <div class="split-total" id="incomeBig"></div>
-      <div class="bar" id="bar" role="img" aria-label="Split of this month's income"></div>
+      <div class="bar" id="bar" role="img" aria-label="Split of this month's income" data-i18n-attr="aria-label:split.aria"></div>
       <div class="legend" id="legend"></div>
       <p class="warn" id="warn" hidden></p>
     </section>
 
     <section aria-labelledby="h-ins">
-      <h2 id="h-ins">What the numbers say</h2>
+      <h2 id="h-ins" data-i18n="insights.heading">What the numbers say</h2>
       <div class="insights" id="insights"></div>
     </section>
 
     <section aria-labelledby="h-act">
-      <h2 id="h-act">Recent changes</h2>
-      <p class="muted">Every change, whoever made it: you, an AI assistant or a rate refresh. Undo puts back the version from before it, as a new change you can undo too.</p>
+      <h2 id="h-act" data-i18n="activity.heading">Recent changes</h2>
+      <p class="muted" data-i18n="activity.text"></p>
       <ol class="activity" id="activity"></ol>
     </section>
 
     <section aria-labelledby="h-proj">
-      <h2 id="h-proj">The next <span id="monthsOut"></span> months</h2>
+      <h2 id="h-proj"></h2>
       <div class="stats" id="stats"></div>
-      <div class="chart-wrap"><svg id="chart" viewBox="0 0 640 260" width="100%" role="img" aria-label="Projected savings and debt"></svg></div>
+      <div class="chart-wrap"><svg id="chart" viewBox="0 0 640 260" width="100%" role="img" aria-label="Projected savings and debt" data-i18n-attr="aria-label:projection.chart_aria"></svg></div>
       <div class="legend" style="margin-top:8px">
-        <div><span class="sw" style="background:var(--save)"></span>Savings</div>
-        <div><span class="sw" style="background:var(--debt)"></span>Debt (in base currency)</div>
+        <div><span class="sw" style="background:var(--save)"></span><span data-i18n="projection.savings">Savings</span></div>
+        <div><span class="sw" style="background:var(--debt)"></span><span data-i18n="projection.debt">Debt (in base currency)</span></div>
       </div>
       <div class="table-wrap"><table id="table"></table></div>
     </section>
 
     <section aria-labelledby="h-set">
-      <h2 id="h-set">Budget settings</h2>
+      <h2 id="h-set" data-i18n="settings.heading">Budget settings</h2>
       <div class="grid" id="settings"></div>
     </section>
 
     <section aria-labelledby="h-cur">
-      <h2 id="h-cur">Currencies</h2>
-      <p class="muted">Rate is units per 1 of the base currency. Pick where it comes from: the ECB's official rate, market data (which also covers crypto), or type it yourself. Payment loss is added to every payment in that currency; cash-out loss is taken off income in it, such as fees for selling crypto.</p>
+      <h2 id="h-cur" data-i18n="currencies.heading">Currencies</h2>
+      <p class="muted" data-i18n="currencies.text"></p>
       <div id="currencies"></div>
       <div class="row-actions">
-        <button type="button" data-action="add-currency">Add a currency</button>
-        <button type="button" id="refreshRates" data-action="refresh-rates">Update rates now</button>
+        <button type="button" data-action="add-currency" data-i18n="currencies.add">Add a currency</button>
+        <button type="button" id="refreshRates" data-action="refresh-rates" data-i18n="currencies.refresh">Update rates now</button>
       </div>
     </section>
 
     <section aria-labelledby="h-lines">
-      <h2 id="h-lines">Income and costs</h2>
-      <p class="muted">Amounts are exact. A one-off happens once, in its start month.</p>
+      <h2 id="h-lines" data-i18n="lines.heading">Income and costs</h2>
+      <p class="muted" data-i18n="lines.text"></p>
       <div id="lines"></div>
-      <button class="add" type="button" data-action="add-line">Add a line</button>
+      <button class="add" type="button" data-action="add-line" data-i18n="lines.add">Add a line</button>
     </section>
 
     <section aria-labelledby="h-debt">
-      <h2 id="h-debt">Debts</h2>
-      <p class="muted">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>
+      <h2 id="h-debt" data-i18n="debts.heading">Debts</h2>
+      <p class="muted" data-i18n="debts.text"></p>
       <div id="debts"></div>
-      <button class="add" type="button" data-action="add-debt">Add a debt</button>
+      <button class="add" type="button" data-action="add-debt" data-i18n="debts.add">Add a debt</button>
     </section>
 
     <section aria-labelledby="h-goals">
-      <h2 id="h-goals">Savings goals</h2>
+      <h2 id="h-goals" data-i18n="goals.heading">Savings goals</h2>
       <div id="goals"></div>
-      <button class="add" type="button" data-action="add-goal">Add a goal</button>
+      <button class="add" type="button" data-action="add-goal" data-i18n="goals.add">Add a goal</button>
     </section>
 
     <section aria-labelledby="h-cat">
-      <h2 id="h-cat">Categories</h2>
+      <h2 id="h-cat" data-i18n="categories.heading">Categories</h2>
       <div id="categories"></div>
-      <button class="add" type="button" data-action="add-category">Add a category</button>
+      <button class="add" type="button" data-action="add-category" data-i18n="categories.add">Add a category</button>
     </section>
 
     <section aria-labelledby="h-scen">
-      <h2 id="h-scen">Scenarios</h2>
-      <p class="muted">Try changes without touching the real budget, save them, and compare side by side.</p>
+      <h2 id="h-scen" data-i18n="scenarios.heading">Scenarios</h2>
+      <p class="muted" data-i18n="scenarios.text"></p>
       <div id="wiOps"></div>
       <div class="row-actions">
-        <button type="button" data-action="add-wi">Add a change</button>
-        <button type="button" class="primary" data-action="preview-wi">Preview</button>
+        <button type="button" data-action="add-wi" data-i18n="scenarios.add">Add a change</button>
+        <button type="button" class="primary" data-action="preview-wi" data-i18n="scenarios.preview">Preview</button>
       </div>
       <div id="wiResult"></div>
       <div class="table-wrap"><table id="compare"></table></div>
@@ -128,20 +128,20 @@
   <!-- AGPL-3.0 section 13: users of a modified version must be offered its source.
        If you run a fork, point this link at your fork's source. -->
   <footer class="foot muted">
-    bbbudget is free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a>
-    <span class="nowrap">· <a href="https://github.com/Ivanko1608/bbbudget" target="_blank" rel="noopener noreferrer">Source code</a></span>
+    <span id="license">bbbudget is free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a></span>
+    <span class="nowrap">· <a href="https://github.com/Ivanko1608/bbbudget" target="_blank" rel="noopener noreferrer" data-i18n="app.source">Source code</a></span>
   </footer>
 </main>
 
 <dialog id="newDialog">
   <form method="dialog" id="newForm">
-    <h2>New budget</h2>
-    <label class="f">Id (used in URLs and by Claude)<input name="id" required pattern="[a-z0-9][a-z0-9\-]{0,63}" placeholder="home"></label>
-    <label class="f">Name<input name="name" placeholder="Home budget"></label>
-    <label class="f">Template<select name="template" id="templateSel"></select></label>
+    <h2 data-i18n="new.title">New budget</h2>
+    <label class="f"><span data-i18n="new.id">Id (used in URLs and by Claude)</span><input name="id" required pattern="[a-z0-9][a-z0-9\-]{0,63}" placeholder="home"></label>
+    <label class="f"><span data-i18n="new.name">Name</span><input name="name" placeholder="Home budget" data-i18n-attr="placeholder:new.name_placeholder"></label>
+    <label class="f"><span data-i18n="new.template">Template</span><select name="template" id="templateSel"></select></label>
     <div class="row-actions">
-      <button value="cancel" formnovalidate>Cancel</button>
-      <button value="ok" class="primary">Create</button>
+      <button value="cancel" formnovalidate data-i18n="new.cancel">Cancel</button>
+      <button value="ok" class="primary" data-i18n="new.create">Create</button>
     </div>
   </form>
 </dialog>

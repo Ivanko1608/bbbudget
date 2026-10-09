@@ -6,8 +6,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
@@ -22,10 +24,21 @@ const (
 	MaxAmountMinor = 1_000_000_000_000_000
 )
 
-// Issue is one validation problem, addressed by a JSON-ish path.
+// Issue is one validation problem, addressed by a JSON-ish path. Message is
+// the English text; Key and Args let a transport render it in the reader's
+// language (Issue.Localized).
 type Issue struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
+	i18n.Msg
+}
+
+// Localized returns the issue with Message in l's language.
+func (i Issue) Localized(l *i18n.Localizer) Issue {
+	if i.Key != "" {
+		i.Message = l.T(i.Msg)
+	}
+	return i
 }
 
 // ValidationError lists every problem found, not just the first.
@@ -85,21 +98,29 @@ var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 type checker struct{ issues []Issue }
 
-func (c *checker) add(path, format string, a ...any) {
-	c.issues = append(c.issues, Issue{path, fmt.Sprintf(format, a...)})
+var english = sync.OnceValue(func() *i18n.Localizer { return i18n.For(i18n.Default) })
+
+func (c *checker) add(path, key string, a args) { c.issues = append(c.issues, issue(path, key, a)) }
+
+func issue(path, key string, a args) Issue {
+	m := i18n.Msg{Key: key, Args: a}
+	return Issue{Path: path, Message: english().T(m), Msg: m}
 }
+
+func errArg(err error) args   { return args{"error": i18n.Text(err.Error())} }
+func intArg(n int64) i18n.Arg { return i18n.Text(fmt.Sprint(n)) } // limits, ungrouped as before
 
 func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allowNeg bool) money.Money {
 	m, err := money.FromDecimal(d, cur)
 	if err != nil {
-		c.add(path, "%v", err)
+		c.add(path, "issue.error", errArg(err))
 		return money.Zero(cur)
 	}
 	if !allowNeg && m.IsNegative() {
-		c.add(path, "must not be negative")
+		c.add(path, "issue.negative", nil)
 	}
 	if d.Rat().Abs(d.Rat()).Cmp(big.NewRat(MaxAmountMajor, 1)) > 0 || m.Minor() > MaxAmountMinor || m.Minor() < -MaxAmountMinor {
-		c.add(path, "is unreasonably large (max %d)", MaxAmountMajor)
+		c.add(path, "issue.too_large", args{"max": intArg(MaxAmountMajor)})
 		return money.Zero(cur)
 	}
 	return m
@@ -107,15 +128,15 @@ func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allow
 
 func (c *checker) pct(path string, d money.Decimal, max int64) {
 	if d.Sign() < 0 || d.Rat().Cmp(big.NewRat(max, 1)) > 0 {
-		c.add(path, "must be between 0 and %d", max)
+		c.add(path, "issue.between", args{"min": intArg(0), "max": intArg(max)})
 	}
 }
 
 func (c *checker) id(path, id string, seen map[string]bool) {
 	if !idRe.MatchString(id) {
-		c.add(path, "id %q must be lowercase letters, digits, '-' or '_'", id)
+		c.add(path, "issue.id_format", args{"id": i18n.Text(id)})
 	} else if seen[id] {
-		c.add(path, "duplicate id %q", id)
+		c.add(path, "issue.duplicate_id", args{"id": i18n.Text(id)})
 	}
 	seen[id] = true
 }
@@ -127,27 +148,27 @@ func Compile(b Budget) (*Plan, error) {
 	p := &Plan{Doc: b, Categories: map[string]Category{}, rates: map[string]fx{}, Strategy: b.DebtStrategy, ExtraPct: b.ExtraToDebtPct}
 
 	if strings.TrimSpace(b.Name) == "" {
-		c.add("name", "is required")
+		c.add("name", "issue.required", nil)
 	}
 	base, err := money.Lookup(b.BaseCurrency)
 	if err != nil {
-		c.add("base_currency", "%v", err)
+		c.add("base_currency", "issue.error", errArg(err))
 		base = money.MustLookup("EUR")
 	}
 	if base.Crypto {
-		c.add("base_currency", "%s is a cryptocurrency; plan in a fiat currency and add %s under currencies", base.Code, base.Code)
+		c.add("base_currency", "issue.base_crypto", args{"code": i18n.Text(base.Code)})
 	}
 	p.Base = base
 	one := big.NewRat(1, 1)
 	p.rates[base.Code] = fx{base, one, one, one}
 
 	if t, err := time.Parse("2006-01", b.StartMonth); err != nil {
-		c.add("start_month", "must be YYYY-MM, got %q", b.StartMonth)
+		c.add("start_month", "issue.month_format", args{"value": i18n.Text(b.StartMonth)})
 	} else {
 		p.Start = t
 	}
 	if b.Months < 1 || b.Months > MaxMonths {
-		c.add("months", "must be between 1 and %d", MaxMonths)
+		c.add("months", "issue.between", args{"min": intArg(1), "max": intArg(MaxMonths)})
 	}
 	p.Months = b.Months
 	p.SavingsStart = c.amount("savings_start", b.SavingsStart, base, true)
@@ -157,7 +178,7 @@ func Compile(b Budget) (*Plan, error) {
 	case "":
 		p.Strategy = StrategyAvalanche
 	default:
-		c.add("debt_strategy", "must be avalanche, snowball or listed")
+		c.add("debt_strategy", "issue.strategy", nil)
 	}
 
 	for i, r := range b.Currencies {
@@ -165,25 +186,25 @@ func Compile(b Budget) (*Plan, error) {
 		cur, err := money.Lookup(r.Code)
 		switch {
 		case err != nil:
-			c.add(path+".code", "%v", err)
+			c.add(path+".code", "issue.error", errArg(err))
 			continue
 		case r.Code == base.Code:
-			c.add(path+".code", "%s is the base currency; it needs no rate", r.Code)
+			c.add(path+".code", "issue.is_base", args{"code": i18n.Text(r.Code)})
 			continue
 		case p.rates[r.Code].cur.Code != "":
-			c.add(path+".code", "duplicate currency %s", r.Code)
+			c.add(path+".code", "issue.duplicate_currency", args{"code": i18n.Text(r.Code)})
 			continue
 		}
 		if r.PerBase.Sign() <= 0 {
-			c.add(path+".per_base", "must be positive")
+			c.add(path+".per_base", "issue.positive", nil)
 			continue
 		}
 		c.pct(path+".transfer_fee_pct", r.TransferFeePct, 100)
 		if r.CashOutFeePct.Sign() < 0 || r.CashOutFeePct.Rat().Cmp(big.NewRat(100, 1)) >= 0 {
-			c.add(path+".cash_out_fee_pct", "must be at least 0 and below 100")
+			c.add(path+".cash_out_fee_pct", "issue.cash_out_range", nil)
 		}
 		if !slices.Contains(RateSources, r.Source) && r.Source != "" {
-			c.add(path+".source", "must be one of %s", strings.Join(RateSources, ", "))
+			c.add(path+".source", "issue.one_of", args{"values": i18n.Text(strings.Join(RateSources, ", "))})
 		}
 		fee := new(big.Rat).Quo(r.TransferFeePct.Rat(), big.NewRat(100, 1))
 		keep := new(big.Rat).Quo(r.CashOutFeePct.Rat(), big.NewRat(100, 1))
@@ -192,7 +213,7 @@ func Compile(b Budget) (*Plan, error) {
 	currency := func(path, code string) (money.Currency, bool) {
 		r, ok := p.rates[code]
 		if !ok {
-			c.add(path, "currency %q has no rate; add it to currencies", code)
+			c.add(path, "issue.no_rate", args{"code": i18n.Text(code)})
 		}
 		return r.cur, ok
 	}
@@ -202,16 +223,16 @@ func Compile(b Budget) (*Plan, error) {
 		path := fmt.Sprintf("categories[%d]", i)
 		c.id(path+".id", cat.ID, seen)
 		if cat.Kind != KindIncome && cat.Kind != KindExpense {
-			c.add(path+".kind", "must be income or expense")
+			c.add(path+".kind", "issue.kind", nil)
 		}
 		if strings.TrimSpace(cat.Label) == "" {
-			c.add(path+".label", "is required")
+			c.add(path+".label", "issue.required", nil)
 		}
 		p.Categories[cat.ID] = cat
 	}
 
 	if len(b.Lines) > MaxLines {
-		c.add("lines", "at most %d lines", MaxLines)
+		c.add("lines", "issue.max_lines", args{"max": intArg(MaxLines)})
 	}
 	seen = map[string]bool{}
 	for i, l := range b.Lines {
@@ -219,10 +240,10 @@ func Compile(b Budget) (*Plan, error) {
 		c.id(path+".id", l.ID, seen)
 		cat, ok := p.Categories[l.Category]
 		if !ok {
-			c.add(path+".category", "unknown category %q", l.Category)
+			c.add(path+".category", "issue.unknown_category", args{"id": i18n.Text(l.Category)})
 		}
 		if s := l.Schedule; s.Start < 0 || s.Every < 0 || (s.End != nil && *s.End < s.Start) {
-			c.add(path+".schedule", "needs start >= 0, every >= 0 and end >= start")
+			c.add(path+".schedule", "issue.schedule", nil)
 		}
 		cur, ok := currency(path+".currency", l.Currency)
 		if !ok {

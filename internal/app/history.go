@@ -7,12 +7,25 @@ import (
 	"strings"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/store"
 )
 
-// History returns a budget's recent changes, newest first.
+// History returns a budget's recent changes, newest first, with summaries
+// in the caller's language.
 func (a *App) History(ctx context.Context, id string, limit int) ([]store.Entry, error) {
-	return a.Store.History(ctx, id, limit)
+	h, err := a.Store.History(ctx, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	if l := a.Localizer(ctx); l.Locale() != i18n.Default {
+		for i, e := range h {
+			if e.Msg != nil {
+				h[i].Summary = l.T(*e.Msg)
+			}
+		}
+	}
+	return h, nil
 }
 
 // UndoConflictError means undoing a change would also undo the changes made
@@ -44,7 +57,7 @@ func (a *App) Undo(ctx context.Context, id string, change int64, force bool) (*V
 	if err != nil {
 		return nil, err
 	}
-	entries, err := a.Store.History(ctx, id, 0) // newest first
+	entries, err := a.History(ctx, id, 0) // newest first
 	if err != nil {
 		return nil, err
 	}
@@ -79,13 +92,17 @@ func (a *App) Undo(ctx context.Context, id string, change int64, force bool) (*V
 		what = fmt.Sprintf("r%d–r%d", change, entries[0].Revision)
 	}
 	c := store.ChangeFrom(ctx)
-	c.Summary = fmt.Sprintf("undid %s (%s)", what, entries[at].Summary)
+	undone := i18n.Text(entries[at].Summary)
+	if m := entries[at].Msg; m != nil {
+		undone = i18n.List([]i18n.Msg{*m})
+	}
+	c.Msg = &i18n.Msg{Key: "change.undid", Args: map[string]i18n.Arg{"what": i18n.Text(what), "change": undone}}
 	// Guarded by the revision we read, so a write in between is a conflict, not lost.
 	r, err := a.Store.Update(store.WithChange(ctx, c), id, cur.Revision, func(budget.Budget) (budget.Budget, error) { return b, nil })
 	if err != nil {
 		return nil, err
 	}
-	return view(r)
+	return a.view(ctx, r)
 }
 
 func sourceLabel(s string) string {

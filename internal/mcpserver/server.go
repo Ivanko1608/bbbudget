@@ -24,6 +24,7 @@ const instructions = `bbbudget: multi-currency household budgets with exact mone
 
 Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
+Language: text fields (insights, schedules, month labels) are in the user's configured language (app setting "locale"). Always answer in the language the user writes in. Each insight also has a key and typed args with the exact amounts and months; quote numbers from args, not from re-reading the text.
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 

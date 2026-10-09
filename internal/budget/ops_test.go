@@ -151,7 +151,7 @@ func TestScenarios(t *testing.T) {
 		t.Error("scenario with a bad op was accepted")
 	}
 
-	out, err := Compare(b, nil)
+	out, err := Compare(b, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestScenarios(t *testing.T) {
 
 	// A scenario whose target disappears reports an error instead of failing the comparison.
 	b2, _ := Apply(b, NewOp("remove_line", "tuition", nil))
-	out, err = Compare(b2, nil)
+	out, err = Compare(b2, nil, nil)
 	if err != nil || out[2].Error == "" {
 		t.Errorf("stale scenario: %+v %v", out, err)
 	}

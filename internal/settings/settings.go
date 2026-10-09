@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -37,12 +38,23 @@ type Settings struct {
 	// CoinGeckoAPIKey is an optional free demo key that raises CoinGecko's
 	// rate limit. Never sent back to the UI; only whether it is set.
 	CoinGeckoAPIKey string `json:"coingecko_api_key,omitempty"`
+	// Locale is the language for text: "auto" (the browser's language in the
+	// UI, $LANG elsewhere) or a language tag such as "en" or "de". Empty
+	// means auto.
+	Locale string `json:"locale"`
 }
 
 // Defaults are used when there is no settings file.
 func Defaults() Settings {
-	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff}
+	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto}
 }
+
+// LocaleAuto picks the language from the reader's browser or environment.
+const LocaleAuto = "auto"
+
+// localeRe is the shape of a language tag. Which languages exist is up to
+// the i18n package; a tag it lacks falls back to English.
+var localeRe = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
 // RateSources is the set DefaultRateSource must come from. The app checks it
 // against budget.RateSources in a test; this package depends on nothing.
@@ -68,6 +80,9 @@ func (s Settings) Validate() error {
 	if !slices.Contains([]string{RefreshOff, RefreshHourly, RefreshDaily}, s.AutoRefresh) {
 		errs = append(errs, errors.New("auto_refresh must be off, hourly or daily"))
 	}
+	if s.Locale != LocaleAuto && s.Locale != "" && !localeRe.MatchString(s.Locale) {
+		errs = append(errs, errors.New(`locale must be "auto" or a language tag such as "en" or "de"`))
+	}
 	if len(s.CoinGeckoAPIKey) > 200 || strings.ContainsAny(s.CoinGeckoAPIKey, " \t\r\n") {
 		errs = append(errs, errors.New("coingecko_api_key must be a single token without spaces"))
 	}
@@ -81,6 +96,7 @@ type Patch struct {
 	DefaultRateSource *string `json:"default_rate_source,omitempty"`
 	AutoRefresh       *string `json:"auto_refresh,omitempty"`
 	CoinGeckoAPIKey   *string `json:"coingecko_api_key,omitempty"`
+	Locale            *string `json:"locale,omitempty"`
 }
 
 // Apply returns s with p applied, validated.
@@ -96,6 +112,7 @@ func (s Settings) Apply(p Patch) (Settings, error) {
 	set(&s.DefaultRateSource, p.DefaultRateSource)
 	set(&s.AutoRefresh, p.AutoRefresh)
 	set(&s.CoinGeckoAPIKey, p.CoinGeckoAPIKey)
+	set(&s.Locale, p.Locale)
 	return s, s.Validate()
 }
 

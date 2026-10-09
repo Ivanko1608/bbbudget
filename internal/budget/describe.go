@@ -3,10 +3,10 @@ package budget
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"sort"
-	"strings"
+
+	"bbbudget/internal/i18n"
 )
 
 // maxChangeParts caps how many changes DescribeChange spells out.
@@ -14,12 +14,16 @@ const maxChangeParts = 6
 
 // DescribeChange summarises the difference between two versions of a budget
 // in one line, for the change history: "Rent: amount 1150 → 1200; added
-// line Gym". Items are matched by id (currencies by code), so a rename reads
-// as a change, not a removal plus an addition. It is "no changes" when the
-// documents are equal.
-func DescribeChange(before, after Budget) string {
-	var parts []string
-	parts = append(parts, diffFields("", settingsOf(before), settingsOf(after))...)
+// line Gym", in English. ChangeMsg is the same summary as a message, for
+// rendering in the reader's language.
+func DescribeChange(before, after Budget) string { return english().T(ChangeMsg(before, after)) }
+
+// ChangeMsg summarises a change as a message. Items are matched by id
+// (currencies by code), so a rename reads as a change, not a removal plus an
+// addition. Equal documents give "no changes".
+func ChangeMsg(before, after Budget) i18n.Msg {
+	var parts []i18n.Msg
+	parts = append(parts, diffFields(settingsOf(before), settingsOf(after))...)
 	parts = append(parts, diffItems("currency", before.Currencies, after.Currencies,
 		func(c CurrencyRate) (string, string) { return c.Code, c.Code }, "rate_date", "rate_from")...)
 	parts = append(parts, diffItems("category", before.Categories, after.Categories,
@@ -30,20 +34,13 @@ func DescribeChange(before, after Budget) string {
 	parts = append(parts, diffItems("scenario", before.Scenarios, after.Scenarios,
 		func(s Scenario) (string, string) { return s.ID, s.Name })...)
 	if len(parts) == 0 {
-		return "no changes"
+		return i18n.Msg{Key: "change.none"}
 	}
 	if len(parts) > maxChangeParts {
 		n := len(parts) - maxChangeParts
-		parts = append(parts[:maxChangeParts], fmt.Sprintf("and %d more change%s", n, plural(n)))
+		parts = append(parts[:maxChangeParts], msg("change.more", args{"count": i18n.Int(int64(n))}))
 	}
-	return strings.Join(parts, "; ")
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
+	return msg("change.list", args{"items": i18n.JoinedList(parts, "; ")})
 }
 
 // settingsOf is the budget without its lists, so settings diff field by field.
@@ -54,41 +51,39 @@ func settingsOf(b Budget) Budget {
 
 // diffItems reports added, removed and changed items. key returns an item's
 // id and its display name; ignore lists fields that aren't worth reporting.
-func diffItems[T any](kind string, before, after []T, key func(T) (string, string), ignore ...string) []string {
+func diffItems[T any](kind string, before, after []T, key func(T) (string, string), ignore ...string) []i18n.Msg {
 	old := map[string]T{}
 	for _, it := range before {
 		id, _ := key(it)
 		old[id] = it
 	}
+	thing := i18n.List([]i18n.Msg{{Key: "thing." + kind}})
 	seen := map[string]bool{}
-	var out []string
+	var out []i18n.Msg
 	for _, it := range after {
 		id, name := key(it)
 		seen[id] = true
 		prev, ok := old[id]
 		if !ok {
-			out = append(out, fmt.Sprintf("added %s %s", kind, name))
+			out = append(out, msg("change.added", args{"kind": thing, "name": i18n.Text(name)}))
 			continue
 		}
 		_, prevName := key(prev)
-		label := name
-		if prevName != name {
-			label = prevName
+		if fields := diffFields(prev, it, ignore...); len(fields) > 0 {
+			out = append(out, msg("change.item", args{"name": i18n.Text(prevName), "fields": i18n.JoinedList(fields, ", ")}))
 		}
-		out = append(out, diffFields(label+": ", prev, it, ignore...)...)
 	}
 	for _, it := range before {
 		if id, name := key(it); !seen[id] {
-			out = append(out, fmt.Sprintf("removed %s %s", kind, name))
+			out = append(out, msg("change.removed", args{"kind": thing, "name": i18n.Text(name)}))
 		}
 	}
 	return out
 }
 
 // diffFields compares two values field by field through their JSON form, so
-// it stays correct as fields are added. Each change reads "field old → new";
-// all changes to one item share the prefix once.
-func diffFields(prefix string, before, after any, ignore ...string) []string {
+// it stays correct as fields are added: one "field old → new" per change.
+func diffFields(before, after any, ignore ...string) []i18n.Msg {
 	a, b := fieldsOf(before), fieldsOf(after)
 	keys := make([]string, 0, len(a)+len(b))
 	for k := range a {
@@ -100,20 +95,14 @@ func diffFields(prefix string, before, after any, ignore ...string) []string {
 		}
 	}
 	sort.Strings(keys)
-	var changes []string
+	var changes []i18n.Msg
 	for _, k := range keys {
 		if slices.Contains(ignore, k) || bytes.Equal(a[k], b[k]) {
 			continue
 		}
-		changes = append(changes, fmt.Sprintf("%s %s → %s", k, show(a[k]), show(b[k])))
+		changes = append(changes, msg("change.field", args{"field": i18n.Text(k), "old": show(a[k]), "new": show(b[k])}))
 	}
-	if len(changes) == 0 {
-		return nil
-	}
-	if prefix == "" {
-		return changes
-	}
-	return []string{prefix + strings.Join(changes, ", ")}
+	return changes
 }
 
 func fieldsOf(v any) map[string]json.RawMessage {
@@ -128,13 +117,13 @@ func fieldsOf(v any) map[string]json.RawMessage {
 	return m
 }
 
-func show(raw json.RawMessage) string {
+func show(raw json.RawMessage) i18n.Arg {
 	if raw == nil {
-		return "(none)"
+		return i18n.List([]i18n.Msg{{Key: "change.empty"}})
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s
+		return i18n.Text(s)
 	}
-	return string(raw)
+	return i18n.Text(string(raw))
 }

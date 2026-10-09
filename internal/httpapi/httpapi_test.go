@@ -311,3 +311,43 @@ func TestHistoryAndUndo(t *testing.T) {
 	c.do("POST", "/api/budgets/home/undo", `{"change":1}`, 409) // the creation
 	c.do("POST", "/api/budgets/home/undo", `{"change":99}`, 400)
 }
+
+func TestLocaleNegotiation(t *testing.T) {
+	c := setup(t)
+	ru := func(r *http.Request) { r.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8") }
+	get := func(path string, mut func(*http.Request)) map[string]any {
+		t.Helper()
+		w := c.req("GET", path, "", mut)
+		var out map[string]any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body)
+		}
+		return out
+	}
+	if m := get("/api/meta", ru); m["locale"] != "ru" || len(m["locales"].([]any)) < 2 {
+		t.Fatalf("meta: %v %v", m["locale"], m["locales"])
+	}
+	month := func(v map[string]any) string {
+		return v["report"].(map[string]any)["months"].([]any)[0].(map[string]any)["label"].(string)
+	}
+	ruView, enView := get("/api/budgets/home", ru), get("/api/budgets/home", nil)
+	if !strings.ContainsAny(month(ruView), "абвгдеёжзийклмнопрстуфхцчшщъыьэюя") || strings.ContainsAny(month(enView), "абвгдеёжзийклмнопрстуфхцчшщъыьэюя") {
+		t.Fatalf("month labels: ru %q, en %q", month(ruView), month(enView))
+	}
+
+	// Validation issues come back in the reader's language, with their key.
+	w := c.req("PUT", "/api/budgets/home", `{"revision":1,"budget":{"name":"","base_currency":"EUR","start_month":"2026-10","months":12}}`, ru)
+	var bad struct {
+		Issues []struct{ Path, Message, Key string } `json:"issues"`
+	}
+	if w.Code != 422 || json.Unmarshal(w.Body.Bytes(), &bad) != nil || bad.Issues[0].Message != "обязательное поле" || bad.Issues[0].Key != "issue.required" {
+		t.Fatalf("issues: %d %s", w.Code, w.Body)
+	}
+
+	// An explicit language setting wins over the browser's.
+	c.do("PUT", "/api/settings", `{"locale":"en"}`, 200)
+	if m := get("/api/meta", ru); m["locale"] != "en" {
+		t.Fatalf("setting should win: %v", m["locale"])
+	}
+	c.do("PUT", "/api/settings", `{"locale":"not a tag!"}`, 400)
+}

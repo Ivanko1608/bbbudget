@@ -1,12 +1,15 @@
 // Budget planner UI. The server owns every number: this file edits the budget
 // document (amounts stay exact decimal strings) and renders the server's
 // report. The only floats here are pixel positions on the chart.
+//
+// Every visible string goes through t() (see i18n.js and i18n/*.json), and
+// money through money(), which formats the server's exact amounts.
+
+import { t, loadLocale, money, moneyAxis, number, toInput, parseDecimal, monthName, translatePage, locale } from "./i18n.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-const show = (m) => (m ? m.display : "—");
-const DEC_RE = /^[+-]?\d+(\.\d+)?$/;
 const SAVE_DELAY = 600;
 const POLL_MS = 3000;
 
@@ -94,7 +97,7 @@ async function open(id) {
   $("#picker").value = id;
   try { localStorage.setItem("bbbudget.last", id); } catch {}
   history.replaceState(null, "", `#${encodeURIComponent(id)}`);
-  status(`Saved · revision ${S.revision}`);
+  status(t("status.saved", { revision: S.revision }));
   loadCompare();
   loadActivity();
 }
@@ -113,7 +116,7 @@ function adopt(view, rerenderEditors) {
 function edited({ structural = false } = {}) {
   S.pending = true;
   if (structural) renderEditors();
-  status("Unsaved changes…");
+  status(t("status.unsaved"));
   clearTimeout(S.timer);
   S.timer = setTimeout(save, SAVE_DELAY);
 }
@@ -132,20 +135,20 @@ async function save() {
     showIssues([]);
     renderOutputs();
     if (S.notice) status(S.notice, true);
-    else status(`Saved · revision ${S.revision}`);
+    else status(t("status.saved", { revision: S.revision }));
     S.notice = null;
     loadCompare();
     loadActivity();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
-      status("Not saved: fix the highlighted fields.", true);
+      status(t("status.fix_fields"), true);
     } else if (e.status === 409) {
-      status("This budget was changed elsewhere (e.g. by Claude). Reloaded the latest version.", true);
+      status(t("status.conflict"), true);
       await open(S.id);
     } else {
       S.pending = true;
-      status(`Not saved: ${e.message}. Retrying…`, true);
+      status(t("status.retrying", { error: e.message }), true);
       S.timer = setTimeout(save, 3000);
     }
   } finally {
@@ -163,7 +166,7 @@ async function poll() {
     if (me && me.revision > S.revision && !S.pending && !S.saving) {
       const v = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}`);
       adopt(v, true);
-      status(`Updated just now (changed elsewhere) · revision ${S.revision}`);
+      status(t("status.updated_elsewhere", { revision: S.revision }));
       loadCompare();
       loadActivity();
     }
@@ -175,7 +178,7 @@ function showIssues(issues) {
   const box = $("#issues");
   box.hidden = issues.length === 0;
   if (!issues.length) return;
-  box.innerHTML = `<b>These need fixing before the budget can be saved:</b><ul>${issues.map((i) => `<li>${esc(i.path)}: ${esc(i.message)}</li>`).join("")}</ul>`;
+  box.innerHTML = `<b>${esc(t("issues.title"))}</b><ul>${issues.map((i) => `<li>${esc(i.path)}: ${esc(i.message)}</li>`).join("")}</ul>`;
   for (const i of issues) {
     const path = i.path.replace(/\[(\d+)\]/g, ".$1");
     document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((el) => el.classList.add("invalid"));
@@ -199,7 +202,7 @@ const field = (label, path, { type = "text", attrs = "", cls = "" } = {}) => {
   const v = getPath(S.budget, path);
   return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type === "decimal" ? "decimal" : type}" ${
     type === "decimal" ? 'inputmode="decimal" autocomplete="off"' : type === "int" ? 'type="number" step="1"' : `type="${type}"`
-  } value="${esc(v ?? "")}" ${attrs}></label>`;
+  } value="${esc(type === "decimal" ? toInput(v) : v ?? "")}" ${attrs}></label>`;
 };
 const select = (label, path, options, { structural = false, cls = "" } = {}) => {
   const v = getPath(S.budget, path);
@@ -207,89 +210,83 @@ const select = (label, path, options, { structural = false, cls = "" } = {}) => 
     .map(([val, text]) => `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(text)}</option>`)
     .join("")}</select></label>`;
 };
-const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="Remove ${esc(what)}">✕</button>`;
+const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="${esc(t("remove", { what }))}">✕</button>`;
 
 function currencyOptions() {
   return [S.budget.base_currency, ...S.budget.currencies.map((c) => c.code)].map((c) => [c, c]);
 }
 
-const RATE_SOURCES = [
-  ["manual", "Typed by hand"],
-  ["auto", "Auto: ECB, else market"],
-  ["ecb", "ECB (official)"],
-  ["currency-api", "currency-api (fiat + crypto)"],
-  ["coingecko", "CoinGecko (crypto)"],
-];
+const RATE_SOURCES = () => ["manual", "auto", "ecb", "currency-api", "coingecko"].map((k) => [k, t(`source_opt.${k}`)]);
 const isManual = (c) => !c.source || c.source === "manual";
 
-const EVERY = [[0, "One-off"], [1, "Monthly"], [2, "Every 2 months"], [3, "Quarterly"], [6, "Every 6 months"], [12, "Yearly"]];
+const EVERY = () => [0, 1, 2, 3, 6, 12].map((n) => [n, t(`every.${n}`)]);
 
 function renderEditors() {
   const b = S.budget;
   $("#title").textContent = b.name;
   const crypto = new Set(S.meta?.crypto || []);
-  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, s[0].toUpperCase() + s.slice(1)]);
+  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, t(`strategy.${s}`)]);
   $("#settings").innerHTML = [
-    field("Name", "name"),
-    select("Base currency", "base_currency", (S.meta?.currencies || [b.base_currency]).filter((c) => !crypto.has(c)).map((c) => [c, c]), { structural: true }),
-    field("First month", "start_month", { type: "month" }),
-    select("Months to project", "months", [[6, "6"], [12, "12"], [24, "24"], [36, "36"], [60, "60"]].concat(
+    field(t("field.name"), "name"),
+    select(t("field.base_currency"), "base_currency", (S.meta?.currencies || [b.base_currency]).filter((c) => !crypto.has(c)).map((c) => [c, c]), { structural: true }),
+    field(t("field.first_month"), "start_month", { type: "month" }),
+    select(t("field.months"), "months", [[6, "6"], [12, "12"], [24, "24"], [36, "36"], [60, "60"]].concat(
       [6, 12, 24, 36, 60].includes(b.months) ? [] : [[b.months, String(b.months)]])),
-    field(`Savings now (${b.base_currency})`, "savings_start", { type: "decimal" }),
-    field("Share of leftover to debts (%)", "extra_to_debt_pct", { type: "decimal" }),
-    select("Debt strategy", "debt_strategy", strategies),
+    field(t("field.savings_now", { currency: b.base_currency }), "savings_start", { type: "decimal" }),
+    field(t("field.extra_pct"), "extra_to_debt_pct", { type: "decimal" }),
+    select(t("field.strategy"), "debt_strategy", strategies),
   ].join("");
 
   const allCodes = (S.meta?.currencies || []).filter((c) => c !== b.base_currency);
-  const codeOpts = allCodes.map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
+  const codeOpts = allCodes.map((x) => [x, crypto.has(x) ? t("currencies.crypto", { code: x }) : x]);
   $("#currencies").innerHTML = b.currencies.map((c, i) => `<div class="row row-cur">
-      ${select("Code", `currencies.${i}.code`, codeOpts, { structural: true })}
-      ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
-      ${field(`per 1 ${b.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
-      ${field("Payment loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
-      ${field("Cash-out loss %", `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
+      ${select(t("field.code"), `currencies.${i}.code`, codeOpts, { structural: true })}
+      ${select(t("field.rate_from"), `currencies.${i}.source`, RATE_SOURCES(), { structural: true })}
+      ${field(t("field.per_base", { currency: b.base_currency }), `currencies.${i}.per_base`, { type: "decimal" })}
+      ${field(t("field.payment_loss"), `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
+      ${field(t("field.cashout_loss"), `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
       ${del("del-currency", i, c.code)}
       <p class="rate-note muted" data-rate="${esc(c.code)}"></p>
-    </div>`).join("") || `<p class="muted">Only ${esc(b.base_currency)} so far.</p>`;
+    </div>`).join("") || `<p class="muted">${esc(t("currencies.only_base", { currency: b.base_currency }))}</p>`;
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
 
-  const cats = b.categories.map((c) => [c.id, `${c.label}${c.kind === "income" ? " (income)" : ""}`]);
+  const cats = b.categories.map((c) => [c.id, c.kind === "income" ? t("category.income_suffix", { label: c.label }) : c.label]);
   $("#lines").innerHTML = b.lines.map((l, i) => {
     const color = b.categories.find((c) => c.id === l.category)?.color || "var(--line)";
     const sch = l.schedule;
     return `<div class="row row-line" style="box-shadow:inset 3px 0 0 ${esc(color)}">
-      ${field("Name", `lines.${i}.name`, { cls: "name" })}
-      ${field("Amount", `lines.${i}.amount`, { type: "decimal" })}
-      ${select("Currency", `lines.${i}.currency`, currencyOptions())}
-      ${select("Category", `lines.${i}.category`, cats, { structural: true })}
-      ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
-      <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+      ${field(t("field.name"), `lines.${i}.name`, { cls: "name" })}
+      ${field(t("field.amount"), `lines.${i}.amount`, { type: "decimal" })}
+      ${select(t("field.currency"), `lines.${i}.currency`, currencyOptions())}
+      ${select(t("field.category"), `lines.${i}.category`, cats, { structural: true })}
+      ${select(t("field.repeats"), `lines.${i}.schedule.every`, EVERY(), { structural: true })}
+      <label class="f">${esc(t(sch.every === 0 ? "field.in" : "field.from"))}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
       ${sch.every === 0 ? "<span></span>" :
-        `<label class="f">Until<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+        `<label class="f">${esc(t("field.until"))}<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
       <span class="base" data-base="${esc(l.id)}"></span>
       ${del("del-line", i, l.name)}
     </div>`;
-  }).join("") || `<p class="muted">No lines yet.</p>`;
+  }).join("") || `<p class="muted">${esc(t("lines.empty"))}</p>`;
 
   $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" style="box-shadow:inset 3px 0 0 var(--debt)">
-      ${field("Name", `debts.${i}.name`)}
-      ${select("Currency", `debts.${i}.currency`, currencyOptions())}
-      ${field("Balance", `debts.${i}.balance`, { type: "decimal" })}
-      ${field("APR %", `debts.${i}.apr_pct`, { type: "decimal" })}
-      ${field("Minimum / month", `debts.${i}.min_payment`, { type: "decimal" })}
+      ${field(t("field.name"), `debts.${i}.name`)}
+      ${select(t("field.currency"), `debts.${i}.currency`, currencyOptions())}
+      ${field(t("field.balance"), `debts.${i}.balance`, { type: "decimal" })}
+      ${field(t("field.apr"), `debts.${i}.apr_pct`, { type: "decimal" })}
+      ${field(t("field.min_payment"), `debts.${i}.min_payment`, { type: "decimal" })}
       ${del("del-debt", i, d.name)}
-    </div>`).join("") || `<p class="muted">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
+    </div>`).join("") || `<p class="muted">${esc(t("debts.empty"))}</p>`;
 
   $("#goals").innerHTML = b.goals.map((g, i) => `<div class="row row-goal" style="box-shadow:inset 3px 0 0 var(--save)">
-      ${field("Goal", `goals.${i}.name`)}
-      ${field(`Target (${b.base_currency})`, `goals.${i}.target`, { type: "decimal" })}
+      ${field(t("field.goal"), `goals.${i}.name`)}
+      ${field(t("field.target", { currency: b.base_currency }), `goals.${i}.target`, { type: "decimal" })}
       ${del("del-goal", i, g.name)}
-    </div>`).join("") || `<p class="muted">No goals yet.</p>`;
+    </div>`).join("") || `<p class="muted">${esc(t("goals.empty"))}</p>`;
 
   $("#categories").innerHTML = b.categories.map((c, i) => `<div class="row row-cat">
-      ${field("Label", `categories.${i}.label`)}
-      ${select("Kind", `categories.${i}.kind`, [["expense", "Expense"], ["income", "Income"]], { structural: true })}
-      <label class="f">Colour<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>
+      ${field(t("field.label"), `categories.${i}.label`)}
+      ${select(t("field.kind"), `categories.${i}.kind`, [["expense", t("kind.expense")], ["income", t("kind.income")]], { structural: true })}
+      <label class="f">${esc(t("field.colour"))}<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>
       ${del("del-category", i, c.label)}
     </div>`).join("");
 
@@ -305,9 +302,9 @@ function onEditorInput(e) {
   let v = el.value;
   switch (el.dataset.kind) {
     case "decimal":
-      v = v.trim().replace(/,/g, "");
-      el.classList.toggle("invalid", !DEC_RE.test(v));
-      if (!DEC_RE.test(v)) return; // keep editing; never send a malformed amount
+      v = parseDecimal(v); // "12,50" in a decimal-comma locale is 12.50, never 1250
+      el.classList.toggle("invalid", v === null);
+      if (v === null) return; // keep editing; never send a malformed amount
       break;
     case "int":
       v = parseInt(v, 10);
@@ -368,7 +365,7 @@ function onEditorInput(e) {
 async function fetchRate(i, undo) {
   const c = S.budget.currencies[i];
   const src = isManual(c) ? "auto" : c.source;
-  status(`Fetching the ${c.code} rate…`);
+  status(t("rate.fetching", { code: c.code }));
   S.fetching++;
   try {
     const [q] = await api("GET", `/api/rates?base=${encodeURIComponent(S.budget.base_currency)}&codes=${encodeURIComponent(c.code)}&source=${encodeURIComponent(src)}`);
@@ -382,7 +379,7 @@ async function fetchRate(i, undo) {
   } catch (e) {
     const code = c.code;
     undo();
-    S.notice = `Couldn't get the ${code} rate (${e.message}), so nothing changed. To use ${code} anyway, set “Rate from” to “Typed by hand” and type its rate.`;
+    S.notice = t("rate.fetch_failed", { code, error: e.message });
     edited({ structural: true });
     status(S.notice, true);
   } finally {
@@ -393,11 +390,11 @@ async function fetchRate(i, undo) {
 // refreshAll fetches every non-manual rate on the server and saves them.
 async function refreshAll() {
   if (!S.prefs.fetch_rates) {
-    status("Fetching rates is turned off in Settings.", true);
+    status(t("rates.off"), true);
     return;
   }
   if (!S.budget.currencies.some((c) => !isManual(c))) {
-    status("Every rate is typed by hand. Pick a “Rate from” source for the ones to keep current.", true);
+    status(t("rates.all_manual"), true);
     return;
   }
   let res;
@@ -410,22 +407,24 @@ async function refreshAll() {
     }
   });
   const ups = res?.rate_updates || [];
-  const changed = ups.filter((u) => !u.error).map((u) => (u.old === u.new ? `${u.code} unchanged` : `${u.code} ${u.old} → ${u.new}`));
+  const changed = ups.filter((u) => !u.error).map((u) => (u.old === u.new ? t("rates.unchanged", { code: u.code }) : t("rates.changed", { code: u.code, old: number(u.old), new: number(u.new) })));
   const failed = ups.filter((u) => u.error).map((u) => u.code);
-  if (changed.length) status(`Rates updated: ${changed.join(", ")}${failed.length ? ` · failed: ${failed.join(", ")}` : ""}`, failed.length > 0);
+  if (!changed.length) return;
+  const text = t("rates.updated", { list: changed.join(", ") });
+  status(failed.length ? t("rates.failed", { text, list: failed.join(", ") }) : text, failed.length > 0);
 }
 
 function renderRateNotes() {
   if (!S.report || !S.budget) return;
   const unit = Object.fromEntries((S.report.currencies || []).map((c) => [c.code, c]));
-  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: S.report.base_currency, maximumFractionDigits: 2 });
+  const exact = (m) => new Intl.NumberFormat(locale(), { style: "currency", currency: m.currency, minimumFractionDigits: 2 }).format(m.amount);
   document.querySelectorAll("[data-rate]").forEach((el) => {
     const c = S.budget.currencies.find((x) => x.code === el.dataset.rate);
     const u = unit[el.dataset.rate];
     if (!c) return;
-    const n = u ? new Intl.NumberFormat("en-GB").format(Number(u.units)) : "";
-    const worth = u ? `${n} ${c.code} = ${fmt.format(Number(u.base_value.amount))}` : ""; // display only
-    const from = isManual(c) ? "typed by hand" : c.rate_date ? `${({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from} rate of ${c.rate_date}` : "not fetched yet";
+    const worth = u ? `${number(u.units)} ${c.code} = ${exact(u.base_value)}` : "";
+    const src = ({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from;
+    const from = isManual(c) ? t("rate.typed") : c.rate_date ? t("rate.of", { source: src, date: c.rate_date }) : t("rate.not_fetched");
     el.textContent = [worth, from].filter(Boolean).join(" · ");
   });
 }
@@ -434,7 +433,8 @@ const ACTIONS = {
   "add-line"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
-    b.lines.push({ id: newId("New line", b.lines), name: "New line", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
+    const name = t("lines.new");
+    b.lines.push({ id: newId(name, b.lines), name, amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
     focusLast("#lines input[data-path$='.name']");
   },
@@ -463,7 +463,8 @@ const ACTIONS = {
   "del-currency"(i) { S.budget.currencies.splice(i, 1); edited({ structural: true }); },
   "add-debt"() {
     const b = S.budget;
-    b.debts.push({ id: newId("Debt", b.debts), name: "Debt", currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
+    const name = t("debts.new");
+    b.debts.push({ id: newId(name, b.debts), name, currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
     edited({ structural: true });
     focusLast("#debts input[data-path$='.name']");
   },
@@ -477,12 +478,13 @@ const ACTIONS = {
   "del-goal"(i) { S.budget.goals.splice(i, 1); edited({ structural: true }); },
   "add-category"() {
     const b = S.budget;
-    b.categories.push({ id: newId("Category", b.categories), label: "Category", kind: "expense", color: "#7a6ff0" });
+    const label = t("categories.new");
+    b.categories.push({ id: newId(label, b.categories), label, kind: "expense", color: "#7a6ff0" });
     edited({ structural: true });
   },
   "del-category"(i) {
     const c = S.budget.categories[i];
-    if (S.budget.lines.some((l) => l.category === c.id)) { status(`“${c.label}” is still used by a line.`, true); return; }
+    if (S.budget.lines.some((l) => l.category === c.id)) { status(t("categories.in_use", { label: c.label }), true); return; }
     S.budget.categories.splice(i, 1);
     edited({ structural: true });
   },
@@ -493,7 +495,7 @@ const ACTIONS = {
   "save-wi"() { saveWhatIf(); },
   undo(i, el) { undoChange(i, el); },
   async "adopt-scenario"(i, el) {
-    if (!confirm(`Apply “${el.dataset.name}” to the real budget?`)) return;
+    if (!confirm(t("scenarios.adopt_confirm", { name: el.dataset.name }))) return;
     await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}/adopt`, {}));
   },
   async "del-scenario"(i, el) {
@@ -526,7 +528,7 @@ function renderLineBases() {
   const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
-    el.textContent = l && l.amount.currency !== S.report.base_currency ? `≈ ${l.per_occurrence_base.display}` : "";
+    el.textContent = l && l.amount.currency !== S.report.base_currency ? `≈ ${money(l.per_occurrence_base)}` : "";
   });
 }
 
@@ -536,41 +538,42 @@ function renderOutputs() {
   renderRateNotes();
   const m0 = r.months[0];
   const cats = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
-  $("#monthName").textContent = m0.label.split(" ")[0];
-  $("#incomeBig").textContent = m0.income.display;
-  $("#monthsOut").textContent = r.months.length;
+  $("#h-month").textContent = t("month.heading", { month: monthName(m0.month) });
+  $("#incomeBig").textContent = money(m0.income);
+  $("#h-proj").textContent = t("projection.heading", { count: r.months.length });
 
   const num = (m) => Math.max(parseFloat(m.amount), 0); // pixels only
   const segs = Object.entries(m0.by_category)
     .filter(([, v]) => parseFloat(v.amount) > 0)
     .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)"]);
-  if (num(m0.debt_payments) > 0) segs.push(["Debt payments", m0.debt_payments, "var(--debt)"]);
-  if (num(m0.saved) > 0) segs.push(["To savings", m0.saved, "var(--save)"]);
+  if (num(m0.debt_payments) > 0) segs.push([t("split.debt"), m0.debt_payments, "var(--debt)"]);
+  if (num(m0.saved) > 0) segs.push([t("split.savings"), m0.saved, "var(--save)"]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
-  $("#bar").innerHTML = segs.map((s) => `<div style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(s[1].display)}"></div>`).join("");
-  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(s[1].display)}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
+  $("#bar").innerHTML = segs.map((s) => `<div style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");
+  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(money(s[1]))}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
   const warn = $("#warn");
   warn.hidden = parseFloat(m0.left.amount) >= 0;
-  if (!warn.hidden) warn.textContent = `Over budget by ${m0.left.display.replace("−", "")} this month.`;
+  if (!warn.hidden) warn.textContent = t("split.over", { amount: money({ ...m0.left, amount: m0.left.amount.replace("-", "") }) });
 
-  $("#insights").innerHTML = r.insights.map((x) => `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`).join("") || `<p class="muted">Add income and costs to see insights.</p>`;
+  $("#insights").innerHTML = r.insights.map((x) => `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`).join("") || `<p class="muted">${esc(t("insights.empty"))}</p>`;
 
   const last = r.months[r.months.length - 1];
   const goal = r.goals[0];
   const debt = r.debts.find((d) => parseFloat(d.start_balance.amount) > 0);
   $("#stats").innerHTML = `
-    <div><span class="muted">Savings after ${r.months.length} months</span><b>${esc(last.savings.display)}</b></div>
-    <div><span class="muted">Interest paid</span><b>${esc(r.totals.total_interest_base.display)}</b></div>
-    ${goal ? `<div><span class="muted">${esc(goal.name)} (${esc(goal.target.display)})</span><b>${goal.already_met ? "Already met" : goal.reached_label ? "Reached " + esc(goal.reached_label) : "Not in this window"}</b></div>` : ""}
-    ${debt ? `<div><span class="muted">${esc(debt.name)} paid off</span><b>${debt.paid_off_label ? esc(debt.paid_off_label) : "Not in this window"}</b></div>` : ""}`;
+    <div><span class="muted">${esc(t("stats.savings_after", { count: r.months.length }))}</span><b>${esc(money(last.savings))}</b></div>
+    <div><span class="muted">${esc(t("stats.interest"))}</span><b>${esc(money(r.totals.total_interest_base))}</b></div>
+    ${goal ? `<div><span class="muted">${esc(goal.name)} (${esc(money(goal.target))})</span><b>${esc(goal.already_met ? t("stats.already_met") : goal.reached_label ? t("stats.reached", { month: goal.reached_label }) : t("stats.not_in_window"))}</b></div>` : ""}
+    ${debt ? `<div><span class="muted">${esc(t("stats.paid_off", { name: debt.name }))}</span><b>${esc(debt.paid_off_label || t("stats.not_in_window"))}</b></div>` : ""}`;
   drawChart(r);
 
   const hasDebt = r.debts.length > 0;
-  let h = `<tr><th>Month</th><th>Income</th><th>Spent</th><th>To debts</th><th>Left</th><th>Saved</th><th>Savings</th>${hasDebt ? "<th>Debt</th>" : ""}</tr>`;
+  const th = (k) => `<th>${esc(t(k))}</th>`;
+  let h = `<tr>${["table.month", "table.income", "table.spent", "table.to_debts", "table.left", "table.saved", "table.savings"].map(th).join("")}${hasDebt ? th("table.debt") : ""}</tr>`;
   for (const m of r.months) {
     const neg = (x) => (parseFloat(x.amount) < 0 ? "neg" : "");
-    h += `<tr><td>${esc(m.label)}</td><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td><td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td class="${neg(m.savings)}">${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
+    h += `<tr><td>${esc(m.label)}</td><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td><td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td class="${neg(m.savings)}">${esc(money(m.savings))}</td>${hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : ""}</tr>`;
   }
   $("#table").innerHTML = h;
   renderLineBases();
@@ -590,7 +593,7 @@ function drawChart(r) {
   const x = (i) => L + (i * (W - L - R)) / n;
   const y = (v) => T + ((hi - v) / (hi - lo)) * (H - T - B);
   const cur = r.base_currency;
-  const fmt = (v) => new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(v);
+  const fmt = (v) => moneyAxis(v, cur); // axis ticks: pixels, not money
   let g = "";
   for (let k = 0; k <= 4; k++) {
     const v = lo + ((hi - lo) * k) / 4, yy = y(v);
@@ -604,32 +607,32 @@ function drawChart(r) {
   });
   const line = (arr, c, labels) => `<polyline fill="none" stroke="${c}" stroke-width="2.5" stroke-linejoin="round" points="${arr.map((v, i) => x(i) + "," + y(v)).join(" ")}"/>` +
     arr.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${c}"><title>${esc(r.months[i].label)}: ${esc(labels[i])}</title></circle>`).join("");
-  g += line(sav, "var(--save)", r.months.map((m) => m.savings.display));
-  if (hasDebt) g += line(debt, "var(--debt)", r.months.map((m) => m.debt_balance_base.display));
+  g += line(sav, "var(--save)", r.months.map((m) => money(m.savings)));
+  if (hasDebt) g += line(debt, "var(--debt)", r.months.map((m) => money(m.debt_balance_base)));
   svg.innerHTML = g;
 }
 
 // ---------- scenarios ----------
 
-const WI_KINDS = [["line", "Change a line's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove a line"]];
+const WI_KINDS = () => ["line", "rate", "extra", "remove"].map((k) => [k, t(`scenarios.kind.${k}`)]);
 
 function renderWhatIf() {
   const b = S.budget;
   const lineOpts = b.lines.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
-  const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} (now ${esc(c.per_base)})</option>`).join("");
+  const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(t("scenarios.now", { code: c.code, rate: number(c.per_base) }))}</option>`).join("");
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
-      <label class="f">Change<select data-wi="${i}" data-k="kind">${WI_KINDS.map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Line"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
-      ${o.kind === "remove" ? "<span></span>" : `<label class="f">New value<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
-      ${del("del-wi", i, "change")}
-    </div>`).join("") || `<p class="muted">Add a change to see what it would do.</p>`;
+      <label class="f">${esc(t("scenarios.change"))}<select data-wi="${i}" data-k="kind">${WI_KINDS().map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${esc(t(o.kind === "rate" ? "scenarios.currency" : "scenarios.line"))}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
+      ${o.kind === "remove" ? "<span></span>" : `<label class="f">${esc(t("scenarios.new_value"))}<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
+      ${del("del-wi", i, t("scenarios.a_change"))}
+    </div>`).join("") || `<p class="muted">${esc(t("scenarios.empty"))}</p>`;
   S.wi.forEach((o, i) => { const t = document.querySelector(`[data-wi="${i}"][data-k="target"]`); if (t) { if (o.target) t.value = o.target; o.target = t.value; } });
 }
 
 function wiOps() {
   return S.wi.map((o) => {
-    if (o.kind !== "remove" && !DEC_RE.test(String(o.value).trim())) throw new Error("Each new value must be a plain number like 800 or 92.5");
-    const value = String(o.value).trim();
+    const value = parseDecimal(o.value);
+    if (o.kind !== "remove" && value === null) throw new Error(t("scenarios.bad_value"));
     switch (o.kind) {
       case "line": return { op: "set_line", target: o.target, value: { amount: value } };
       case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
@@ -647,9 +650,10 @@ async function previewWhatIf() {
     const res = await api("POST", `/api/budgets/${encodeURIComponent(S.id)}/what-if`, { ops });
     const before = S.report, after = res.report;
     const endB = parseFloat(before.totals.end_savings.amount), endA = parseFloat(after.totals.end_savings.amount);
-    const goalTxt = after.goals.map((g) => `${esc(g.name)}: ${g.already_met ? "already met" : g.reached_label ? esc(g.reached_label) : "not reached"}`).join(" · ");
-    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}">After ${after.months.length} months: <b>${esc(after.totals.end_savings.display)}</b> instead of ${esc(before.totals.end_savings.display)}. This month saves ${esc(after.months[0].saved.display)}.${goalTxt ? "<br>" + goalTxt : ""}</div>
-      <div class="row-actions"><input id="wiName" placeholder="Scenario name" style="flex:1"><button type="button" data-action="save-wi">Save as scenario</button></div>`;
+    const goalTxt = after.goals.map((g) => `${esc(g.name)}: ${esc(g.already_met ? t("scenarios.goal_met") : g.reached_label || t("scenarios.goal_not"))}`).join(" · ");
+    const result = t("scenarios.result", { count: after.months.length, after: esc(money(after.totals.end_savings)), before: esc(money(before.totals.end_savings)), saved: esc(money(after.months[0].saved)) });
+    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}">${result}${goalTxt ? "<br>" + goalTxt : ""}</div>
+      <div class="row-actions"><input id="wiName" placeholder="${esc(t("scenarios.name"))}" style="flex:1"><button type="button" data-action="save-wi">${esc(t("scenarios.save"))}</button></div>`;
   } catch (e) {
     out.innerHTML = `<div class="ins warn">${esc(e.message)}</div>`;
   }
@@ -668,14 +672,15 @@ async function saveWhatIf() {
 // ---------- activity ----------
 
 // Who made a change, as the history records it (see store.Change).
-const SOURCES = { web: "You (browser)", mcp: "AI assistant", assistant: "AI assistant", cli: "Command line", "auto-refresh": "Rate refresh", earlier: "Earlier" };
+const sourceLabel = (src) => { const k = `source.${src || "unknown"}`, v = t(k); return v === k ? src : v; };
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: "auto", style: "short" });
+  if (s < 60) return t("activity.just_now");
+  if (s < 3600) return rtf.format(-Math.floor(s / 60), "minute");
+  if (s < 86400) return rtf.format(-Math.floor(s / 3600), "hour");
+  return new Date(iso).toLocaleDateString(locale());
 }
 
 async function loadActivity() {
@@ -688,17 +693,17 @@ async function loadActivity() {
   }
   const h = S.history;
   box.innerHTML = h.map((e, i) => `<li class="act ${esc(e.source)}">
-      <span class="who">${esc(SOURCES[e.source] || e.source || "Unknown")}</span>
+      <span class="who">${esc(sourceLabel(e.source))}</span>
       <span class="what">${esc(e.summary)}</span>
-      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">r${e.revision} · ${esc(ago(e.at))}</span>
-      ${i < h.length - 1 ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>` : "<span></span>"}
-    </li>`).join("") || `<li class="muted">No changes yet.</li>`;
+      <span class="when muted" title="${esc(new Date(e.at).toLocaleString(locale()))}">r${e.revision} · ${esc(ago(e.at))}</span>
+      ${i < h.length - 1 ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">${esc(t("activity.undo"))}</button>` : "<span></span>"}
+    </li>`).join("") || `<li class="muted">${esc(t("activity.empty"))}</li>`;
 }
 
 async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
-  if (later.length && !confirm(`This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${later.map((e) => `• ${e.summary}`).join("\n")}\n\nUndo them all?`)) return;
+  if (later.length && !confirm(t("activity.undo_confirm", { count: later.length, list: later.map((e) => `• ${e.summary}`).join("\n") }))) return;
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { change: rev, force: later.length > 0 }));
 }
 
@@ -708,17 +713,17 @@ async function loadCompare() {
   try {
     const rows = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}/compare`);
     if (rows.length < 2) { table.innerHTML = ""; return; }
-    let h = `<tr><th>Scenario</th><th>This month</th><th>End savings</th><th>Δ</th><th>Interest</th><th>Goals</th><th></th></tr>`;
+    let h = `<tr>${["compare.scenario", "compare.this_month", "compare.end_savings", "compare.delta", "compare.interest", "compare.goals"].map((k) => `<th>${esc(t(k))}</th>`).join("")}<th></th></tr>`;
     for (const o of rows) {
       if (o.error) { h += `<tr><td>${esc(o.name)}</td><td colspan="5" class="neg">${esc(o.error)}</td><td>${scenarioButtons(o)}</td></tr>`; continue; }
       const d = o.delta_end_savings;
-      const goals = (o.goals || []).map((g) => g.already_met ? "met" : g.reached_label || "—").join(", ");
-      h += `<tr><td>${esc(o.name)}</td><td>${esc(o.first_month_saved.display)}</td><td>${esc(o.end_savings.display)}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(d.display) : ""}</td><td>${esc(o.total_interest_base.display)}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
+      const goals = (o.goals || []).map((g) => g.already_met ? t("compare.met") : g.reached_label || "—").join(", ");
+      h += `<tr><td>${esc(o.name)}</td><td>${esc(money(o.first_month_saved))}</td><td>${esc(money(o.end_savings))}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(money(d)) : ""}</td><td>${esc(money(o.total_interest_base))}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
     }
     table.innerHTML = h;
   } catch { table.innerHTML = ""; }
 }
-const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">Adopt</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" aria-label="Delete ${esc(o.name)}">✕</button>`;
+const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">${esc(t("scenarios.adopt"))}</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" aria-label="${esc(t("scenarios.delete", { name: o.name }))}">✕</button>`;
 
 // ---------- new / import / export / delete ----------
 
@@ -749,24 +754,24 @@ function exportJSON() {
 async function importJSON(file) {
   try {
     const budget = JSON.parse(await file.text());
-    const id = prompt("Id for the imported budget:", slug(budget.name || file.name.replace(/\.json$/, "")));
+    const id = prompt(t("import.id"), slug(budget.name || file.name.replace(/\.json$/, "")));
     if (!id) return;
     await api("POST", "/api/budgets", { id, budget });
     await loadList();
     await open(id);
   } catch (e) {
-    status(`Import failed: ${e.data?.issues ? e.data.issues.map((i) => `${i.path}: ${i.message}`).join("; ") : e.message}`, true);
+    status(t("import.failed", { error: e.data?.issues ? e.data.issues.map((i) => `${i.path}: ${i.message}`).join("; ") : e.message }), true);
   }
 }
 
 async function deleteBudget() {
-  if (!S.id || !confirm(`Delete “${S.budget.name}” permanently?`)) return;
+  if (!S.id || !confirm(t("delete.confirm", { name: S.budget.name }))) return;
   try {
     await api("DELETE", `/api/budgets/${encodeURIComponent(S.id)}`);
     S.id = null;
     await loadList();
     if (S.list.length) await open(S.list[0].id);
-    else status("No budgets.");
+    else status(t("status.no_budgets"));
   } catch (e) { status(e.message, true); }
 }
 
@@ -800,14 +805,17 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
 (async function init() {
   try {
     S.meta = await api("GET", "/api/meta");
+    await loadLocale(S.meta.locale, S.meta.crypto);
+    $("#license").innerHTML = esc(t("app.license", { license: "\u0001" })).replace("\u0001",
+      `<a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a>`);
     S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
     await loadList();
-    if (!S.list.length) { status("No budgets yet."); return; }
+    if (!S.list.length) { status(t("status.no_budgets_yet")); return; }
     let want = decodeURIComponent(location.hash.slice(1));
     if (!want) try { want = localStorage.getItem("bbbudget.last") || ""; } catch {}
     await open(S.list.some((b) => b.id === want) ? want : S.list[0].id);
   } catch (e) {
-    status(`Could not reach the server: ${e.message}`, true);
+    status(t("status.unreachable", { error: e.message }), true);
   }
   setInterval(poll, POLL_MS);
 })();
