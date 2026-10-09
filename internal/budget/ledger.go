@@ -157,7 +157,8 @@ func (p *Plan) Status(month string, txs []Transaction, today time.Time) (*MonthS
 		return nil, fmt.Errorf("%s is outside the budget's window (%s for %d months)", month, p.Doc.StartMonth, p.Months)
 	}
 	end := start.AddDate(0, 1, 0)
-	st := &MonthStatus{Month: month, Days: int(end.Sub(start).Hours() / 24)}
+	// Empty lists, not null: clients iterate over them.
+	st := &MonthStatus{Month: month, Days: int(end.Sub(start).Hours() / 24), Categories: []CategoryStatus{}, Flags: []Insight{}}
 	day := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	switch {
 	case !day.Before(end):
