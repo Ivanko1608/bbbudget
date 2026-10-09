@@ -69,6 +69,14 @@ section > .muted{margin:-6px 0 8px}
 .ins.good{background:var(--tint-good)}
 .ins b{font-weight:600}
 .activity{list-style:none;margin:0;padding:0}
+h3.sub{font-size:.9rem;margin:16px 0 6px}
+#nowFlags{margin-bottom:10px}
+.now-row{padding:6px 0}
+.now-head{display:flex;justify-content:space-between;gap:10px;font-size:.9rem;margin-bottom:4px;flex-wrap:wrap}
+.now-bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.now-bar>div{height:100%;border-radius:4px}
+.badge{font-size:.72rem;padding:1px 6px;border-radius:6px;margin-left:6px;background:var(--tint-warn)}
+.badge.pace{background:var(--tint-info)}
 .act{display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:.9rem}
 .act:first-child{border-top:0}
 .act .who{font-weight:600;white-space:nowrap}

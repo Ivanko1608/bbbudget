@@ -24,6 +24,17 @@
   "insights.heading": "What the numbers say",
   "insights.empty": "Add income and costs to see insights.",
 
+  "now.heading": "This month: {month}",
+  "now.sub": "{spent} spent of {planned} planned · day {day} of {days}",
+  "now.empty": "Nothing logged this month yet. Tell your AI assistant what you spent, or use “bbbudget log”.",
+  "now.of": "{actual} of {planned}",
+  "now.recent": "Recently logged",
+  "now.none_logged": "No transactions yet.",
+  "now.state.over": "over plan",
+  "now.state.pace": "on pace to overspend",
+  "now.state.unplanned": "not planned",
+  "now.state.short": "below plan",
+
   "activity.heading": "Recent changes",
   "activity.text": "Every change, whoever made it: you, an AI assistant or a rate refresh. Undo puts back the version from before it, as a new change you can undo too.",
   "activity.empty": "No changes yet.",
