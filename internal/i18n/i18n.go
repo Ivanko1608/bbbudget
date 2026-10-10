@@ -8,7 +8,6 @@
 package i18n
 
 import (
-	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -298,19 +297,6 @@ func FromEnv() string {
 		}
 	}
 	return Default
-}
-
-type ctxKey struct{}
-
-// WithLocale returns ctx carrying a locale for the code below to render in.
-func WithLocale(ctx context.Context, locale string) context.Context {
-	return context.WithValue(ctx, ctxKey{}, locale)
-}
-
-// FromContext returns the locale on ctx, or "".
-func FromContext(ctx context.Context) string {
-	s, _ := ctx.Value(ctxKey{}).(string)
-	return s
 }
 
 var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)

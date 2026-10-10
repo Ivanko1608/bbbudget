@@ -110,7 +110,7 @@ func (a *App) RefreshRates(
 		if err != nil {
 			return nil, updates, err
 		}
-		v, err := a.view(ctx, r)
+		v, err := view(r)
 		return v, updates, err
 	}
 	fetched := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
@@ -147,7 +147,7 @@ func (a *App) RefreshRates(
 			updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
 		}
 	}
-	v, err := a.view(ctx, saved)
+	v, err := view(saved)
 	return v, updates, err
 }
 

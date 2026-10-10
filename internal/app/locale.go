@@ -1,21 +1,9 @@
 package app
 
 import (
-	"context"
-
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/settings"
 )
-
-// Locale is the language to render text in for this call: the one the
-// transport put on the context, else what ResolveLocale picks with no
-// browser preference.
-func (a *App) Locale(ctx context.Context) string {
-	if l := i18n.FromContext(ctx); l != "" {
-		return i18n.Match(l)
-	}
-	return a.ResolveLocale("")
-}
 
 // ResolveLocale picks the language for a reader: the app setting if one is
 // chosen, else the browser's Accept-Language header (empty outside HTTP),
@@ -30,5 +18,11 @@ func (a *App) ResolveLocale(acceptLanguage string) string {
 	return i18n.FromEnv()
 }
 
-// Localizer renders text for this call (see Locale).
-func (a *App) Localizer(ctx context.Context) *i18n.Localizer { return i18n.For(a.Locale(ctx)) }
+// Localizer renders text for a reader whose browser asks for acceptLanguage
+// ("" outside HTTP); see ResolveLocale.
+func (a *App) Localizer(acceptLanguage string) *i18n.Localizer {
+	return i18n.For(a.ResolveLocale(acceptLanguage))
+}
+
+// Localize renders the view's text with l.
+func (v *View) Localize(l *i18n.Localizer) { v.Report.Localize(l) }

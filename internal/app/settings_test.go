@@ -104,7 +104,7 @@ func TestRefreshIfDue(t *testing.T) {
 	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
 	allManual := "plain"
-	if _, err := a.Create(ctx, byTest, allManual, "Plain", "example"); err != nil {
+	if _, err := a.Create(ctx, byTest, english, allManual, "Plain", "example"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {

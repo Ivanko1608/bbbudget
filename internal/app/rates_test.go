@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/settings"
@@ -17,7 +18,10 @@ import (
 )
 
 // byTest is the origin of the writes tests make.
-var byTest = store.Origin{Source: store.SourceCLI}
+var (
+	byTest  = store.Origin{Source: store.SourceCLI}
+	english = i18n.For(i18n.Default)
+)
 
 // testApp holds the example budget ("home": EUR base, CHF and USD typed by
 // hand) and offline rate providers: "ecb" knows USD and CHF, "currency-api"
@@ -37,7 +41,7 @@ func testApp(t *testing.T) *App {
 		rates.CoinGecko: rates.Fixed{ID: rates.CoinGecko, Err: errors.New("HTTP 429")},
 		rates.Auto:      rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, capi}},
 	}
-	if _, err := a.Create(context.Background(), byTest, "home", "Home", "example"); err != nil {
+	if _, err := a.Create(context.Background(), byTest, english, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{FetchRates: ptr(true)}) // off by default; these tests fetch

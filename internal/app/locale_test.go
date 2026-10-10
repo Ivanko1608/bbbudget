@@ -16,8 +16,7 @@ func TestTemplateNamesFollowTheLocale(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := New(st, nil)
-	ctx := i18n.WithLocale(context.Background(), "ru")
-	v, err := a.Create(ctx, byTest, "home", "Дом", "example")
+	v, err := a.Create(context.Background(), byTest, i18n.For("ru"), "home", "Дом", "example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,17 +32,30 @@ func TestTemplateNamesFollowTheLocale(t *testing.T) {
 			t.Errorf("%s = %q, want %q", id, labels[id], want)
 		}
 	}
-	if v.Report.Insights[0].Text == v.Report.Insights[0].Key {
-		t.Errorf("insight not rendered: %+v", v.Report.Insights[0])
+}
+
+func TestViewReadsInTheReadersLanguage(t *testing.T) {
+	a := testApp(t)
+	v, err := a.Get(context.Background(), "home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	english := v.Report.Insights[0].Text
+
+	v.Localize(i18n.For("ru"))
+
+	if got := v.Report.Insights[0].Text; got == english {
+		t.Errorf("insight still in English: %q", got)
 	}
 }
 
 func historyIn(t *testing.T, a *App, locale string) []store.Entry {
 	t.Helper()
-	history, err := a.History(i18n.WithLocale(context.Background(), locale), "home", store.AllEntries)
+	history, err := a.History(context.Background(), "home", store.AllEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
+	LocalizeHistory(history, i18n.For(locale))
 	return history
 }
 

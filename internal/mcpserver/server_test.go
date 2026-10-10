@@ -41,7 +41,7 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	fromCLI := store.Origin{Source: store.SourceCLI}
-	if _, err := a.Create(ctx, fromCLI, "home", "Home", "example"); err != nil {
+	if _, err := a.Create(ctx, fromCLI, a.Localizer(""), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, Options{DefaultBudget: "home", Version: "test"})

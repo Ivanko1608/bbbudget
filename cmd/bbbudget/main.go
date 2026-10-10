@@ -154,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, fromCLI, id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, a.Localizer(""), id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -249,7 +249,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		printReport(stdout, rep, a.Localizer(ctx))
+		reader := a.Localizer("")
+		rep.Localize(reader)
+		printReport(stdout, rep, reader)
 		return nil
 
 	case "rates":
@@ -293,6 +295,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
 		for _, e := range h {
@@ -320,6 +323,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
 		return nil
 
@@ -359,7 +363,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			locale = settings.LocaleAuto
 		}
 		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
-			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.Locale(ctx), strings.Join(i18n.Locales(), ", "))
+			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 

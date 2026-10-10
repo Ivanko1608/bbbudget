@@ -13,17 +13,16 @@ import (
 )
 
 // History returns a budget's recent changes, newest first: at most limit of
-// them, or store.AllEntries. Each summary is in the caller's language.
+// them, or store.AllEntries. Summaries are in English; see LocalizeHistory.
 func (a *App) History(ctx context.Context, id string, limit int) ([]store.Entry, error) {
-	history, err := a.Store.History(ctx, id, limit)
-	if err != nil {
-		return nil, err
-	}
-	l := a.Localizer(ctx)
+	return a.Store.History(ctx, id, limit)
+}
+
+// LocalizeHistory renders every summary in history with l.
+func LocalizeHistory(history []store.Entry, l *i18n.Localizer) {
 	for i, entry := range history {
 		history[i].Summary = l.Render(summaryMsg(entry))
 	}
-	return history, nil
 }
 
 // summaryMsg says what an entry changed, from what the store recorded about it.
@@ -124,7 +123,7 @@ func (a *App) Undo(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, saved)
+	return view(saved)
 }
 
 // undoPlan is the change an undo reverts and the revision it restores.

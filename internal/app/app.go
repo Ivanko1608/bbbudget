@@ -54,9 +54,9 @@ type View struct {
 	Report    *budget.Report `json:"report"`
 }
 
-// view analyzes a stored budget, with its text in the caller's language.
-func (a *App) view(ctx context.Context, r store.Record) (*View, error) {
-	rep, err := a.analyze(ctx, r.Budget)
+// view analyzes a stored budget, with its text in English.
+func view(r store.Record) (*View, error) {
+	rep, err := budget.Analyze(r.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -65,9 +65,10 @@ func (a *App) view(ctx context.Context, r store.Record) (*View, error) {
 
 func (a *App) List(ctx context.Context) ([]store.Meta, error) { return a.Store.List(ctx) }
 
-// Create makes a new budget from a template ("" means blank). Name defaults to the id.
+// Create makes a new budget from a template ("" means blank), with the
+// template's category and pot names in lang. Name defaults to the id.
 func (a *App) Create(
-	ctx context.Context, origin store.Origin, id, name, template string,
+	ctx context.Context, origin store.Origin, lang *i18n.Localizer, id, name, template string,
 ) (*View, error) {
 	if template == "" {
 		template = "blank"
@@ -79,12 +80,12 @@ func (a *App) Create(
 	if err != nil {
 		return nil, err
 	}
-	localizeTemplate(&b, a.Localizer(ctx))
+	localizeTemplate(&b, lang)
 	r, err := a.Store.Create(ctx, origin, id, b)
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 // localizeTemplate translates the category labels and pot names a template
@@ -116,7 +117,7 @@ func (a *App) Import(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 func (a *App) Get(ctx context.Context, id string) (*View, error) {
@@ -124,7 +125,7 @@ func (a *App) Get(ctx context.Context, id string) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 func (a *App) Delete(ctx context.Context, id string) error { return a.Store.Delete(ctx, id) }
@@ -137,7 +138,7 @@ func (a *App) Replace(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 // Apply runs ops against the latest budget and saves the result atomically.
@@ -149,22 +150,11 @@ func (a *App) Apply(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
-}
-
-func (a *App) analyze(ctx context.Context, b budget.Budget) (*budget.Report, error) {
-	rep, err := budget.Analyze(b)
-	if err != nil {
-		return nil, err
-	}
-	if l := a.Localizer(ctx); l.Locale() != i18n.Default {
-		rep.Localize(l)
-	}
-	return rep, nil
+	return view(r)
 }
 
 // WhatIf previews ops without saving anything. It returns the hypothetical
-// budget and its report.
+// budget and its report, in English.
 func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Budget, *budget.Report, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
@@ -174,7 +164,7 @@ func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Bu
 	if err != nil {
 		return budget.Budget{}, nil, err
 	}
-	rep, err := a.analyze(ctx, nb)
+	rep, err := budget.Analyze(nb)
 	return nb, rep, err
 }
 
@@ -187,7 +177,7 @@ func (a *App) SetDebt(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 // setOrAddDebt updates the debt matching ref, or adds one named ref.
@@ -235,7 +225,7 @@ func (a *App) ScenarioReport(ctx context.Context, id, scenario string) (*budget.
 	if err != nil {
 		return nil, err
 	}
-	return a.analyze(ctx, nb)
+	return budget.Analyze(nb)
 }
 
 func (a *App) SaveScenario(
@@ -251,12 +241,15 @@ func (a *App) SaveScenario(
 	return saved, err
 }
 
-func (a *App) Compare(ctx context.Context, id string, scenarios []string) ([]budget.Outcome, error) {
+// Compare projects the baseline and scenarios side by side, with labels in lang.
+func (a *App) Compare(
+	ctx context.Context, lang *i18n.Localizer, id string, scenarios []string,
+) ([]budget.Outcome, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return budget.Compare(r.Budget, scenarios, a.Localizer(ctx))
+	return budget.Compare(r.Budget, scenarios, lang)
 }
 
 func (a *App) AdoptScenario(
@@ -266,7 +259,7 @@ func (a *App) AdoptScenario(
 	if err != nil {
 		return nil, err
 	}
-	return a.view(ctx, r)
+	return view(r)
 }
 
 func (a *App) DeleteScenario(ctx context.Context, origin store.Origin, id, scenario string) error {

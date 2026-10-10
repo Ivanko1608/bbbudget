@@ -494,3 +494,18 @@ func TestLocaleNegotiation(t *testing.T) {
 	}
 	c.do("PUT", "/api/settings", `{"locale":"not a tag!"}`, 400)
 }
+
+func TestHistoryInTheReadersLanguage(t *testing.T) {
+	c := setup(t)
+	russian := func(r *http.Request) { r.Header.Set("Accept-Language", "ru") }
+
+	w := c.req("GET", "/api/budgets/home/history", "", russian)
+
+	var history []struct{ Summary string }
+	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if got := history[len(history)-1].Summary; got != "создан" {
+		t.Errorf("creation in Russian: %q", got)
+	}
+}
