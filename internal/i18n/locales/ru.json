@@ -116,10 +116,6 @@
 
   "issue.date_format": "должно быть в формате ГГГГ-ММ-ДД, а не \"{value}\"",
   "issue.too_long": "слишком длинно (не больше {max} символов)",
-  "status.over": "{category}: потрачено {actual} из запланированных {planned}, **перерасход {over}**.",
-  "status.pace": "{category}: в таком темпе к концу месяца будет около **{projected}** при плане {planned}.",
-  "status.unplanned": "{category}: потрачено **{actual}**, хотя ничего не планировалось.",
-  "status.short": "{category}: поступило {actual}, **меньше запланированных {planned}**.",
 
   "issue.error": "{error}",
   "issue.required": "обязательное поле",
@@ -147,6 +143,5 @@
   "issue.no_pots": "добавьте хотя бы одну копилку: туда идёт остаток каждого месяца",
   "issue.unknown_pot": "неизвестная копилка \"{id}\"",
 
-  "cli.status.header": "КАТЕГОРИЯ\tПЛАН\tФАКТ\tОСТАЛОСЬ\tСТАТУС\t",
   "cli.report.header": "МЕСЯЦ\tДОХОД\tРАСХОДЫ\tНА ДОЛГИ\tОСТАТОК\tОТЛОЖЕНО\tСБЕРЕЖЕНИЯ\t"
 }

@@ -146,7 +146,6 @@ async function open(id, view = S.view) {
   status(t("status.saved"));
   loadCompare();
   loadActivity();
-  loadNow();
 }
 
 function adopt(view, rerenderEditors) {
@@ -186,7 +185,6 @@ async function save() {
     S.notice = null;
     loadCompare();
     loadActivity();
-    loadNow();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -217,7 +215,6 @@ async function poll() {
       status(t("status.updated_elsewhere"));
       loadCompare();
       loadActivity();
-    loadNow();
     }
   } catch {}
 }
@@ -1262,76 +1259,6 @@ async function saveWhatIf() {
   S.wi = [];
   $("#wiResult").innerHTML = "";
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
-}
-
-// ---------- this month: plan versus actual ----------
-
-async function loadNow() {
-  if (!S.id) return;
-  const id = encodeURIComponent(S.id);
-  let st, txs;
-  try {
-    [st, txs] = await Promise.all([
-      api("GET", `/api/budgets/${id}/status`),
-      api("GET", `/api/budgets/${id}/transactions?limit=8`),
-    ]);
-  } catch {
-    $("#nowSection").hidden = true; // e.g. today is outside the budget's window
-    return;
-  }
-  const categories = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
-  $("#nowSection").hidden = false;
-  $("#h-now").textContent = t("now.heading", { month: monthName(st.month) });
-  $("#nowSub").textContent = nowSubtitle(st);
-  $("#nowFlags").innerHTML = st.flags.map((f) => `<div class="ins ${esc(f.tone)}">${bold(f.text)}</div>`).join("");
-  $("#nowCats").innerHTML = st.categories
-    .filter((c) => c.kind !== "income")
-    .map((c) => nowRow(c, categories[c.category]))
-    .join("");
-  $("#nowTx").innerHTML = nowTransactions(txs, categories);
-}
-
-function nowSubtitle(st) {
-  if (!st.transactions) return t("now.empty");
-  const sums = { spent: money(st.spent), planned: money(st.planned_spending), day: st.elapsed, days: st.days };
-  return t("now.sub", sums);
-}
-
-// nowRow is one spending category's bar: how much of the plan is spent.
-function nowRow(c, category) {
-  const width = nowBarWidth(c);
-  const color = nowBarColor(c, category);
-  const badge = c.state === "ok" ? "" : `<span class="badge ${esc(c.state)}">${esc(t(`now.state.${c.state}`))}</span>`;
-  const ofPlan = t("now.of", { actual: money(c.actual), planned: money(c.planned) });
-  return `<div class="now-row">
-    <div class="now-head"><span>${esc(c.label)} ${badge}</span><span class="muted">${esc(ofPlan)}</span></div>
-    <div class="now-bar"><div style="width:${width}%;background:${esc(color)}"></div></div>
-  </div>`;
-}
-
-// nowBarWidth is the share of the plan spent, in percent, capped at 100.
-// Floats are fine here: they only size a bar.
-function nowBarWidth(c) {
-  const planned = parseFloat(c.planned.amount);
-  const actual = parseFloat(c.actual.amount);
-  if (planned > 0) return Math.min(100, (actual / planned) * 100);
-  if (actual > 0) return 100;
-  return 0;
-}
-
-function nowBarColor(c, category) {
-  const overspent = c.state === "over" || c.state === "unplanned";
-  if (overspent) return "var(--neg)";
-  return category?.color || "var(--accent)";
-}
-
-function nowTransactions(txs, categories) {
-  if (!txs.length) return `<tr><td class="muted">${esc(t("now.none_logged"))}</td></tr>`;
-  return txs.map((x) => {
-    const label = categories[x.category]?.label || x.category;
-    const amount = money({ amount: x.amount, currency: x.currency });
-    return `<tr><td>${esc(x.date)}</td><td>${esc(label)}</td><td>${esc(amount)}</td><td class="muted">${esc(x.note || "")}</td></tr>`;
-  }).join("");
 }
 
 // ---------- activity ----------

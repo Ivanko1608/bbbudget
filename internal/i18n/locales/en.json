@@ -116,10 +116,6 @@
 
   "issue.date_format": "must be YYYY-MM-DD, got \"{value}\"",
   "issue.too_long": "is too long (at most {max} characters)",
-  "status.over": "{category}: {actual} spent of {planned} planned, **{over} over**.",
-  "status.pace": "{category}: at this pace about **{projected}** by the end of the month, against {planned} planned.",
-  "status.unplanned": "{category}: **{actual}** spent with nothing planned.",
-  "status.short": "{category}: {actual} came in, **less than the {planned} planned**.",
 
   "issue.error": "{error}",
   "issue.required": "is required",
@@ -147,6 +143,5 @@
   "issue.no_pots": "add at least one savings pot: money left over each month goes there",
   "issue.unknown_pot": "unknown pot \"{id}\"",
 
-  "cli.status.header": "CATEGORY\tPLANNED\tACTUAL\tLEFT\tSTATE\t",
   "cli.report.header": "MONTH\tINCOME\tSPENT\tTO DEBTS\tLEFT\tSAVED\tSAVINGS\t"
 }

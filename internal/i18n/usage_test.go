@@ -116,7 +116,6 @@ func TestUIKeysExist(t *testing.T) {
 		"short.note.":     {"sinking", "emergency"},
 		"table.":          {"month", "income", "spent", "to_debts", "left", "from_savings", "owed", "saved", "savings", "debt"},
 		"compare.":        {"scenario", "this_month", "end_savings", "delta", "interest", "goals"},
-		"now.state.":      {"over", "pace", "unplanned", "short"},
 	}
 	for prefix, members := range families {
 		for _, m := range members {

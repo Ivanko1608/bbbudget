@@ -245,28 +245,6 @@ bbbudget import home ./budget.yaml         # or create a budget straight from a 
 
 Ids are derived from names when omitted. YAML numbers keep their exact text: `450.50` is never a float. Unknown fields, exponents and sub-cent amounts are rejected, and a broken template file is reported by file name. The format is the same document the API and **Download JSON** in the UI produce, so you can export a budget and save it as a template.
 
-## Actual spending
-
-The budget is a plan. **Transactions** are what really happened. Log them by telling your assistant ("I spent 40 on groceries", or paste a bank statement), from the command line, or over the API. The **This month** panel and `month_status` then compare the month with the plan:
-
-- planned, spent and left per category;
-- the pace so far, projected to the end of the month;
-- flags for categories that are over plan, on course to overspend, or have spending nothing was planned for, and for income that came in below plan once the month is over.
-
-```
-bbbudget log home 40 home -note "Lidl"            # today, base currency
-bbbudget log home 12 education -currency USD -date 2026-10-03
-bbbudget status home                             # this month, plan vs actual
-```
-
-- **Fixed values.** Each transaction's base-currency value is fixed when it's logged, using that day's rate and the plan's pessimistic rounding (costs up, income down). Spending already done doesn't change when rates move.
-- **Safe re-imports.** A statement import gives each row an `external_id`, so pasting the same statement twice logs nothing twice.
-- **All or nothing.** One bad row rejects the whole call, with an issue pointing at that row.
-- **Corrections.** Each log call is a **batch**. `delete_transactions` with the batch id takes back a mistaken import in one go, and `update_transaction` fixes a single row.
-- **Stored apart from the plan** (`home.ledger.json`). The plan stays small, an editor saving the whole plan can't drop transactions, and deleting the budget deletes them too.
-
-The assistant does the parsing: the server never reads bank CSVs. The model reads the statement, picks a category for each row (and asks when one is unclear), and logs them in one call.
-
 ## Languages
 
 The UI, the insights, schedule descriptions, month names, validation messages, change history and the CLI report come in **English** and **Russian**. Pick one on the Settings page, or with `bbbudget settings -set locale=ru`. `auto`, the default, follows your browser's languages in the UI and `$LANG` on the command line.
@@ -312,7 +290,7 @@ The editor saves as you type, so its saves within two minutes of each other merg
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`, `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status`. There is also a resource, `budget://{id}`, with the raw document.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`. There is also a resource, `budget://{id}`, with the raw document.
 
 **Responses are sized for a model's context.** A write returns what changed and what that did, not the whole budget again:
 
@@ -325,8 +303,6 @@ Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_ite
            "goals_reached":{"Emergency fund":{"before":"2026-12","after":"2027-01"}}}}
 ```
 
-Tools for actual spending: `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status` (see [Actual spending](#actual-spending)).
-
 `effect` holds only what moved: totals, the first month, the projection length, insights that were `added`, `removed` or `changed`, `debt_payoffs` and `goals_reached`. When nothing in the outcome moved, it says `"none": true`. `what_if` answers in the same shape with `"saved": false`. Pass `"detail": "full"` to a write for the whole budget instead. For a 600-month budget an edit returns about 2 KB rather than 87 KB. The example above is shortened.
 
 `get_budget` returns an overview by default: everything, but only the first three months and the last. Use `view` (`items`, `months`, `debts`, `goals`, `insights`, `all`) and `from`/`to` (`YYYY-MM`) to get exactly the part you need.
@@ -338,7 +314,7 @@ The web UI and the MCP server can run as separate processes on the same data dir
 ## Layout
 
 ```
-cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | log | status | history | undo
+cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | history | undo
 internal/money/      Money, Decimal, Currency, rounding. No dependencies.
 internal/i18n/       Message catalogs (locales/*.json), plural rules, locale-aware money and numbers
 internal/budget/     Document model, validation (Compile → Plan), projection engine,
@@ -364,8 +340,6 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `GET /api/budgets/{id}` → `{id, revision, budget, report}` | read |
 | `PUT /api/budgets/{id}` `{revision, budget}` | replace; `409` if the revision is stale, `422` with `issues` if invalid |
 | `POST /api/budgets/{id}/ops` `{ops, revision?}` | apply edits atomically |
-| `GET /api/budgets/{id}/transactions?from&to&category&batch&limit` · `POST …/transactions` `{transactions}` · `PUT …/transactions/{tid}` · `DELETE …/transactions/{tid}` or `…/transactions?batch=b3` | actual spending; logging is all or nothing (`422` with per-row `issues`) |
-| `GET /api/budgets/{id}/status?month=YYYY-MM` | plan versus actual for a month (default: this one) |
 | `GET /api/budgets/{id}/history?limit=20` · `POST …/undo` `{revision?, force?, seen?}` | recent changes, newest first, each marked `undoable` / undo one; `409` with `later` when later changes exist and `force` is off, or when changes newer than `seen` (the newest one the caller was shown) have landed |
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
-	"time"
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/rates"
@@ -508,106 +507,5 @@ func TestHistoryInTheReadersLanguage(t *testing.T) {
 	}
 	if got := history[len(history)-1].Summary; got != "создан" {
 		t.Errorf("creation in Russian: %q", got)
-	}
-}
-
-// thisMonth is the month the example budget starts in: setup creates it
-// today.
-func thisMonth() string { return time.Now().Format("2006-01") }
-
-func (c *client) logTwo() map[string]any {
-	c.t.Helper()
-	m := thisMonth()
-	body := `{"transactions":[
-		{"date":"` + m + `-02","amount":"45.20","category":"home","external_id":"r1"},
-		{"date":"` + m + `-03","amount":"12","currency":"USD","category":"education"}]}`
-	return c.do("POST", "/api/budgets/home/transactions", body, http.StatusCreated)
-}
-
-func TestLogTransactions(t *testing.T) {
-	c := setup(t)
-
-	logged := c.logTwo()
-
-	if logged["batch"] != "b1" {
-		t.Errorf("batch: %v", logged["batch"])
-	}
-	if rows := logged["logged"].([]any); len(rows) != 2 {
-		t.Errorf("logged: %v", rows)
-	}
-}
-
-func TestLogTransactionsRejectsAnUnknownCategory(t *testing.T) {
-	c := setup(t)
-	body := `{"transactions":[{"date":"` + thisMonth() + `-02","amount":"1","category":"nope"}]}`
-
-	c.do("POST", "/api/budgets/home/transactions", body, http.StatusUnprocessableEntity)
-}
-
-func TestListTransactionsNewestFirst(t *testing.T) {
-	c := setup(t)
-	c.logTwo()
-	m := thisMonth()
-
-	w := c.req("GET", "/api/budgets/home/transactions?from="+m+"&to="+m, "", nil)
-
-	var list []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
-		t.Fatalf("%d %s", w.Code, w.Body)
-	}
-	if len(list) != 2 {
-		t.Fatalf("list: %v", list)
-	}
-	if list[0]["date"] != m+"-03" {
-		t.Errorf("newest first: %v", list[0]["date"])
-	}
-}
-
-func TestUpdateTransaction(t *testing.T) {
-	c := setup(t)
-	c.logTwo()
-
-	updated := c.do("PUT", "/api/budgets/home/transactions/t1", `{"note":"Lidl"}`, http.StatusOK)
-
-	if updated["note"] != "Lidl" {
-		t.Errorf("note: %v", updated["note"])
-	}
-	if updated["base"] != "45.2" {
-		t.Errorf("a note leaves the base value: %v", updated["base"])
-	}
-}
-
-func TestUpdateUnknownTransaction(t *testing.T) {
-	c := setup(t)
-
-	c.do("PUT", "/api/budgets/home/transactions/t9", `{"note":"x"}`, http.StatusNotFound)
-}
-
-func TestMonthStatus(t *testing.T) {
-	c := setup(t)
-	c.logTwo()
-
-	status := c.do("GET", "/api/budgets/home/status?month="+thisMonth(), "", http.StatusOK)
-
-	if status["transactions"] != 2.0 {
-		t.Errorf("transactions: %v", status["transactions"])
-	}
-}
-
-func TestMonthStatusOutsideTheBudget(t *testing.T) {
-	c := setup(t)
-
-	c.do("GET", "/api/budgets/home/status?month=1999-01", "", http.StatusBadRequest)
-}
-
-func TestDeleteTransactionThenItsBatch(t *testing.T) {
-	c := setup(t)
-	c.logTwo()
-
-	c.do("DELETE", "/api/budgets/home/transactions/t1", "", http.StatusOK)
-	deleted := c.do("DELETE", "/api/budgets/home/transactions?batch=b1", "", http.StatusOK)
-
-	if deleted["removed"] != 1.0 {
-		t.Errorf("removed: %v", deleted["removed"])
 	}
 }

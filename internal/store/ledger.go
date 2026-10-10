@@ -47,7 +47,9 @@ func (s *FileStore) Ledger(ctx context.Context, id string) (Ledger, error) {
 	return ledger, err
 }
 
-func (s *FileStore) UpdateLedger(ctx context.Context, id string, edit LedgerEditFunc) (Ledger, error) {
+func (s *FileStore) UpdateLedger(
+	ctx context.Context, id string, edit LedgerEditFunc,
+) (Ledger, error) {
 	var ledger Ledger
 	writeLedger := func() error {
 		current, err := s.read(id)

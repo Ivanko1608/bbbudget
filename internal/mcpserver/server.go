@@ -62,14 +62,8 @@ Never invent a rate: fetch it.
 Workflow: call list_budgets, then get_budget before answering about numbers. Writes and what_if
 return what changed and its effect (totals, first month, debt payoffs, goal dates, insights that
 appeared, went away or changed), not the whole budget: answer from that, and call get_budget (with
-a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating
-tools when the user clearly asks for a change, then state what changed and that it can be undone.
-
-Actual money: the budget is a plan; log_transactions records what was really spent or received ("I
-spent 40 on groceries", or a pasted bank statement: one call with every row, each with an
-external_id so a re-import is skipped). month_status compares the month with the plan. Choose
-categories from the budget; if one is unclear, ask. Correct mistakes with update_transaction or
-delete_transactions (a whole batch for a bad import).
+a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change,
+then state what changed and that it can be undone.
 
 Every write is recorded in the budget's history with who made it (mcp = you, web = the person in
 the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person
@@ -444,8 +438,6 @@ func (h *handlers) register(s *mcp.Server) {
 			v, err := h.app.Undo(ctx, fromAssistant, id, req)
 			return h.written(in.WriteRef, v, err)
 		})
-
-	h.registerLedger(s)
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name: "budget", URITemplate: "budget://{id}", MIMEType: "application/json",

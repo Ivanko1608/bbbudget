@@ -64,12 +64,6 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
 	mux.HandleFunc("GET /api/budgets/{id}/history", s.history)
-	mux.HandleFunc("GET /api/budgets/{id}/transactions", s.listTx)
-	mux.HandleFunc("POST /api/budgets/{id}/transactions", s.logTx)
-	mux.HandleFunc("PUT /api/budgets/{id}/transactions/{tid}", s.updateTx)
-	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTx)
-	mux.HandleFunc("DELETE /api/budgets/{id}/transactions", s.deleteBatch)
-	mux.HandleFunc("GET /api/budgets/{id}/status", s.status)
 	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
@@ -380,91 +374,6 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	}
 	app.LocalizeHistory(h, s.reader(r))
 	writeJSON(w, http.StatusOK, h)
-}
-
-func (s *server) listTx(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	f := app.TxFilter{
-		From:     q.Get("from"),
-		To:       q.Get("to"),
-		Category: q.Get("category"),
-		Batch:    q.Get("batch"),
-		Limit:    100,
-	}
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
-			return
-		}
-		f.Limit = n
-	}
-	txs, err := s.app.ListTransactions(r.Context(), r.PathValue("id"), f)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, txs)
-}
-
-func (s *server) logTx(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Transactions []budget.TransactionInput `json:"transactions"`
-	}
-	if err := decode(r, &in); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	res, err := s.app.LogTransactions(r.Context(), fromBrowser, r.PathValue("id"), in.Transactions)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, res)
-}
-
-func (s *server) updateTx(w http.ResponseWriter, r *http.Request) {
-	var p app.TxPatch
-	if err := decode(r, &p); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	t, err := s.app.UpdateTransaction(r.Context(), r.PathValue("id"), r.PathValue("tid"), p)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, t)
-}
-
-func (s *server) deleteTx(w http.ResponseWriter, r *http.Request) {
-	ids := []string{r.PathValue("tid")}
-	n, err := s.app.DeleteTransactions(r.Context(), r.PathValue("id"), ids)
-	s.writeRemoved(w, r, n, err)
-}
-
-// deleteBatch removes everything one log call added (/transactions?batch=b3).
-func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
-	n, err := s.app.DeleteBatch(r.Context(), r.PathValue("id"), r.URL.Query().Get("batch"))
-	s.writeRemoved(w, r, n, err)
-}
-
-func (s *server) writeRemoved(w http.ResponseWriter, r *http.Request, removed int, err error) {
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]int{"removed": removed})
-}
-
-func (s *server) status(w http.ResponseWriter, r *http.Request) {
-	st, err := s.app.MonthStatus(r.Context(), r.PathValue("id"), r.URL.Query().Get("month"))
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	st.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {
