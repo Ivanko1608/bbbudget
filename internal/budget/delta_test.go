@@ -17,7 +17,7 @@ func TestDiffOnlyReportsWhatMoved(t *testing.T) {
 	if d := Diff(before, analyzed(t, b)); !d.Empty() {
 		t.Fatalf("no change, but: %+v", d)
 	}
-	nb, err := Apply(b, NewOp("set_line", "rent", LinePatch{Amount: decp("1200")}))
+	nb, err := Apply(b, NewOp("set_item", "rent", ItemPatch{Amount: decp("1200")}))
 	if err != nil {
 		t.Fatal(err)
 	}

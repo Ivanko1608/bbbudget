@@ -16,7 +16,7 @@ import (
 // Bounds that keep every intermediate sum far inside int64 minor units.
 const (
 	MaxMonths = 600
-	MaxLines  = 2000
+	MaxItems  = 2000
 	// MaxAmountMajor caps any single amount (10^12 major units).
 	MaxAmountMajor = 1_000_000_000_000
 	// MaxAmountMinor caps it in minor units too, which binds for currencies
@@ -62,7 +62,7 @@ type Plan struct {
 	ExtraPct     money.Decimal
 	Strategy     string
 	Categories   map[string]Category
-	Lines        []PlanLine
+	Items        []PlanItem
 	Debts        []PlanDebt
 	Goals        []PlanGoal
 
@@ -76,8 +76,8 @@ type fx struct {
 	keepMul *big.Rat // 1 - cash-out fee/100: the share of income that arrives
 }
 
-type PlanLine struct {
-	Line
+type PlanItem struct {
+	Item
 	Amt    money.Money
 	Income bool
 }
@@ -231,12 +231,12 @@ func Compile(b Budget) (*Plan, error) {
 		p.Categories[cat.ID] = cat
 	}
 
-	if len(b.Lines) > MaxLines {
-		c.add("lines", "issue.max_lines", args{"max": intArg(MaxLines)})
+	if len(b.Items) > MaxItems {
+		c.add("items", "issue.max_items", args{"max": intArg(MaxItems)})
 	}
 	seen = map[string]bool{}
-	for i, l := range b.Lines {
-		path := fmt.Sprintf("lines[%d]", i)
+	for i, l := range b.Items {
+		path := fmt.Sprintf("items[%d]", i)
 		c.id(path+".id", l.ID, seen)
 		cat, ok := p.Categories[l.Category]
 		if !ok {
@@ -249,7 +249,7 @@ func Compile(b Budget) (*Plan, error) {
 		if !ok {
 			continue
 		}
-		p.Lines = append(p.Lines, PlanLine{Line: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome})
+		p.Items = append(p.Items, PlanItem{Item: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome})
 	}
 
 	seen = map[string]bool{}

@@ -13,8 +13,8 @@ import (
 const maxChangeParts = 6
 
 // DescribeChange summarises the difference between two versions of a budget
-// in one line, for the change history: "Rent: amount 1150 → 1200; added
-// line Gym", in English. ChangeMsg is the same summary as a message, for
+// in one item, for the change history: "Rent: amount 1150 → 1200; added
+// item Gym", in English. ChangeMsg is the same summary as a message, for
 // rendering in the reader's language.
 func DescribeChange(before, after Budget) string { return english().T(ChangeMsg(before, after)) }
 
@@ -28,7 +28,7 @@ func ChangeMsg(before, after Budget) i18n.Msg {
 		func(c CurrencyRate) (string, string) { return c.Code, c.Code }, "rate_date", "rate_from")...)
 	parts = append(parts, diffItems("category", before.Categories, after.Categories,
 		func(c Category) (string, string) { return c.ID, c.Label })...)
-	parts = append(parts, diffItems("line", before.Lines, after.Lines, func(l Line) (string, string) { return l.ID, l.Name })...)
+	parts = append(parts, diffItems("item", before.Items, after.Items, func(l Item) (string, string) { return l.ID, l.Name })...)
 	parts = append(parts, diffItems("debt", before.Debts, after.Debts, func(d Debt) (string, string) { return d.ID, d.Name })...)
 	parts = append(parts, diffItems("goal", before.Goals, after.Goals, func(g Goal) (string, string) { return g.ID, g.Name })...)
 	parts = append(parts, diffItems("scenario", before.Scenarios, after.Scenarios,
@@ -45,7 +45,7 @@ func ChangeMsg(before, after Budget) i18n.Msg {
 
 // settingsOf is the budget without its lists, so settings diff field by field.
 func settingsOf(b Budget) Budget {
-	b.Currencies, b.Categories, b.Lines, b.Debts, b.Goals, b.Scenarios = nil, nil, nil, nil, nil, nil
+	b.Currencies, b.Categories, b.Items, b.Debts, b.Goals, b.Scenarios = nil, nil, nil, nil, nil, nil
 	return b
 }
 

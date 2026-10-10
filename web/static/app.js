@@ -251,22 +251,22 @@ function renderEditors() {
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
 
   const cats = b.categories.map((c) => [c.id, c.kind === "income" ? t("category.income_suffix", { label: c.label }) : c.label]);
-  $("#lines").innerHTML = b.lines.map((l, i) => {
+  $("#items").innerHTML = b.items.map((l, i) => {
     const color = b.categories.find((c) => c.id === l.category)?.color || "var(--line)";
     const sch = l.schedule;
     return `<div class="row row-line" style="box-shadow:inset 3px 0 0 ${esc(color)}">
-      ${field(t("field.name"), `lines.${i}.name`, { cls: "name" })}
-      ${field(t("field.amount"), `lines.${i}.amount`, { type: "decimal" })}
-      ${select(t("field.currency"), `lines.${i}.currency`, currencyOptions())}
-      ${select(t("field.category"), `lines.${i}.category`, cats, { structural: true })}
-      ${select(t("field.repeats"), `lines.${i}.schedule.every`, EVERY(), { structural: true })}
-      <label class="f">${esc(t(sch.every === 0 ? "field.in" : "field.from"))}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+      ${field(t("field.name"), `items.${i}.name`, { cls: "name" })}
+      ${field(t("field.amount"), `items.${i}.amount`, { type: "decimal" })}
+      ${select(t("field.currency"), `items.${i}.currency`, currencyOptions())}
+      ${select(t("field.category"), `items.${i}.category`, cats, { structural: true })}
+      ${select(t("field.repeats"), `items.${i}.schedule.every`, EVERY(), { structural: true })}
+      <label class="f">${esc(t(sch.every === 0 ? "field.in" : "field.from"))}<input type="month" data-path="items.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
       ${sch.every === 0 ? "<span></span>" :
-        `<label class="f">${esc(t("field.until"))}<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+        `<label class="f">${esc(t("field.until"))}<input type="month" data-path="items.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
       <span class="base" data-base="${esc(l.id)}"></span>
-      ${del("del-line", i, l.name)}
+      ${del("del-item", i, l.name)}
     </div>`;
-  }).join("") || `<p class="muted">${esc(t("lines.empty"))}</p>`;
+  }).join("") || `<p class="muted">${esc(t("items.empty"))}</p>`;
 
   $("#debts").innerHTML = b.debts.map((d, i) => `<div class="row row-debt" style="box-shadow:inset 3px 0 0 var(--debt)">
       ${field(t("field.name"), `debts.${i}.name`)}
@@ -291,7 +291,7 @@ function renderEditors() {
     </div>`).join("");
 
   renderWhatIf();
-  renderLineBases();
+  renderItemBases();
   renderRateNotes();
 }
 
@@ -430,15 +430,15 @@ function renderRateNotes() {
 }
 
 const ACTIONS = {
-  "add-line"() {
+  "add-item"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
-    const name = t("lines.new");
-    b.lines.push({ id: newId(name, b.lines), name, amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
+    const name = t("items.new");
+    b.items.push({ id: newId(name, b.items), name, amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
-    focusLast("#lines input[data-path$='.name']");
+    focusLast("#items input[data-path$='.name']");
   },
-  "del-line"(i) { S.budget.lines.splice(i, 1); edited({ structural: true }); },
+  "del-item"(i) { S.budget.items.splice(i, 1); edited({ structural: true }); },
   "add-currency"() {
     const b = S.budget;
     const used = new Set([b.base_currency, ...b.currencies.map((c) => c.code)]);
@@ -484,12 +484,12 @@ const ACTIONS = {
   },
   "del-category"(i) {
     const c = S.budget.categories[i];
-    if (S.budget.lines.some((l) => l.category === c.id)) { status(t("categories.in_use", { label: c.label }), true); return; }
+    if (S.budget.items.some((l) => l.category === c.id)) { status(t("categories.in_use", { label: c.label }), true); return; }
     S.budget.categories.splice(i, 1);
     edited({ structural: true });
   },
   new() { openNewDialog(); },
-  "add-wi"() { S.wi.push({ kind: "line", target: S.budget.lines[0]?.id || "", value: "" }); renderWhatIf(); },
+  "add-wi"() { S.wi.push({ kind: "item", target: S.budget.items[0]?.id || "", value: "" }); renderWhatIf(); },
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
   "save-wi"() { saveWhatIf(); },
@@ -523,9 +523,9 @@ function focusLast(sel) {
 
 // ---------- outputs ----------
 
-function renderLineBases() {
+function renderItemBases() {
   if (!S.report) return;
-  const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
+  const byId = Object.fromEntries(S.report.items.map((l) => [l.id, l]));
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
     el.textContent = l && l.amount.currency !== S.report.base_currency ? `≈ ${money(l.per_occurrence_base)}` : "";
@@ -576,7 +576,7 @@ function renderOutputs() {
     h += `<tr><td>${esc(m.label)}</td><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td><td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td class="${neg(m.savings)}">${esc(money(m.savings))}</td>${hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : ""}</tr>`;
   }
   $("#table").innerHTML = h;
-  renderLineBases();
+  renderItemBases();
 }
 
 function drawChart(r) {
@@ -614,15 +614,15 @@ function drawChart(r) {
 
 // ---------- scenarios ----------
 
-const WI_KINDS = () => ["line", "rate", "extra", "remove"].map((k) => [k, t(`scenarios.kind.${k}`)]);
+const WI_KINDS = () => ["item", "rate", "extra", "remove"].map((k) => [k, t(`scenarios.kind.${k}`)]);
 
 function renderWhatIf() {
   const b = S.budget;
-  const lineOpts = b.lines.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  const itemOpts = b.items.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
   const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(t("scenarios.now", { code: c.code, rate: number(c.per_base) }))}</option>`).join("");
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
       <label class="f">${esc(t("scenarios.change"))}<select data-wi="${i}" data-k="kind">${WI_KINDS().map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${esc(t(o.kind === "rate" ? "scenarios.currency" : "scenarios.line"))}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
+      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${esc(t(o.kind === "rate" ? "scenarios.currency" : "scenarios.item"))}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
       ${o.kind === "remove" ? "<span></span>" : `<label class="f">${esc(t("scenarios.new_value"))}<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
       ${del("del-wi", i, t("scenarios.a_change"))}
     </div>`).join("") || `<p class="muted">${esc(t("scenarios.empty"))}</p>`;
@@ -634,10 +634,10 @@ function wiOps() {
     const value = parseDecimal(o.value);
     if (o.kind !== "remove" && value === null) throw new Error(t("scenarios.bad_value"));
     switch (o.kind) {
-      case "line": return { op: "set_line", target: o.target, value: { amount: value } };
+      case "item": return { op: "set_item", target: o.target, value: { amount: value } };
       case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
       case "extra": return { op: "set_settings", value: { extra_to_debt_pct: value } };
-      case "remove": return { op: "remove_line", target: o.target };
+      case "remove": return { op: "remove_item", target: o.target };
     }
   });
 }
