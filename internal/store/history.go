@@ -32,7 +32,8 @@ const (
 type Change struct {
 	// Source is who wrote: one of the Source constants.
 	Source string
-	// Msg overrides the summary computed from the diff ("undid r12 (…)").
+	// Msg is the summary for a write that is more than its differences
+	// ("undid r12 (…)"); without one, the differences are the summary.
 	Msg *i18n.Msg
 	// Autosave marks an editor's save-as-you-type write. Consecutive
 	// autosaves from one source merge into one history entry.
@@ -58,11 +59,15 @@ type Entry struct {
 	Revision int64     `json:"revision"`
 	At       time.Time `json:"at"`
 	Source   string    `json:"source"`
-	// Summary is what changed, in English as stored; App.History renders
-	// it from Msg in the reader's language.
-	Summary  string    `json:"summary"`
-	Msg      *i18n.Msg `json:"msg,omitempty"`
-	Autosave bool      `json:"autosave,omitempty"`
+	// Summary is what changed, in English as stored; App.History renders it
+	// in the reader's language from Msg, or else from Changes.
+	Summary string    `json:"summary"`
+	Msg     *i18n.Msg `json:"msg,omitempty"`
+	// Changes is what changed, one difference at a time, for readers that
+	// render it themselves (another language, an assistant). It is empty for
+	// the entry that created the budget.
+	Changes  []budget.Difference `json:"changes,omitempty"`
+	Autosave bool                `json:"autosave,omitempty"`
 	// Undoable is false for the oldest entry kept: there is no earlier
 	// version to go back to.
 	Undoable bool `json:"undoable"`
@@ -72,12 +77,13 @@ type Entry struct {
 // its revision. The budget stays raw JSON until a snapshot actually needs it,
 // so listing and recording never decode hundreds of documents.
 type line struct {
-	Revision int64     `json:"revision"`
-	At       time.Time `json:"at"`
-	Source   string    `json:"source"`
-	Summary  string    `json:"summary"`
-	Msg      *i18n.Msg `json:"msg,omitempty"`
-	Autosave bool      `json:"autosave,omitempty"`
+	Revision int64               `json:"revision"`
+	At       time.Time           `json:"at"`
+	Source   string              `json:"source"`
+	Summary  string              `json:"summary"`
+	Msg      *i18n.Msg           `json:"msg,omitempty"`
+	Changes  []budget.Difference `json:"changes,omitempty"`
+	Autosave bool                `json:"autosave,omitempty"`
 	// Replaces is set when consecutive autosaves merge: this line takes the
 	// place of the entry for that revision.
 	Replaces int64           `json:"replaces,omitempty"`
@@ -85,7 +91,7 @@ type line struct {
 }
 
 func (l line) entry() Entry {
-	return Entry{Revision: l.Revision, At: l.At, Source: l.Source, Summary: l.Summary, Msg: l.Msg, Autosave: l.Autosave}
+	return Entry{Revision: l.Revision, At: l.At, Source: l.Source, Summary: l.Summary, Msg: l.Msg, Changes: l.Changes, Autosave: l.Autosave}
 }
 
 func (l line) budget() (budget.Budget, error) {
@@ -235,21 +241,24 @@ func continuesAutosave(last line, prev, next Record, c Change) bool {
 		next.UpdatedAt.Sub(last.At) < coalesceWindow
 }
 
-// newLine is the history line for next. Its summary is the one the change
-// gives, else summary, else a description of what changed since before.
+// newLine is the history line for next. A given summary (only "created")
+// stands alone; otherwise the line lists what changed since before, and its
+// summary is the change's own message (an undo's) or a description of that.
 func newLine(next Record, c Change, before budget.Budget, summary *i18n.Msg) (line, error) {
 	raw, err := json.Marshal(next.Budget)
 	if err != nil {
 		return line{}, err
 	}
-	if c.Msg != nil {
+	var diffs []budget.Difference
+	if summary == nil {
+		diffs = budget.Differences(before, next.Budget)
 		summary = c.Msg
 	}
-	if summary == nil {
-		m := budget.ChangeMsg(before, next.Budget)
-		summary = &m
+	text := budget.Describe(diffs)
+	if summary != nil {
+		text = english().Render(*summary)
 	}
-	l := line{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: english().Render(*summary), Msg: summary, Autosave: c.Autosave, Budget: raw}
+	l := line{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: text, Msg: summary, Changes: diffs, Autosave: c.Autosave, Budget: raw}
 	return l, nil
 }
 

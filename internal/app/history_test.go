@@ -48,6 +48,9 @@ func TestUndoLatestAndUndoTheUndo(t *testing.T) {
 	if h[0].Revision != v.Revision || h[0].Source != "mcp" || !strings.HasPrefix(h[0].Summary, "undid r2 (") {
 		t.Fatalf("undo entry: %+v", h[0])
 	}
+	if c := h[0].Changes; len(c) != 1 || c[0].Field != "amount" || c[0].Old != "1200" || c[0].New != "1150" {
+		t.Errorf("an undo lists what it put back: %+v", c)
+	}
 	if _, err := a.Undo(mcp, "home", UndoRequest{}); err != nil { // redo
 		t.Fatal(err)
 	}

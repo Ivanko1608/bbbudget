@@ -59,6 +59,10 @@ func TestHistoryRecordsEveryWrite(t *testing.T) {
 	if !strings.Contains(h[0].Summary, "amount 1150 → 1200") {
 		t.Errorf("summary: %q", h[0].Summary)
 	}
+	rent := budget.Difference{Kind: budget.Changed, Thing: "item", Name: "Rent", Field: "amount", Old: "1150", New: "1200"}
+	if len(h[0].Changes) != 1 || h[0].Changes[0] != rent || h[1].Changes != nil {
+		t.Errorf("changes: r2 %+v, r1 %+v", h[0].Changes, h[1].Changes)
+	}
 	if !h[0].Undoable || h[1].Undoable {
 		t.Errorf("undoable: r2 %v, r1 (the creation) %v", h[0].Undoable, h[1].Undoable)
 	}

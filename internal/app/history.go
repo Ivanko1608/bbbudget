@@ -21,8 +21,11 @@ func (a *App) History(ctx context.Context, id string, limit int) ([]store.Entry,
 	}
 	l := a.Localizer(ctx)
 	for i, e := range history {
-		if e.Msg != nil {
+		switch {
+		case e.Msg != nil:
 			history[i].Summary = l.Render(*e.Msg)
+		case e.Changes != nil:
+			history[i].Summary = l.Render(budget.DifferencesMsg(e.Changes))
 		}
 	}
 	return history, nil
