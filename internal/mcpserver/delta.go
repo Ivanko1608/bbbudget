@@ -145,7 +145,7 @@ func (h *handlers) written(ctx context.Context, w WriteRef, v *app.View, err err
 var views = map[string][]string{
 	"overview": nil, // everything, with months trimmed
 	"all":      nil,
-	"lines":    {"categories", "lines"},
+	"items":    {"categories", "items"},
 	"months":   {"months", "totals"},
 	"debts":    {"debts", "totals"},
 	"goals":    {"goals", "totals"},

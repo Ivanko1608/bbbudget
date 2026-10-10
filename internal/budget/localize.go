@@ -14,8 +14,8 @@ func (r *Report) Localize(l *i18n.Localizer) {
 	for i := range r.Months {
 		r.Months[i].Label = l.Month(r.Months[i].Key)
 	}
-	for i := range r.Lines {
-		r.Lines[i].ScheduleText = ScheduleText(l, r.StartMonth, r.Lines[i].Schedule)
+	for i := range r.Items {
+		r.Items[i].ScheduleText = ScheduleText(l, r.StartMonth, r.Items[i].Schedule)
 	}
 	for i, d := range r.Debts {
 		if d.PaidOffMonth != nil {
