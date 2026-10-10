@@ -30,13 +30,28 @@ func newStore(t testing.TB) (*FileStore, budget.Budget) {
 	return s, b
 }
 
+func addItem(id string) EditFunc {
+	return func(b budget.Budget) (budget.Budget, error) {
+		item := budget.Item{
+			ID:       id,
+			Name:     "x",
+			Amount:   money.MustDecimal("1"),
+			Currency: "EUR",
+			Category: "home",
+			Schedule: budget.Monthly(),
+		}
+		b.Items = append(b.Items, item)
+		return b, nil
+	}
+}
+
 func TestCRUD(t *testing.T) {
 	s, b := newStore(t)
-	r, err := s.Create(ctx, "home", b)
+	r, err := s.Create(ctx, byCLI, "home", b)
 	if err != nil || r.Revision != 1 {
 		t.Fatalf("create: %+v %v", r, err)
 	}
-	if _, err := s.Create(ctx, "home", b); !errors.Is(err, ErrExists) {
+	if _, err := s.Create(ctx, byCLI, "home", b); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate create: %v", err)
 	}
 	got, err := s.Get(ctx, "home")
@@ -58,7 +73,7 @@ func TestCRUD(t *testing.T) {
 func TestRejectsUnsafeIDs(t *testing.T) {
 	s, b := newStore(t)
 	for _, id := range []string{"", "../etc", "Home", "a/b", ".hidden", "x.json"} {
-		if _, err := s.Create(ctx, id, b); !errors.Is(err, ErrBadID) {
+		if _, err := s.Create(ctx, byCLI, id, b); !errors.Is(err, ErrBadID) {
 			t.Errorf("%q accepted: %v", id, err)
 		}
 	}
@@ -66,17 +81,18 @@ func TestRejectsUnsafeIDs(t *testing.T) {
 
 func TestOptimisticConcurrency(t *testing.T) {
 	s, b := newStore(t)
-	s.Create(ctx, "home", b)
+	s.Create(ctx, byCLI, "home", b)
 	set := func(amount string) func(budget.Budget) (budget.Budget, error) {
 		return func(b budget.Budget) (budget.Budget, error) {
 			v := money.MustDecimal(amount)
 			return budget.Apply(b, budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &v}))
 		}
 	}
-	if _, err := s.Update(ctx, "home", 1, set("1200")); err != nil {
+	if _, err := s.Update(ctx, byCLI, "home", 1, set("1200")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.Update(ctx, "home", 1, set("1300")) // stale revision
+	staleRevision := int64(1)
+	_, err := s.Update(ctx, byCLI, "home", staleRevision, set("1300"))
 	var ce *ConflictError
 	if !errors.As(err, &ce) || ce.Actual != 2 {
 		t.Fatalf("expected conflict, got %v", err)
@@ -89,8 +105,8 @@ func TestOptimisticConcurrency(t *testing.T) {
 
 func TestNeverStoresInvalidBudget(t *testing.T) {
 	s, b := newStore(t)
-	s.Create(ctx, "home", b)
-	_, err := s.Update(ctx, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
+	s.Create(ctx, byCLI, "home", b)
+	_, err := s.Update(ctx, byCLI, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
 		b.Items[0].Currency = "XXX"
 		return b, nil
 	})
@@ -114,7 +130,7 @@ func TestNeverStoresInvalidBudget(t *testing.T) {
 func TestConcurrentWritersLoseNothing(t *testing.T) {
 	a, b := newStore(t)
 	other, _ := NewFileStore(a.dir)
-	a.Create(ctx, "home", b)
+	a.Create(ctx, byCLI, "home", b)
 	const n = 40
 	var wg sync.WaitGroup
 	for i := range n {
@@ -125,11 +141,7 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 			if i%2 == 1 {
 				s = other
 			}
-			_, err := s.Update(ctx, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
-				b.Items = append(b.Items, budget.Item{ID: fmt.Sprintf("x%d", i), Name: "x", Amount: money.MustDecimal("1"),
-					Currency: "EUR", Category: "home", Schedule: budget.Monthly()})
-				return b, nil
-			})
+			_, err := s.Update(ctx, byCLI, "home", AnyRevision, addItem(fmt.Sprintf("x%d", i)))
 			if err != nil {
 				t.Error(err)
 			}

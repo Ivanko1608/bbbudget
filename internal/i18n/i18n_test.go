@@ -172,11 +172,11 @@ func TestSigns(t *testing.T) {
 }
 
 func TestNestedArg(t *testing.T) {
-	m := Msg{Key: "change.added", Args: map[string]Arg{"kind": Nested(Msg{Key: "thing.item"}), "name": Text("Gym")}}
+	m := Msg{Key: "change.added", Args: map[string]Arg{"part": Nested(Msg{Key: "part.item"}), "name": Text("Gym")}}
 	if got := For("en").Render(m); got != "added item Gym" {
 		t.Errorf("nested: %q", got)
 	}
-	if !For("ru").Has("thing.item") || For("ru").Has("no.such.key") {
+	if !For("ru").Has("part.item") || For("ru").Has("no.such.key") {
 		t.Error("Has")
 	}
 }

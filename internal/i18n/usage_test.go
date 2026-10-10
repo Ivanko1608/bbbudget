@@ -15,7 +15,7 @@ import (
 // Every key the Go code names must be in the English server catalog.
 // Keys built at run time ("month.short."+m) are checked by family below.
 func TestGoKeysExist(t *testing.T) {
-	keyRe := regexp.MustCompile(`"((?:insight|issue|schedule|change|thing|compare|cli|category|month)\.[a-z0-9_.-]*[a-z0-9_-])"`)
+	keyRe := regexp.MustCompile(`"((?:insight|issue|schedule|change|part|compare|cli|category|month)\.[a-z0-9_.-]*[a-z0-9_-])"`)
 	en := Catalogs()[Default]
 	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -41,8 +41,8 @@ func TestGoKeysExist(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"currency", "category", "item", "debt", "pot", "withdrawal", "scenario"} {
-		if _, ok := en.Forms("thing." + k); !ok {
-			t.Errorf("missing thing.%s", k)
+		if _, ok := en.Forms("part." + k); !ok {
+			t.Errorf("missing part.%s", k)
 		}
 	}
 }

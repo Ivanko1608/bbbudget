@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"bbbudget/internal/budget"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/store"
 )
@@ -18,7 +17,7 @@ func TestTemplateNamesFollowTheLocale(t *testing.T) {
 	}
 	a := New(st, nil)
 	ctx := i18n.WithLocale(context.Background(), "ru")
-	v, err := a.Create(ctx, "home", "Дом", "example")
+	v, err := a.Create(ctx, byTest, "home", "Дом", "example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,22 +38,45 @@ func TestTemplateNamesFollowTheLocale(t *testing.T) {
 	}
 }
 
+func historyIn(t *testing.T, a *App, locale string) []store.Entry {
+	t.Helper()
+	history, err := a.History(i18n.WithLocale(context.Background(), locale), "home", store.AllEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return history
+}
+
 // The history stores differences, so it reads in the reader's language
 // whatever language the change was made in.
 func TestHistoryReadsInTheReadersLanguage(t *testing.T) {
 	a := testApp(t)
-	if _, err := a.Apply(context.Background(), "home", store.AnyRevision, []budget.Op{rentOp("1200")}); err != nil {
+	mustSetRent(t, a, byBrowser, "1200")
+
+	russian := historyIn(t, a, "ru")
+	english := historyIn(t, a, "en")
+
+	if got := russian[0].Summary; got != "Rent: сумма 1150 → 1200" {
+		t.Errorf("Russian change: %q", got)
+	}
+	if got := russian[1].Summary; got != "создан" {
+		t.Errorf("Russian creation: %q", got)
+	}
+	if got := english[0].Summary; got != "Rent: amount 1150 → 1200" {
+		t.Errorf("English change: %q", got)
+	}
+}
+
+func TestUndoReadsInTheReadersLanguage(t *testing.T) {
+	a := testApp(t)
+	mustSetRent(t, a, byBrowser, "1200")
+	if _, err := a.Undo(context.Background(), byBrowser, "home", UndoRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	ru, err := a.History(i18n.WithLocale(context.Background(), "ru"), "home", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ru[0].Summary != "Rent: сумма 1150 → 1200" || ru[1].Summary != "создан" {
-		t.Errorf("Russian history: %q, %q", ru[0].Summary, ru[1].Summary)
-	}
-	en, _ := a.History(i18n.WithLocale(context.Background(), "en"), "home", 1)
-	if en[0].Summary != "Rent: amount 1150 → 1200" {
-		t.Errorf("English history: %q", en[0].Summary)
+
+	russian := historyIn(t, a, "ru")
+
+	if got := russian[0].Summary; got != "отменено r2: Rent: сумма 1200 → 1150" {
+		t.Errorf("Russian undo: %q", got)
 	}
 }

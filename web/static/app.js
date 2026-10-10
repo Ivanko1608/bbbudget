@@ -1292,9 +1292,7 @@ async function loadActivity() {
 function activityRow(e, i) {
   const who = sourceLabel(e.source);
   const when = `r${e.revision} · ${ago(e.at)}`;
-  const undo = e.undoable
-    ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">${esc(t("activity.undo"))}</button>`
-    : "<span></span>";
+  const undo = e.undoable ? undoButton(e.revision, i) : "<span></span>";
   return `<li class="act ${esc(e.source)}">
       <span class="who">${esc(who)}</span>
       <span class="what">${esc(e.summary)}</span>
@@ -1303,17 +1301,23 @@ function activityRow(e, i) {
     </li>`;
 }
 
+function undoButton(revision, i) {
+  const data = `data-action="undo" data-rev="${revision}" data-i="${i}"`;
+  return `<button type="button" class="linkish" ${data}>${esc(t("activity.undo"))}</button>`;
+}
+
+function confirmUndoingLater(later) {
+  const changes = later.map((e) => `• ${e.summary}`).join("\n");
+  return confirm(t("activity.undo_confirm", { count: later.length, list: changes }));
+}
+
 async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
-  if (later.length) {
-    const changes = later.map((e) => `• ${e.summary}`).join("\n");
-    const question = t("activity.undo_confirm", { count: later.length, list: changes });
-    if (!confirm(question)) return;
-  }
-  // latest is the newest change the person was shown: if more came in since,
+  if (later.length && !confirmUndoingLater(later)) return;
+  // seen is the newest change the person was shown: if more came in since,
   // the server refuses again instead of undoing something nobody saw.
-  const req = { revision: rev, force: later.length > 0, latest: S.history[0].revision };
+  const req = { revision: rev, force: later.length > 0, seen: S.history[0].revision };
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, req));
   loadActivity(); // also after a refusal, so the list shows what came in
 }

@@ -266,7 +266,7 @@ The tests fail if a catalog is missing a key, drops or renames a `{placeholder}`
 
 ## History and undo
 
-Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it. Each entry also lists its `changes` one by one (`{kind, thing, name, field, old, new}`), so an assistant or another language can describe them its own way.
+Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it. Each entry also lists its `changes` one by one (`{action, part, name, field, old, new}`), so an assistant or another language can describe them its own way.
 
 Undo puts back the version from before a change, saved as a new change, so an undo can itself be undone and nothing is ever rewritten. Undoing a change that has later changes on top of it is refused unless you confirm (`-force`, `"force": true`), and the refusal lists what else would be undone. That stops an assistant's "undo that" from quietly throwing away an edit you made in the meantime.
 
@@ -325,7 +325,7 @@ Dependencies only point inward: `money` ← `i18n` ← `budget` ← `store`/`app
 | `GET /api/budgets/{id}` → `{id, revision, budget, report}` | read |
 | `PUT /api/budgets/{id}` `{revision, budget}` | replace; `409` if the revision is stale, `422` with `issues` if invalid |
 | `POST /api/budgets/{id}/ops` `{ops, revision?}` | apply edits atomically |
-| `GET /api/budgets/{id}/history?limit=20` · `POST …/undo` `{revision?, force?, latest?}` | recent changes, newest first, each marked `undoable` / undo one; `409` with `later` when later changes exist and `force` is off, or when changes newer than `latest` (the newest one the caller saw) have landed |
+| `GET /api/budgets/{id}/history?limit=20` · `POST …/undo` `{revision?, force?, seen?}` | recent changes, newest first, each marked `undoable` / undo one; `409` with `later` when later changes exist and `force` is off, or when changes newer than `seen` (the newest one the caller was shown) have landed |
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |

@@ -80,6 +80,48 @@ test("a deleted item comes back with undo", { skip }, async () => {
   await waitFor(async () => (await indexOf(id, "Utilities")) === i, "undo to restore it in place");
 });
 
+const setRent = (id, amount) =>
+  srv.api("POST", `/api/budgets/${id}/ops`, { ops: [{ op: "set_item", target: "rent", value: { amount } }] });
+const rent = async (id) => (await srv.budget(id)).items.find((l) => l.name === "Rent").amount;
+
+// agreeToConfirms answers every confirm() with yes and keeps the questions.
+const agreeToConfirms = () =>
+  page.eval(`window.asked = []; window.confirm = (question) => { window.asked.push(question); return true; }`);
+const undoButton = (revision) => `#activity [data-action="undo"][data-rev="${revision}"]`;
+
+test("undoing an earlier change asks first, then undoes the later ones too", { skip }, async () => {
+  const id = await fresh("overview");
+  const original = await rent(id);
+  await setRent(id, "1200"); // r2
+  await setRent(id, "1250"); // r3
+  await page.goto(`${srv.base}/#${id}/overview`);
+  await agreeToConfirms();
+
+  await page.click(undoButton(2));
+
+  await waitFor(async () => (await rent(id)) === original, "the rent from before r2");
+  const asked = await page.eval("window.asked");
+  assert.equal(asked.length, 1, "asked once");
+  assert.match(asked[0], /also undoes 1 later change:/);
+  assert.match(asked[0], /1200 → 1250/, "the question names the later change");
+  await waitFor(() => page.exists(undoButton(4)), "the undo to show in the list");
+});
+
+test("a change made after the list was shown stops a confirmed undo", { skip }, async () => {
+  const id = await fresh("overview");
+  await setRent(id, "1200"); // r2
+  await setRent(id, "1250"); // r3
+  await page.goto(`${srv.base}/#${id}/overview`);
+  await agreeToConfirms();
+  await setRent(id, "1300"); // r4, not in the list the person sees
+
+  await page.click(undoButton(2));
+
+  await waitFor(() => page.exists(undoButton(4)), "the list to show r4");
+  assert.equal(await rent(id), "1300", "nothing was undone");
+  assert.match(await page.text("#status"), /would also undo 2 later change/);
+});
+
 test("a short month is covered from a pot only when asked", { skip }, async () => {
   const id = await fresh("overview", [
     { op: "set_pot", target: "savings", value: { balance: "3000" } },

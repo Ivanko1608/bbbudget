@@ -74,6 +74,9 @@ func (a *App) AutoRefresh() AutoRefreshStatus {
 	return s
 }
 
+// autoRefresh is the origin of the rate updates RefreshIfDue makes.
+var autoRefresh = store.Origin{Source: store.SourceAutoRefresh}
+
 // RefreshIfDue refreshes the rates of every budget when the auto-refresh
 // interval has passed since the last run. It reports whether it ran.
 func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
@@ -97,7 +100,7 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 	}
 	st := AutoRefreshStatus{LastRun: a.Now(), Failures: []string{}}
 	for _, m := range list {
-		_, updates, err := a.RefreshRates(ctx, m.ID, nil)
+		_, updates, err := a.RefreshRates(ctx, autoRefresh, m.ID, nil)
 		if len(updates) > 0 {
 			st.Budgets++
 		}
@@ -122,9 +125,6 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 // RunAutoRefresh calls RefreshIfDue every minute until ctx ends. The settings
 // are re-read each time, so turning auto-refresh on or off needs no restart.
 func (a *App) RunAutoRefresh(ctx context.Context, log *slog.Logger) {
-	// Rate updates made here show up in each budget's history as "auto-refresh",
-	// so they can be told apart from changes a person or an AI made.
-	ctx = store.WithChange(ctx, store.Change{Source: store.SourceAutoRefresh})
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

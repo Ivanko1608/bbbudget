@@ -74,16 +74,15 @@ Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates
 App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
 `
 
+// fromCLI is the origin of every write made by a command.
+var fromCLI = store.Origin{Source: store.SourceCLI}
+
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return errors.New("missing command")
 	}
 	cmd, args := args[0], args[1:]
-	// Every write is recorded in the budget's history with who made it.
-	// Commands typed in a terminal are "cli"; serve and mcp replace this with
-	// their own label for the writes they make.
-	ctx = store.WithChange(ctx, store.Change{Source: store.SourceCLI})
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
@@ -155,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -202,7 +201,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if b.Name == "" {
 			b.Name = id
 		}
-		v, err := a.Import(ctx, id, b)
+		v, err := a.Import(ctx, fromCLI, id, b)
 		if err != nil {
 			return err
 		}
@@ -272,7 +271,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if *dry {
 			updates, err = a.PreviewRates(ctx, id, codes)
 		} else {
-			_, updates, err = a.RefreshRates(ctx, id, codes)
+			_, updates, err = a.RefreshRates(ctx, fromCLI, id, codes)
 		}
 		printRates(stdout, updates)
 		if err == nil && len(updates) == 0 {
@@ -281,7 +280,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 
 	case "history":
-		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all kept)")
+		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
 		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
 		if err != nil {
 			return err
@@ -297,7 +296,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
 		for _, e := range h {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, e.At.Local().Format("2006-01-02 15:04"), e.Source, e.Summary)
+			when := e.At.Local().Format("2006-01-02 15:04")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
 		}
 		return tw.Flush()
 
@@ -312,7 +312,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Undo(ctx, id, app.UndoRequest{Revision: *revision, Force: *force})
+		v, err := a.Undo(ctx, fromCLI, id, app.UndoRequest{Revision: *revision, Force: *force})
 		if err != nil {
 			return err
 		}

@@ -6,51 +6,36 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync"
+	"slices"
 	"time"
 
 	"bbbudget/internal/budget"
-	"bbbudget/internal/i18n"
 )
 
-// Who made a change, as the history records it.
+// Source is who made a write.
+type Source string
+
 const (
-	SourceWeb         = "web"          // the browser UI
-	SourceMCP         = "mcp"          // an AI assistant over MCP
-	SourceCLI         = "cli"          // the command line
-	SourceAutoRefresh = "auto-refresh" // scheduled exchange-rate refreshes
-	// SourceEarlier marks the baseline entry recorded for a budget that
-	// existed before history was kept.
-	SourceEarlier = "earlier"
+	SourceWeb         Source = "web"          // the browser UI
+	SourceMCP         Source = "mcp"          // an AI assistant over MCP
+	SourceCLI         Source = "cli"          // the command line
+	SourceAutoRefresh Source = "auto-refresh" // scheduled exchange-rate refreshes
+	SourceEarlier     Source = "earlier"      // the state of a budget saved before history was kept
 )
 
-// Change says who is making a write, for the history. Transports put one on
-// the context (WithChange); the store reads it when it records the write.
-type Change struct {
-	// Source is who wrote: one of the Source constants.
-	Source string
-	// Msg is the summary for a write that is more than its differences
-	// ("undid r12 (…)"); without one, the differences are the summary.
-	Msg *i18n.Msg
+// Origin says where a write comes from, for the history.
+type Origin struct {
+	Source Source
 	// Autosave marks an editor's save-as-you-type write. Consecutive
 	// autosaves from one source merge into one history entry.
 	Autosave bool
-}
-
-type changeKey struct{}
-
-// WithChange returns ctx carrying c.
-func WithChange(ctx context.Context, c Change) context.Context {
-	return context.WithValue(ctx, changeKey{}, c)
-}
-
-// ChangeFrom returns the Change on ctx, if any.
-func ChangeFrom(ctx context.Context) Change {
-	c, _ := ctx.Value(changeKey{}).(Change)
-	return c
+	// Undoes is the revision this write undoes, when it is an undo.
+	Undoes int64
 }
 
 // Entry is one write in a budget's history, as listings show it.
@@ -58,40 +43,45 @@ type Entry struct {
 	// Revision is the revision this write created.
 	Revision int64     `json:"revision"`
 	At       time.Time `json:"at"`
-	Source   string    `json:"source"`
-	// Summary is what changed, in English as stored; App.History renders it
-	// in the reader's language from Msg, or else from Changes.
-	Summary string    `json:"summary"`
-	Msg     *i18n.Msg `json:"msg,omitempty"`
-	// Changes is what changed, one difference at a time, for readers that
-	// render it themselves (another language, an assistant). It is empty for
-	// the entry that created the budget.
+	Source   Source    `json:"source"`
+	// Summary is what changed, in English. Changes is the same, one
+	// difference at a time; it is empty for the entry that created the budget.
+	Summary  string              `json:"summary"`
 	Changes  []budget.Difference `json:"changes,omitempty"`
+	Undoes   int64               `json:"undoes,omitempty"`
 	Autosave bool                `json:"autosave,omitempty"`
 	// Undoable is false for the oldest entry kept: there is no earlier
 	// version to go back to.
 	Undoable bool `json:"undoable"`
 }
 
-// line is one line of the history file: an entry plus the whole budget as of
-// its revision. The budget stays raw JSON until a snapshot actually needs it,
-// so listing and recording never decode hundreds of documents.
+// line is one line of the history file: an entry and the whole budget as of
+// its revision. The budget stays raw JSON until a snapshot needs it, so
+// listing and recording never decode hundreds of documents.
 type line struct {
 	Revision int64               `json:"revision"`
 	At       time.Time           `json:"at"`
-	Source   string              `json:"source"`
+	Source   Source              `json:"source"`
 	Summary  string              `json:"summary"`
-	Msg      *i18n.Msg           `json:"msg,omitempty"`
 	Changes  []budget.Difference `json:"changes,omitempty"`
+	Undoes   int64               `json:"undoes,omitempty"`
 	Autosave bool                `json:"autosave,omitempty"`
-	// Replaces is set when consecutive autosaves merge: this line takes the
-	// place of the entry for that revision.
+	// Replaces is the revision of the entry this line takes the place of,
+	// when consecutive autosaves merge.
 	Replaces int64           `json:"replaces,omitempty"`
 	Budget   json.RawMessage `json:"budget"`
 }
 
 func (l line) entry() Entry {
-	return Entry{Revision: l.Revision, At: l.At, Source: l.Source, Summary: l.Summary, Msg: l.Msg, Changes: l.Changes, Autosave: l.Autosave}
+	return Entry{
+		Revision: l.Revision,
+		At:       l.At,
+		Source:   l.Source,
+		Summary:  l.Summary,
+		Changes:  l.Changes,
+		Undoes:   l.Undoes,
+		Autosave: l.Autosave,
+	}
 }
 
 func (l line) budget() (budget.Budget, error) {
@@ -110,8 +100,10 @@ const DefaultHistoryLimit = 200
 // caller doesn't say.
 const DefaultHistoryPage = 20
 
-// coalesceWindow merges consecutive autosaves: the UI saves while you type,
-// and one edit shouldn't fill the history with a dozen entries.
+// AllEntries asks History for every entry it keeps.
+const AllEntries = 0
+
+// coalesceWindow is how close together autosaves must be to merge.
 const coalesceWindow = 2 * time.Minute
 
 func (s *FileStore) historyPath(id string) string { return filepath.Join(s.dir, id+".jsonl") }
@@ -123,153 +115,260 @@ func (s *FileStore) limit() int {
 	return DefaultHistoryLimit
 }
 
-// readHistory returns the history, oldest first, capped at the limit, and how
-// many lines are in the file. It keeps only revisions up to current: an entry
-// newer than the stored budget is left over from a write that failed after
-// its history was saved, and the next line for that revision wins.
-//
-// Lines that don't parse (a crash halfway through a write, a hand edit) are
-// skipped. The history is secondary to the budget and must never stop it
-// from being saved.
-func (s *FileStore) readHistory(id string, current int64) (out []line, lines int, err error) {
-	f, err := os.Open(s.historyPath(id))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, 0, nil
-	}
-	if err != nil {
-		return nil, 0, err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 16<<20)
-	for sc.Scan() {
-		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
-			continue
-		}
-		lines++
-		var l line
-		if json.Unmarshal(sc.Bytes(), &l) != nil || l.Revision <= 0 || len(l.Budget) == 0 || l.Revision > current {
-			continue
-		}
-		for len(out) > 0 && out[len(out)-1].Revision >= l.Revision {
-			out = out[:len(out)-1]
-		}
-		if n := len(out); l.Replaces != 0 && n > 0 && out[n-1].Revision == l.Replaces {
-			out = out[:n-1]
-		}
-		out = append(out, l)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, 0, err
-	}
-	return keepNewest(out, s.limit()), lines, nil
-}
-
-// record adds next to the history. It runs under the store lock and before
-// the budget itself is written, so a failure here leaves the budget
-// untouched. prev is nil when the budget is being created.
-//
-// A write normally appends one line. The file is rewritten only when it is
-// new, or has grown to twice the limit (merged autosaves leave superseded
-// lines behind), which keeps each save cheap however long the history is.
-func (s *FileStore) record(ctx context.Context, prev *Record, next Record) error {
-	c := ChangeFrom(ctx)
-	if prev == nil {
-		first, err := newLine(next, c, budget.Budget{}, &i18n.Msg{Key: "change.created"})
+// History returns the newest entries first, at most limit of them
+// (AllEntries for all).
+func (s *FileStore) History(ctx context.Context, id string, limit int) ([]Entry, error) {
+	var entries []Entry
+	err := s.withLock(false, func() error {
+		current, err := s.read(id)
 		if err != nil {
 			return err
 		}
-		return s.rewriteHistory(next.ID, []line{first})
+		file, err := s.readHistory(id, current.Revision)
+		if err != nil {
+			return err
+		}
+		entries = newestFirst(file.entries, limit)
+		return nil
+	})
+	return entries, err
+}
+
+func newestFirst(lines []line, limit int) []Entry {
+	n := len(lines)
+	if limit != AllEntries {
+		n = min(n, limit)
 	}
-	entries, fileLines, fresh, err := s.entriesBefore(*prev)
-	if err != nil {
+	entries := make([]Entry, 0, n)
+	for i := len(lines) - 1; len(entries) < n; i-- {
+		e := lines[i].entry()
+		e.Undoable = i > 0
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// Snapshot returns the budget as it was at revision rev.
+func (s *FileStore) Snapshot(ctx context.Context, id string, rev int64) (budget.Budget, error) {
+	var snapshot budget.Budget
+	err := s.withLock(false, func() error {
+		current, err := s.read(id)
+		if err != nil {
+			return err
+		}
+		if rev == current.Revision {
+			snapshot = current.Budget
+			return nil
+		}
+		file, err := s.readHistory(id, current.Revision)
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(file.entries, func(l line) bool { return l.Revision == rev })
+		if i < 0 {
+			return ErrNoSnapshot
+		}
+		snapshot, err = file.entries[i].budget()
 		return err
-	}
-	entries, merged, before := dropMergedAutosave(entries, *prev, next, c)
-	l, err := newLine(next, c, before, nil)
+	})
+	return snapshot, err
+}
+
+// historyFile is a budget's history as read from disk.
+type historyFile struct {
+	entries []line // oldest first, at most the limit
+	lines   int    // lines in the file, superseded and unreadable ones included
+}
+
+// readHistory reads the history of a budget whose current revision is
+// current. Unreadable lines are skipped: the history is secondary to the
+// budget, and a damaged file must never stop the budget from being saved.
+func (s *FileStore) readHistory(id string, current int64) (historyFile, error) {
+	raw, err := readLines(s.historyPath(id))
 	if err != nil {
-		return err
+		return historyFile{}, err
 	}
-	if fresh || fileLines+1 > 2*s.limit() {
-		return s.rewriteHistory(next.ID, keepNewest(append(entries, l), s.limit()))
+	var entries []line
+	for _, data := range raw {
+		l, ok := parseLine(data)
+		if ok && l.Revision <= current {
+			entries = apply(entries, l)
+		}
 	}
-	l.Replaces = merged
-	return s.appendHistory(next.ID, l)
+	return historyFile{entries: keepNewest(entries, s.limit()), lines: len(raw)}, nil
 }
 
-// entriesBefore returns the history up to prev and how many lines its file
-// holds. A budget saved before history was kept has none; it gets its
-// current state as a baseline entry, so the write about to happen can be
-// undone, and fresh is true because the file has to be written whole.
-func (s *FileStore) entriesBefore(prev Record) (entries []line, fileLines int, fresh bool, err error) {
-	entries, fileLines, err = s.readHistory(prev.ID, prev.Revision)
-	if err != nil || len(entries) > 0 {
-		return entries, fileLines, false, err
+// readLines returns the non-empty lines of a file; none if it doesn't exist.
+func readLines(path string) ([][]byte, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	raw, err := json.Marshal(prev.Budget)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, err
 	}
-	m := i18n.Msg{Key: "change.baseline"}
-	baseline := line{Revision: prev.Revision, At: prev.UpdatedAt, Source: SourceEarlier, Summary: english().Render(m), Msg: &m, Budget: raw}
-	return []line{baseline}, 0, true, nil
+	defer f.Close()
+	var lines [][]byte
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 16<<20)
+	for scanner.Scan() {
+		if len(bytes.TrimSpace(scanner.Bytes())) > 0 {
+			lines = append(lines, bytes.Clone(scanner.Bytes()))
+		}
+	}
+	return lines, scanner.Err()
 }
 
-// dropMergedAutosave handles the editor saving as you type: an autosave
-// that continues a run of autosaves replaces the run's last entry instead
-// of adding one. It returns the entries without that entry, its revision
-// (0 when nothing merged), and the version the new entry should be
-// described from: the one before the whole run.
-func dropMergedAutosave(entries []line, prev, next Record, c Change) (kept []line, merged int64, before budget.Budget) {
-	n := len(entries)
-	if n < 2 || !continuesAutosave(entries[n-1], prev, next, c) {
-		return entries, 0, prev.Budget
+func parseLine(data []byte) (line, bool) {
+	var l line
+	if err := json.Unmarshal(data, &l); err != nil {
+		return line{}, false
 	}
-	b, err := entries[n-2].budget()
-	if err != nil {
-		return entries, 0, prev.Budget
-	}
-	return entries[:n-1], entries[n-1].Revision, b
+	return l, l.Revision > 0 && len(l.Budget) > 0
 }
 
-// continuesAutosave reports whether next is an autosave from the same source
-// right after the autosave last, within coalesceWindow.
-func continuesAutosave(last line, prev, next Record, c Change) bool {
-	return c.Autosave && c.Msg == nil &&
-		last.Autosave && last.Source == c.Source &&
-		last.Revision == prev.Revision &&
-		next.UpdatedAt.Sub(last.At) < coalesceWindow
+// apply adds l to entries the way a reader replays the file. A line for a
+// revision takes the place of any entry for that revision or a later one:
+// those were left by a write that failed after its history was saved.
+func apply(entries []line, l line) []line {
+	for len(entries) > 0 && entries[len(entries)-1].Revision >= l.Revision {
+		entries = entries[:len(entries)-1]
+	}
+	if replacesLast(entries, l) {
+		entries = entries[:len(entries)-1]
+	}
+	return append(entries, l)
 }
 
-// newLine is the history line for next. A given summary (only "created")
-// stands alone; otherwise the line lists what changed since before, and its
-// summary is the change's own message (an undo's) or a description of that.
-func newLine(next Record, c Change, before budget.Budget, summary *i18n.Msg) (line, error) {
-	raw, err := json.Marshal(next.Budget)
-	if err != nil {
-		return line{}, err
+func replacesLast(entries []line, l line) bool {
+	if len(entries) == 0 || l.Replaces == 0 {
+		return false
 	}
-	var diffs []budget.Difference
-	if summary == nil {
-		diffs = budget.Differences(before, next.Budget)
-		summary = c.Msg
-	}
-	text := budget.Describe(diffs)
-	if summary != nil {
-		text = english().Render(*summary)
-	}
-	l := line{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: text, Msg: summary, Changes: diffs, Autosave: c.Autosave, Budget: raw}
-	return l, nil
+	last := entries[len(entries)-1]
+	return last.Revision == l.Replaces
 }
 
-var english = sync.OnceValue(func() *i18n.Localizer { return i18n.For(i18n.Default) })
-
-// keepNewest drops the oldest entries beyond limit.
 func keepNewest(entries []line, limit int) []line {
 	if over := len(entries) - limit; over > 0 {
 		return entries[over:]
 	}
 	return entries
+}
+
+// record adds next to the history. prev is nil when the budget is being
+// created. It runs under the store lock and before the budget itself is
+// written, so a failure here leaves the budget untouched.
+func (s *FileStore) record(origin Origin, prev *Record, next Record) error {
+	nextVersion, err := newVersion(next)
+	if err != nil {
+		return err
+	}
+	if prev == nil {
+		return s.startHistory(next.ID, createdLine(origin, nextVersion))
+	}
+	file, err := s.readHistory(prev.ID, prev.Revision)
+	if err != nil {
+		return err
+	}
+	if len(file.entries) == 0 {
+		return s.startHistoryAfter(origin, *prev, nextVersion)
+	}
+	l, err := file.nextLine(origin, *prev, nextVersion)
+	if err != nil {
+		return err
+	}
+	return s.addLine(next.ID, file, l)
+}
+
+// nextLine is the line for next. An autosave that continues a run of
+// autosaves takes the place of the run's last entry, and is described from
+// the version before the run, so the run reads as one change.
+func (h historyFile) nextLine(origin Origin, prev Record, next version) (line, error) {
+	if !h.continuesAutosave(origin, prev, next.Record) {
+		return changeLine(origin, prev.Budget, next), nil
+	}
+	n := len(h.entries)
+	runEnd, beforeRun := h.entries[n-1], h.entries[n-2]
+	before, err := beforeRun.budget()
+	if err != nil {
+		return line{}, err
+	}
+	l := changeLine(origin, before, next)
+	l.Replaces = runEnd.Revision
+	return l, nil
+}
+
+func (h historyFile) continuesAutosave(origin Origin, prev, next Record) bool {
+	if !origin.Autosave || len(h.entries) < 2 {
+		return false
+	}
+	last := h.entries[len(h.entries)-1]
+	sameEditor := last.Autosave && last.Source == origin.Source
+	sameRun := sameEditor && last.Revision == prev.Revision
+	return sameRun && next.UpdatedAt.Sub(last.At) < coalesceWindow
+}
+
+// addLine appends l. Once the file holds twice the limit, it is rewritten
+// instead, which drops superseded lines and entries past the limit.
+func (s *FileStore) addLine(id string, h historyFile, l line) error {
+	if h.lines < 2*s.limit() {
+		return s.appendHistory(id, l)
+	}
+	return s.rewriteHistory(id, keepNewest(apply(h.entries, l), s.limit()))
+}
+
+func (s *FileStore) startHistory(id string, lines ...line) error {
+	return s.rewriteHistory(id, lines)
+}
+
+// startHistoryAfter records next for a budget saved before history was kept.
+// The budget as it was goes in first, so this write can be undone.
+func (s *FileStore) startHistoryAfter(origin Origin, prev Record, next version) error {
+	prevVersion, err := newVersion(prev)
+	if err != nil {
+		return err
+	}
+	beforeHistory := Origin{Source: SourceEarlier}
+	baseline := newLine(beforeHistory, prevVersion, "as it was before history was kept")
+	return s.startHistory(next.ID, baseline, changeLine(origin, prev.Budget, next))
+}
+
+// version is a stored budget with its document as JSON, for a history line.
+type version struct {
+	Record
+	raw json.RawMessage
+}
+
+func newVersion(r Record) (version, error) {
+	raw, err := json.Marshal(r.Budget)
+	return version{Record: r, raw: raw}, err
+}
+
+func createdLine(origin Origin, v version) line {
+	return newLine(origin, v, "created")
+}
+
+func changeLine(origin Origin, before budget.Budget, next version) line {
+	diffs := budget.Differences(before, next.Budget)
+	summary := budget.Describe(diffs)
+	if origin.Undoes != 0 {
+		summary = fmt.Sprintf("undid r%d: %s", origin.Undoes, summary)
+	}
+	l := newLine(origin, next, summary)
+	l.Changes = diffs
+	return l
+}
+
+func newLine(origin Origin, v version, summary string) line {
+	return line{
+		Revision: v.Revision,
+		At:       v.UpdatedAt,
+		Source:   origin.Source,
+		Summary:  summary,
+		Undoes:   origin.Undoes,
+		Autosave: origin.Autosave,
+		Budget:   v.raw,
+	}
 }
 
 // appendHistory adds one line to the end of the history file and syncs it.
@@ -283,23 +382,32 @@ func (s *FileStore) appendHistory(id string, l line) error {
 		return err
 	}
 	defer f.Close()
-	// A crash halfway through an earlier append can leave a line without its
-	// newline. Start on a fresh line so this entry isn't glued to it.
-	if st, err := f.Stat(); err != nil {
+	ended, err := endsWithNewline(f)
+	if err != nil {
 		return err
-	} else if st.Size() > 0 {
-		last := make([]byte, 1)
-		if _, err := f.ReadAt(last, st.Size()-1); err != nil {
-			return err
-		}
-		if last[0] != '\n' {
-			data = append([]byte{'\n'}, data...)
-		}
+	}
+	if !ended {
+		// A crash halfway through an earlier append left a line without its
+		// newline. Start on a fresh line so this entry isn't glued to it.
+		data = append([]byte{'\n'}, data...)
 	}
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return err
 	}
 	return f.Sync()
+}
+
+// endsWithNewline reports whether f is empty or ends with a newline.
+func endsWithNewline(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return true, err
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil && err != io.EOF {
+		return false, err
+	}
+	return last[0] == '\n', nil
 }
 
 // rewriteHistory replaces the history file with lines, atomically.
@@ -312,57 +420,4 @@ func (s *FileStore) rewriteHistory(id string, lines []line) error {
 		}
 	}
 	return s.writeFile(s.historyPath(id), buf.Bytes())
-}
-
-// AllEntries asks History for every entry it keeps.
-const AllEntries = 0
-
-// History returns the newest entries first, at most limit of them
-// (AllEntries for all).
-func (s *FileStore) History(ctx context.Context, id string, limit int) ([]Entry, error) {
-	var out []Entry
-	err := s.withLock(false, func() error {
-		cur, err := s.read(id)
-		if err != nil {
-			return err
-		}
-		lines, _, err := s.readHistory(id, cur.Revision)
-		if err != nil {
-			return err
-		}
-		for i := len(lines) - 1; i >= 0 && (limit == AllEntries || len(out) < limit); i-- {
-			e := lines[i].entry()
-			e.Undoable = i > 0
-			out = append(out, e)
-		}
-		return nil
-	})
-	return out, err
-}
-
-// Snapshot returns the budget as it was at revision rev.
-func (s *FileStore) Snapshot(ctx context.Context, id string, rev int64) (budget.Budget, error) {
-	var snap budget.Budget
-	err := s.withLock(false, func() error {
-		cur, err := s.read(id)
-		if err != nil {
-			return err
-		}
-		if rev == cur.Revision {
-			snap = cur.Budget
-			return nil
-		}
-		lines, _, err := s.readHistory(id, cur.Revision)
-		if err != nil {
-			return err
-		}
-		for _, l := range lines {
-			if l.Revision == rev {
-				snap, err = l.budget()
-				return err
-			}
-		}
-		return ErrNoSnapshot
-	})
-	return snap, err
 }
