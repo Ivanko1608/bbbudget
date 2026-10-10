@@ -86,7 +86,7 @@
   "issue.one_of": "должно быть одним из: {values}",
   "issue.no_rate": "для валюты \"{code}\" нет курса; добавьте её в валюты",
   "issue.kind": "должно быть доходом (income) или расходом (expense)",
-  "issue.max_items": "не больше {max} строк",
+  "issue.max_items": "не больше {max} записей",
   "issue.unknown_category": "неизвестная категория \"{id}\"",
   "issue.scenario_name": "нужно название сценария",
   "issue.scenario_ops": "в сценарии должно быть хотя бы одно изменение",
