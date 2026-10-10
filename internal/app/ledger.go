@@ -127,7 +127,7 @@ type TxPatch struct {
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
 	Category *string        `json:"category,omitempty"`
-	Line     *string        `json:"line,omitempty"`
+	Item     *string        `json:"item,omitempty"`
 	Note     *string        `json:"note,omitempty"`
 }
 
@@ -141,7 +141,7 @@ func (a *App) UpdateTransaction(ctx context.Context, id, txID string, p TxPatch)
 			return nil, fmt.Errorf("%w: no transaction %q", store.ErrNotFound, txID)
 		}
 		t := txs[i]
-		in := budget.TransactionInput{Date: t.Date, Amount: t.Amount, Currency: t.Currency, Category: t.Category, Line: t.Line, Note: t.Note, ExternalID: t.ExternalID}
+		in := budget.TransactionInput{Date: t.Date, Amount: t.Amount, Currency: t.Currency, Category: t.Category, Item: t.Item, Note: t.Note, ExternalID: t.ExternalID}
 		set := func(dst *string, v *string) {
 			if v != nil {
 				*dst = *v
@@ -150,7 +150,7 @@ func (a *App) UpdateTransaction(ctx context.Context, id, txID string, p TxPatch)
 		set(&in.Date, p.Date)
 		set(&in.Currency, p.Currency)
 		set(&in.Category, p.Category)
-		set(&in.Line, p.Line)
+		set(&in.Item, p.Item)
 		set(&in.Note, p.Note)
 		if p.Amount != nil {
 			in.Amount = *p.Amount

@@ -70,10 +70,10 @@ func looksLikeTool(w string) bool {
 
 func TestWhatsNewShowsOthersChanges(t *testing.T) {
 	h := setup(t)
-	h.call("update_line", map[string]any{"line": "rent", "amount": "1200"}, false) // r2, by the assistant
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false) // r2, by the assistant
 	web := store.WithChange(context.Background(), store.Change{Source: "web"})
 	amt := money.MustDecimal("700")
-	if _, err := h.app.Apply(web, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_line", "groceries", budget.LinePatch{Amount: &amt})}); err != nil {
+	if _, err := h.app.Apply(web, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_item", "groceries", budget.ItemPatch{Amount: &amt})}); err != nil {
 		t.Fatal(err) // r3, by the person in the browser
 	}
 	w := h.call("whats_new", map[string]any{}, false)

@@ -91,7 +91,7 @@ func TestFixtureGolden(t *testing.T) {
 func TestDebtPayoffGolden(t *testing.T) {
 	b := blank()
 	b.ExtraToDebtPct = d("50")
-	b.Lines = []Line{
+	b.Items = []Item{
 		{ID: "pay", Name: "Pay", Amount: d("1000"), Currency: "EUR", Category: "income", Schedule: Monthly()},
 		{ID: "live", Name: "Living", Amount: d("700"), Currency: "EUR", Category: "living", Schedule: Monthly()},
 	}
@@ -124,7 +124,7 @@ func TestDebtPayoffGolden(t *testing.T) {
 func TestForeignDebtExtraNeverOverspends(t *testing.T) {
 	b := fixture(t)
 	b.Debts = []Debt{{ID: "card", Name: "Card", Currency: "USD", Balance: d("4000"), APRPct: d("24"), MinPayment: d("250")}}
-	b.Lines = b.Lines[:len(b.Lines)-1] // the minimum payment is now modelled by the debt
+	b.Items = b.Items[:len(b.Items)-1] // the minimum payment is now modelled by the debt
 	r := mustReport(t, b)
 	m0 := r.Months[0]
 	// interest 4000 × 24/1200 = 80.00 USD
@@ -171,7 +171,7 @@ func TestStrategies(t *testing.T) {
 	mk := func(strategy string) *Report {
 		b := blank()
 		b.DebtStrategy, b.ExtraToDebtPct = strategy, d("100")
-		b.Lines = []Line{{ID: "pay", Name: "Pay", Amount: d("500"), Currency: "EUR", Category: "income", Schedule: Monthly()}}
+		b.Items = []Item{{ID: "pay", Name: "Pay", Amount: d("500"), Currency: "EUR", Category: "income", Schedule: Monthly()}}
 		b.Debts = []Debt{
 			{ID: "big-cheap", Name: "Big cheap", Currency: "EUR", Balance: d("5000"), APRPct: d("5"), MinPayment: d("0")},
 			{ID: "small-dear", Name: "Small dear", Currency: "EUR", Balance: d("300"), APRPct: d("1"), MinPayment: d("0")},
@@ -233,7 +233,7 @@ func randomBudget(rng *rand.Rand) Budget {
 			cat = "income"
 		}
 		s := Schedule{Start: rng.IntN(4), Every: rng.IntN(4)}
-		b.Lines = append(b.Lines, Line{ID: fmt.Sprintf("l%d", i), Name: "L", Amount: amt, Currency: code, Category: cat, Schedule: s})
+		b.Items = append(b.Items, Item{ID: fmt.Sprintf("l%d", i), Name: "L", Amount: amt, Currency: code, Category: cat, Schedule: s})
 	}
 	for i := range rng.IntN(4) {
 		code := codes[rng.IntN(3)]
@@ -311,7 +311,7 @@ func TestOverflowIsAnErrorNotACrash(t *testing.T) {
 	b.Months = MaxMonths
 	b.Currencies = []CurrencyRate{{Code: "JPY", PerBase: d("0.000000000001")}}
 	for i := range 50 {
-		b.Lines = append(b.Lines, Line{ID: fmt.Sprintf("l%d", i), Name: "x", Amount: d("1000000000000"), Currency: "JPY", Category: "living", Schedule: Monthly()})
+		b.Items = append(b.Items, Item{ID: fmt.Sprintf("l%d", i), Name: "x", Amount: d("1000000000000"), Currency: "JPY", Category: "living", Schedule: Monthly()})
 	}
 	_, err := Analyze(b)
 	var ae *money.ArithmeticError
@@ -325,7 +325,7 @@ func TestValidationReportsEverything(t *testing.T) {
 	b.Name = ""
 	b.Months = 0
 	b.StartMonth = "2026-13"
-	b.Lines = []Line{
+	b.Items = []Item{
 		{ID: "a", Name: "A", Amount: d("1.234"), Currency: "EUR", Category: "living", Schedule: Monthly()},
 		{ID: "a", Name: "B", Amount: d("1"), Currency: "XXX", Category: "nope", Schedule: Monthly()},
 		{ID: "c", Name: "C", Amount: d("-5"), Currency: "EUR", Category: "living", Schedule: Monthly()},
@@ -339,7 +339,7 @@ func TestValidationReportsEverything(t *testing.T) {
 	for _, is := range ve.Issues {
 		paths[is.Path] = true
 	}
-	for _, want := range []string{"name", "months", "start_month", "lines[0].amount", "lines[1].id", "lines[1].currency", "lines[1].category", "lines[2].amount"} {
+	for _, want := range []string{"name", "months", "start_month", "items[0].amount", "items[1].id", "items[1].currency", "items[1].category", "items[2].amount"} {
 		if !paths[want] {
 			t.Errorf("missing issue for %s; got %v", want, ve.Issues)
 		}
@@ -352,7 +352,7 @@ func TestInsightsForFixture(t *testing.T) {
 	for _, in := range r.Insights {
 		got[in.ID] = in.Text
 	}
-	for _, id := range []string{"category_share", "transfer_loss_usd", "fx_risk_usd", "fx_risk_chf", "one_off_holiday", "first_month", "biggest_line", "goal_emergency"} {
+	for _, id := range []string{"category_share", "transfer_loss_usd", "fx_risk_usd", "fx_risk_chf", "one_off_holiday", "first_month", "biggest_item", "goal_emergency"} {
 		if got[id] == "" {
 			t.Errorf("missing insight %s; have %v", id, got)
 		}
