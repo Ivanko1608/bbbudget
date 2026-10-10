@@ -205,3 +205,111 @@ func TestBudgetJSONRoundTrip(t *testing.T) {
 		t.Fatal("round trip changed the numbers")
 	}
 }
+
+func intp(i int) *int { return &i }
+
+func TestScheduleByCalendarMonth(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	nb, err := Apply(b,
+		NewOp("add_item", "", ItemInput{Name: "Insurance", Amount: money.MustDecimal("240"), Category: "home",
+			Schedule: &ScheduleSpec{Starts: "2026-03", Ends: strp("2026-12"), Every: intp(3)}}),
+		NewOp("add_item", "", ItemInput{Name: "Course", Amount: money.MustDecimal("90"), Category: "home",
+			Schedule: &ScheduleSpec{Starts: "2026-05"}}), // every defaults to monthly in this form
+		NewOp("add_item", "", ItemInput{Name: "Flights", Amount: money.MustDecimal("450"), Category: "home",
+			Schedule: &ScheduleSpec{Starts: "2026-07", Every: intp(0)}}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "insurance").Schedule; got.Start != 2 || got.Every != 3 || got.End == nil || *got.End != 11 {
+		t.Errorf("insurance: %+v", got)
+	}
+	if got := itemByID(nb, "course").Schedule; got != (Schedule{Start: 4, Every: 1}) {
+		t.Errorf("course: %+v", got)
+	}
+	if got := itemByID(nb, "flights").Schedule; got != Once(6) {
+		t.Errorf("flights: %+v", got)
+	}
+}
+
+func TestSetItemSchedulePatchesByMonth(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	nb, err := Apply(b, NewOp("add_item", "", ItemInput{Name: "Gym", Amount: money.MustDecimal("35"), Category: "home",
+		Schedule: &ScheduleSpec{Starts: "2026-04", Every: intp(1)}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the end changes: start and period stay.
+	nb, err = Apply(nb, NewOp("set_item", "gym", ItemPatch{Schedule: &ScheduleSpec{Ends: strp("2026-09")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "gym").Schedule; got.Start != 3 || got.Every != 1 || got.End == nil || *got.End != 8 {
+		t.Fatalf("after ends: %+v", got)
+	}
+	// An empty ends removes the end.
+	nb, err = Apply(nb, NewOp("set_item", "gym", ItemPatch{Schedule: &ScheduleSpec{Ends: strp("")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "gym").Schedule; got != (Schedule{Start: 3, Every: 1}) {
+		t.Fatalf("after clearing ends: %+v", got)
+	}
+}
+
+func TestScheduleSpecRejectsMixedAndEarlyMonths(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	bad := []*ScheduleSpec{
+		{Starts: "2026-03", Start: intp(2)},      // both forms
+		{Start: intp(1), Ends: strp("2026-06")},  // both forms
+		{Starts: "2025-12"},                      // before the budget starts
+		{Starts: "March"},                        // not YYYY-MM
+		{Starts: "2026-02", Ends: strp("26-03")}, // not YYYY-MM
+	}
+	for _, s := range bad {
+		if _, err := Apply(b, NewOp("add_item", "", ItemInput{Name: "X", Amount: money.MustDecimal("1"), Category: "home", Schedule: s})); err == nil {
+			t.Errorf("accepted %+v", *s)
+		}
+	}
+}
+
+// A scenario stored with calendar months keeps meaning the same months after
+// the budget's start month moves; the index form would silently shift.
+func TestScenarioMonthsSurviveStartMonthChange(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	op := NewOp("add_item", "", ItemInput{Name: "Bonus", Amount: money.MustDecimal("500"), Category: "income",
+		Schedule: &ScheduleSpec{Starts: "2026-06", Every: intp(0)}})
+	b.StartMonth = "2026-03"
+	nb, err := Apply(b, op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "bonus").Schedule; got != Once(3) { // June is index 3 from March
+		t.Fatalf("bonus: %+v", got)
+	}
+}
+
+// add_item and set_item take a pot alongside a calendar-month schedule.
+func TestItemPotWithMonthSchedule(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	nb, err := Apply(b, NewOp("add_item", "", map[string]any{"name": "Bonus", "amount": "500", "category": "income",
+		"schedule": map[string]any{"starts": "2026-06", "every": 0}, "pot": "emergency"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "bonus"); got.Pot != "emergency" || got.Schedule != (Schedule{Start: 5}) {
+		t.Fatalf("add_item: %+v", got)
+	}
+	nb, err = Apply(nb, NewOp("set_item", "bonus", ItemPatch{Schedule: &ScheduleSpec{Starts: "2026-07"}, Pot: strp("")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "bonus"); got.Pot != "" || got.Schedule != (Schedule{Start: 6}) {
+		t.Fatalf("set_item: %+v", got)
+	}
+}
