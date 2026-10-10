@@ -66,8 +66,8 @@ func TestUndoRefusesToDropLaterChanges(t *testing.T) {
 	a.Apply(mcp, "home", store.AnyRevision, []budget.Op{rentOp("1200")}) // r2
 	a.Apply(web, "home", store.AnyRevision, []budget.Op{rentOp("1250")}) // r3
 	_, err := a.Undo(mcp, "home", 2, false)
-	var ue *UndoConflictError
-	if !errors.As(err, &ue) || len(ue.Later) != 1 || ue.Later[0].Source != "web" {
+	var conflict *UndoConflictError
+	if !errors.As(err, &conflict) || len(conflict.Later) != 1 || conflict.Later[0].Source != "web" {
 		t.Fatalf("want a conflict naming the web change, got %v", err)
 	}
 	if got := rent(t, a); got != "1250" {

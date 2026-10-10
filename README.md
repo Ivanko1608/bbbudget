@@ -253,7 +253,7 @@ Undo puts back the version from before a change, saved as a new change, so an un
 ```
 bbbudget history home            # REV  WHEN  BY  CHANGE
 bbbudget undo home               # the latest change
-bbbudget undo home -change 12    # a specific one (refused if later changes exist, unless -force)
+bbbudget undo home -revision 12  # a specific one (refused if later changes exist, unless -force)
 ```
 
 The editor saves as you type, so its saves within two minutes of each other merge into one entry. Each budget keeps its last 200 changes, each with a full copy of the budget as it was, so any of them can be restored.
@@ -304,7 +304,7 @@ Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← trans
 | `GET /api/budgets/{id}` → `{id, revision, budget, report}` | read |
 | `PUT /api/budgets/{id}` `{revision, budget}` | replace; `409` if the revision is stale, `422` with `issues` if invalid |
 | `POST /api/budgets/{id}/ops` `{ops, revision?}` | apply edits atomically |
-| `GET /api/budgets/{id}/history?limit=50` · `POST …/undo` `{change?, force?}` | recent changes, newest first / undo one; `409` with `later` when later changes exist and `force` is off |
+| `GET /api/budgets/{id}/history?limit=50` · `POST …/undo` `{revision?, force?}` | recent changes, newest first / undo one; `409` with `later` when later changes exist and `force` is off |
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |

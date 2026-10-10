@@ -1257,7 +1257,7 @@ async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
   if (later.length && !confirm(`This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${later.map((e) => `• ${e.summary}`).join("\n")}\n\nUndo them all?`)) return;
-  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { change: rev, force: later.length > 0 }));
+  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { revision: rev, force: later.length > 0 }));
 }
 
 async function loadCompare() {

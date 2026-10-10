@@ -188,8 +188,8 @@ type HistoryIn struct {
 
 type UndoIn struct {
 	Ref
-	Change int64 `json:"change,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
-	Force  bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
+	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
+	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
 }
 
 type ScenarioRef struct {
@@ -354,7 +354,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Undo(ctx, id, in.Change, in.Force))
+			return sum(h.app.Undo(ctx, id, in.Revision, in.Force))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{

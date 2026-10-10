@@ -400,13 +400,13 @@ func TestHistoryAndUndo(t *testing.T) {
 
 	// Undoing r2 while r3 exists needs force; the 409 lists what would be lost.
 	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1300"}}]}`, 200)
-	if v := c.do("POST", "/api/budgets/home/undo", `{"change":2}`, 409); len(v["later"].([]any)) != 1 {
+	if v := c.do("POST", "/api/budgets/home/undo", `{"revision":2}`, 409); len(v["later"].([]any)) != 1 {
 		t.Fatalf("conflict: %v", v)
 	}
-	v := c.do("POST", "/api/budgets/home/undo", `{"change":2,"force":true}`, 200)
+	v := c.do("POST", "/api/budgets/home/undo", `{"revision":2,"force":true}`, 200)
 	if v["revision"].(float64) != 4 {
 		t.Fatalf("undo: %v", v["revision"])
 	}
-	c.do("POST", "/api/budgets/home/undo", `{"change":1}`, 409) // the creation
-	c.do("POST", "/api/budgets/home/undo", `{"change":99}`, 400)
+	c.do("POST", "/api/budgets/home/undo", `{"revision":1}`, 409) // the creation
+	c.do("POST", "/api/budgets/home/undo", `{"revision":99}`, 400)
 }

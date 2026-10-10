@@ -157,40 +157,41 @@ func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Iss
 // fail maps domain errors to HTTP statuses. Anything unrecognised is a 500
 // and is logged, with a generic message to the client.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
+	// One variable per error type the API answers with its own status code.
 	var (
-		ve *budget.ValidationError
-		ce *store.ConflictError
-		oe *budget.OpError
-		nm *budget.NoMatchError
-		ae *money.ArithmeticError
-		me *http.MaxBytesError
-		se *json.SyntaxError
-		te *json.UnmarshalTypeError
-		re *app.RateError
-		ue *app.UndoConflictError
+		invalid    *budget.ValidationError
+		conflict   *store.ConflictError
+		badOp      *budget.OpError
+		noMatch    *budget.NoMatchError
+		overflow   *money.ArithmeticError
+		tooLarge   *http.MaxBytesError
+		badJSON    *json.SyntaxError
+		wrongType  *json.UnmarshalTypeError
+		rateFailed *app.RateError
+		undoLater  *app.UndoConflictError
 	)
 	switch {
-	case errors.As(err, &oe): // checked first: a bad target inside an op is the caller's mistake
+	case errors.As(err, &badOp): // checked first: a bad target inside an op is the caller's mistake
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
-	case errors.As(err, &ve):
-		writeErr(w, http.StatusUnprocessableEntity, err.Error(), ve.Issues)
-	case errors.As(err, &ue):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": ue.Later})
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusUnprocessableEntity, err.Error(), invalid.Issues)
+	case errors.As(err, &undoLater):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": undoLater.Later})
 	case errors.Is(err, app.ErrNothingToUndo):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
-	case errors.As(err, &ce):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": ce.Actual})
-	case errors.Is(err, store.ErrNotFound), errors.As(err, &nm):
+	case errors.As(err, &conflict):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": conflict.Actual})
+	case errors.Is(err, store.ErrNotFound), errors.As(err, &noMatch):
 		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrExists):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.Is(err, app.ErrRatesOff):
 		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
-	case errors.As(err, &re): // the rate provider failed, not us
+	case errors.As(err, &rateFailed): // the rate provider failed, not us
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
-	case errors.As(err, &me):
+	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
-	case errors.Is(err, store.ErrBadID), errors.As(err, &ae), errors.As(err, &se), errors.As(err, &te), errors.Is(err, errBadRequest), errors.Is(err, app.ErrBadInput):
+	case errors.Is(err, store.ErrBadID), errors.As(err, &overflow), errors.As(err, &badJSON), errors.As(err, &wrongType), errors.Is(err, errBadRequest), errors.Is(err, app.ErrBadInput):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
@@ -329,14 +330,14 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Change int64 `json:"change"`
-		Force  bool  `json:"force"`
+		Revision int64 `json:"revision"`
+		Force    bool  `json:"force"`
 	}
 	if err := decode(r, &in); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Change, in.Force)
+	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Revision, in.Force)
 	if err != nil {
 		s.fail(w, r, err)
 		return

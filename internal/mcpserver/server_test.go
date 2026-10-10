@@ -331,7 +331,7 @@ func TestHistoryAndUndoTools(t *testing.T) {
 	ctx := store.WithChange(context.Background(), store.Change{Source: "web"})
 	a := money.MustDecimal("1350")
 	h.app.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &a})})
-	if e := h.call("undo", map[string]any{"change": 4}, true)["error"].(string); !strings.Contains(e, "(web)") {
+	if e := h.call("undo", map[string]any{"revision": 4}, true)["error"].(string); !strings.Contains(e, "(web)") {
 		t.Fatalf("conflict error: %s", e)
 	}
 }

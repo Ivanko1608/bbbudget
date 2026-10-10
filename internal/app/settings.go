@@ -122,6 +122,8 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 // RunAutoRefresh calls RefreshIfDue every minute until ctx ends. The settings
 // are re-read each time, so turning auto-refresh on or off needs no restart.
 func (a *App) RunAutoRefresh(ctx context.Context, log *slog.Logger) {
+	// Rate updates made here show up in each budget's history as "auto-refresh",
+	// so they can be told apart from changes a person or an AI made.
 	ctx = store.WithChange(ctx, store.Change{Source: "auto-refresh"})
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()

@@ -64,8 +64,8 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
-  history  list recent changes and who made them:  bbbudget history home [-n 20]
-  undo     undo a change:  bbbudget undo home [-change REV] [-force]
+  history  list recent changes and who made them:  bbbudget history home [-limit 20]
+  undo     undo a change:  bbbudget undo home [-revision REV] [-force]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
@@ -79,7 +79,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("missing command")
 	}
 	cmd, args := args[0], args[1:]
-	ctx = store.WithChange(ctx, store.Change{Source: "cli"}) // serve and mcp relabel their own writes
+	// Every write is recorded in the budget's history with who made it.
+	// Commands typed in a terminal are "cli"; serve and mcp replace this with
+	// their own label for the writes they make.
+	ctx = store.WithChange(ctx, store.Change{Source: "cli"})
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
@@ -143,7 +146,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "init":
 		template := fs.String("template", "blank", "template name (see: bbbudget templates)")
 		name := fs.String("name", "", "display name (default: the id)")
-		id, err := parseWithID(fs, args, "init <id> [-template name] [-name display-name]")
+		id, err := parseFlagsAndID(fs, args, "init <id> [-template name] [-name display-name]")
 		if err != nil {
 			return err
 		}
@@ -226,7 +229,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "report":
 		scenario := fs.String("scenario", "", "show a saved scenario instead of the budget")
-		id, err := parseWithID(fs, args, "report <id> [-scenario name]")
+		id, err := parseFlagsAndID(fs, args, "report <id> [-scenario name]")
 		if err != nil {
 			return err
 		}
@@ -252,7 +255,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "rates":
 		only := fs.String("only", "", "comma-separated currencies to refresh (default: all whose source isn't manual)")
 		dry := fs.Bool("dry-run", false, "show current rates without saving")
-		id, err := parseWithID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
+		id, err := parseFlagsAndID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
 		if err != nil {
 			return err
 		}
@@ -277,8 +280,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 
 	case "history":
-		n := fs.Int("n", 20, "how many changes to show (0 for all kept)")
-		id, err := parseWithID(fs, args, "history <id> [-n 20]")
+		limit := fs.Int("limit", 20, "how many changes to show (0 for all kept)")
+		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
 		if err != nil {
 			return err
 		}
@@ -286,7 +289,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		h, err := a.History(ctx, id, *n)
+		h, err := a.History(ctx, id, *limit)
 		if err != nil {
 			return err
 		}
@@ -298,9 +301,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return tw.Flush()
 
 	case "undo":
-		change := fs.Int64("change", 0, "revision of the change to undo (default: the latest)")
+		revision := fs.Int64("revision", 0, "revision of the change to undo (default: the latest)")
 		force := fs.Bool("force", false, "also undo every change made after it")
-		id, err := parseWithID(fs, args, "undo <id> [-change REV] [-force]")
+		id, err := parseFlagsAndID(fs, args, "undo <id> [-revision REV] [-force]")
 		if err != nil {
 			return err
 		}
@@ -308,7 +311,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Undo(ctx, id, *change, *force)
+		v, err := a.Undo(ctx, id, *revision, *force)
 		if err != nil {
 			return err
 		}
@@ -387,7 +390,9 @@ func parseArgs(fs *flag.FlagSet, args []string, want int, usage string) ([]strin
 	return pos, nil
 }
 
-func parseWithID(fs *flag.FlagSet, args []string, usage string) (string, error) {
+// parseFlagsAndID parses a command's flags and its one positional argument,
+// the budget id ("home" in `bbbudget report home`).
+func parseFlagsAndID(fs *flag.FlagSet, args []string, usage string) (string, error) {
 	pos, err := parseArgs(fs, args, 1, usage)
 	if err != nil {
 		return "", err
