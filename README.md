@@ -128,18 +128,20 @@ One honest caveat: when you use the MCP server with a hosted AI assistant, the M
 | **Rate source** | Per currency: `manual` (typed) or fetched from `ecb`, `currency-api`, `coingecko` or `auto`. See [Exchange rates](#exchange-rates). |
 | **Categories** | `income` or `expense`, with a label and colour. |
 | **Items** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
-| **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
-| **Goals** | Savings targets: when they're reached, or the monthly rate needed to reach them. |
+| **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. A debt can be **paid off in full** in a chosen month, from a pot or from that month's money. The whole balance, that month's interest included, is paid after income sent to that pot has landed, so a sale can clear a debt in the month it arrives. A pot that holds less pays what it can; the rest stays owed, with its minimum. |
+| **Savings pots** | Savings split by purpose: general savings, sinking funds (saving ahead for a known cost) and an emergency fund. Each has a balance and optionally a target and a fixed monthly contribution. Each month's leftover pays the contributions, then the share to debts, then fills pots with a target (top to bottom), then goes to the first general pot. |
+| **Short months** | Savings are balances, never income. A month that falls short is **not** paid from savings automatically: it's reported with the pots that could cover it (general first, sinking funds next, the emergency fund last), and otherwise owed on the current account and repaid from the next surplus before anything is saved. |
+| **Withdrawals** | Planned transfers out of a pot ("take €300 from General savings in October"), shown as *from savings*, never as income. One tap on a short month plans one. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, what paying a debt off in full costs and whether its pot can cover it, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
 
 ## Money handling
 
 - **No floating point in any calculation.** Amounts are `int64` minor units (cents, pence; 0 digits for JPY, 3 for KWD). Rates and percentages are exact rationals (`math/big.Rat`). The one exception is chart pixel positions in the browser.
 - **Exact on the wire.** Amounts, rates and percentages are JSON *strings* (`"1150"`, `"1.08"`). Bare JSON numbers are accepted on input and parsed from their literal text, never through `float64`. Exponents, `NaN`, thousands separators and more decimal places than the currency allows (`€1.001`) are rejected.
 - **Rounding is explicit and pessimistic.** There is one rounding per conversion. Money you pay rounds **up**, money you receive rounds **down**, and interest charged to you rounds up. A plan therefore never looks better than reality, and is off by at most one minor unit per conversion.
-- **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `saved = left − extra debt payment`, and `savings = previous + saved`. Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies and schedules.
+- **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `left + from savings + change in overdraft = extra debt payment + into savings`, `saved = into savings − from savings`, `savings = previous + saved = the sum of the pots`, and every pot reconciles (`opening + in − out = closing`, never below zero). Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies, schedules, pots, withdrawals and overdrafts.
 - **Overflow can't wrap.** Arithmetic is checked: overflow and currency mismatches become errors, never wrapped values or crashes. Inputs are bounded (amounts ≤ 10¹² units and ≤ 10¹⁵ minor units, ≤ 600 months).
 - **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`items[3].amount`). The UI highlights the matching fields.
 
@@ -192,6 +194,15 @@ items:
   - {name: Freelance (paid in BTC), amount: 0.012, currency: BTC, category: income}
 ```
 
+## The app
+
+The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Items** (income and costs grouped by category, amounts editable in place), **Plan** (debts, savings pots, planned withdrawals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
+
+- **Wide screens** show the views as tabs next to a summary that stays in view: what's left this month, savings at the end, goal and debt-free dates and the top warning. Every edit's effect shows up there straight away.
+- **Phones and small tablets** get an app layout: a bottom tab bar, a pinned bar with the two key numbers, and bottom sheets for editing an item. Touch targets are at least 44px, and safe-area insets clear notches and the home indicator.
+- **Installable.** The page ships a web app manifest and icons, so a phone or desktop browser can install it ("Add to Home Screen"); it then opens full screen like an app. The same layout is meant to be wrapped as an Android or iOS app later (for example with Capacitor or a Trusted Web Activity). A native shell needs a reachable server; this one only listens on localhost.
+- Deletes can be undone for a few seconds. The current view is in the URL (`#home/items`), so reloading keeps your place.
+
 ## Templates and your own data
 
 Built in are `blank` and `example`, a fictional household that is also the test fixture. **Your own templates live outside the repository**, in `~/.config/bbbudget/templates/` (or `$BBBUDGET_TEMPLATES`, or `-templates DIR`), as YAML or JSON. The file name is the template name, and a file named like a built-in replaces it. Your budgets live in `~/.local/share/bbbudget/` (or `$BBBUDGET_DIR`, or `-dir`). Nothing personal ever needs to be in the repo.
@@ -214,9 +225,16 @@ items:
   - {name: Flights, amount: 450.50, currency: USD, category: home, schedule: {every: 0, start: 1}}  # one-off
 debts:
   - {name: Credit card, currency: USD, balance: 4000, apr_pct: 24, min_payment: 250}
-goals:
-  - {name: Emergency fund, target: 5000}
+  - {name: Car loan, balance: 6000, apr_pct: 7, min_payment: 180, payoff_month: 5, payoff_from: general-savings}  # pay it off from that pot in month 5
+pots:                                                    # kind: general | sinking | emergency
+  - {name: General savings, balance: 1200}               # kind defaults to general; gets the leftover
+  - {name: Emergency fund, kind: emergency, balance: 0, target: 5000}
+  - {name: Holiday, kind: sinking, balance: 300, target: 1500, monthly: 100}
+withdrawals:                                             # optional: planned use of savings
+  - {name: New tyres, pot: general-savings, amount: 400, schedule: {start: 3}}  # once, in month 3
 ```
+
+Older files with `savings_start` and `goals` still load: the balance becomes a *General savings* pot and each goal a pot with that target (an *emergency* pot if its name says so). Old goals all counted the same money; as pots, each fills on its own.
 
 ```
 bbbudget templates                         # list built-in and your templates
@@ -272,7 +290,8 @@ internal/store/      Store interface + FileStore (atomic writes, flock, revision
 internal/app/        Use cases shared by every transport
 internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards
 internal/mcpserver/  MCP tools and resources
-web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html
+web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html,
+                     manifest.webmanifest and icons (icon.svg is the source of the PNGs)
 ```
 
 Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← transports. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
@@ -313,6 +332,7 @@ The server binds to 127.0.0.1 and accepts only these requests:
 
 ```
 make check     # gofmt, go vet, go test -race
+make e2e       # browser tests: real binary + headless Chromium (Node 22+)
 make hooks     # enable the pre-commit leak check in .githooks/
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
@@ -326,7 +346,8 @@ The tests include:
 - the randomized invariant test;
 - the store under concurrent writers from two "processes";
 - MCP tools via an in-memory client;
-- an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio.
+- an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio;
+- browser tests in [`e2e/`](e2e/) that run `bbbudget serve` on a throwaway directory and drive the page in headless Chromium over the DevTools protocol: every view, editing in place, adding and undoing, covering a short month, routing income to a pot, paying off a debt, what-if, the phone layout and the settings page. They fail on any script error or request to another origin. They use only Node's built-in test runner and WebSocket, and skip when no Chromium is found (set `CHROME` to pick one).
 
 The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
 

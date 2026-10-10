@@ -132,6 +132,7 @@ func TestStdioMCP(t *testing.T) {
 		t.Skip("builds the binary")
 	}
 	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json")) // inherited by the binary
+	t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	bin := filepath.Join(t.TempDir(), "bbbudget")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)

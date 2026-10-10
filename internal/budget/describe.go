@@ -13,7 +13,7 @@ import (
 const maxChangeParts = 6
 
 // DescribeChange summarises the difference between two versions of a budget
-// in one item, for the change history: "Rent: amount 1150 → 1200; added
+// in one line, for the change history: "Rent: amount 1150 → 1200; added
 // item Gym". Items are matched by id (currencies by code), so a rename reads
 // as a change, not a removal plus an addition. It is "no changes" when the
 // documents are equal.
@@ -26,7 +26,8 @@ func DescribeChange(before, after Budget) string {
 		func(c Category) (string, string) { return c.ID, c.Label })...)
 	parts = append(parts, diffItems("item", before.Items, after.Items, func(l Item) (string, string) { return l.ID, l.Name })...)
 	parts = append(parts, diffItems("debt", before.Debts, after.Debts, func(d Debt) (string, string) { return d.ID, d.Name })...)
-	parts = append(parts, diffItems("goal", before.Goals, after.Goals, func(g Goal) (string, string) { return g.ID, g.Name })...)
+	parts = append(parts, diffItems("pot", before.Pots, after.Pots, potKey)...)
+	parts = append(parts, diffItems("withdrawal", before.Withdrawals, after.Withdrawals, withdrawalKey)...)
 	parts = append(parts, diffItems("scenario", before.Scenarios, after.Scenarios,
 		func(s Scenario) (string, string) { return s.ID, s.Name })...)
 	if len(parts) == 0 {
@@ -48,7 +49,7 @@ func plural(n int) string {
 
 // settingsOf is the budget without its lists, so settings diff field by field.
 func settingsOf(b Budget) Budget {
-	b.Currencies, b.Categories, b.Items, b.Debts, b.Goals, b.Scenarios = nil, nil, nil, nil, nil, nil
+	b.Currencies, b.Categories, b.Items, b.Debts, b.Pots, b.Withdrawals, b.Scenarios = nil, nil, nil, nil, nil, nil, nil
 	return b
 }
 

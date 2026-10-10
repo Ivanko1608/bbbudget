@@ -3,9 +3,11 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -266,7 +268,7 @@ func TestSettings(t *testing.T) {
 func TestSettingsPageIsServed(t *testing.T) {
 	st, _ := store.NewFileStore(t.TempDir())
 	h := New(app.New(st, nil), Options{Static: web.FS()})
-	for _, path := range []string{"/settings.html", "/settings.js", "/"} {
+	for _, path := range []string{"/settings.html", "/settings.js", "/", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/icon-180.png"} {
 		req := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -275,6 +277,18 @@ func TestSettingsPageIsServed(t *testing.T) {
 		}
 		if path == "/" && !strings.Contains(w.Body.String(), `href="settings.html"`) {
 			t.Error("the budget page must link to the settings page")
+		}
+		if path == "/manifest.webmanifest" {
+			if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
+				t.Errorf("manifest served as %q: browsers won't install the app", ct)
+			}
+			var m struct {
+				Display string `json:"display"`
+				Icons   []struct{ Src, Purpose string }
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Display != "standalone" || len(m.Icons) < 3 {
+				t.Errorf("manifest: %v %+v", err, m)
+			}
 		}
 	}
 }
@@ -285,6 +299,90 @@ func TestMetaListsCrypto(t *testing.T) {
 	if len(crypto) == 0 || crypto[0] != "ADA" || len(sources) != 5 {
 		t.Fatalf("crypto %v, sources %v", crypto, sources)
 	}
+	if d := v["digits"].(map[string]any); d["EUR"] != 2.0 || d["JPY"] != 0.0 || d["BTC"] != 8.0 {
+		t.Fatalf("digits: %v", d)
+	}
+}
+
+// Budgets saved before pots existed (no "pots"/"withdrawals") or saved with
+// null lists must load with every list as [], never null: the UI iterates them.
+func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","revision":3,"updated_at":"2026-10-01T00:00:00Z","budget":{
+		"name":"Old","base_currency":"EUR","start_month":"2026-10","months":12,"savings_start":"250",
+		"currencies":[],"categories":[{"id":"income","label":"Income","kind":"income"}],
+		"items":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income","schedule":{"start":0,"every":1}}],
+		"debts":[],"extra_to_debt_pct":"0","debt_strategy":"avalanche",
+		"goals":[{"id":"emergency","name":"Emergency fund","target":"2000"}],"scenarios":[]}}`
+	nulls := `{"id":"nulls","revision":1,"updated_at":"2026-10-01T00:00:00Z","budget":{
+		"name":"Nulls","base_currency":"EUR","start_month":"2026-10","months":12,
+		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],"items":null,"debts":null,
+		"extra_to_debt_pct":"0","debt_strategy":"avalanche",
+		"pots":[{"id":"savings","name":"General savings","kind":"general","balance":"0"}],"withdrawals":null,"scenarios":null}}`
+	for name, raw := range map[string]string{"old.json": legacy, "nulls.json": nulls} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := store.NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := app.New(st, nil)
+	a.Rates = offlineRates()
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	c := &client{t, New(a, Options{Static: fstest.MapFS{}})}
+	for _, id := range []string{"old", "nulls"} {
+		w := c.req("GET", "/api/budgets/"+id, "", nil)
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", id, w.Code, w.Body)
+		}
+		var v struct {
+			Budget map[string]any `json:"budget"`
+			Report map[string]any `json:"report"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"currencies", "categories", "items", "debts", "pots", "withdrawals", "scenarios"} {
+			if _, ok := v.Budget[k].([]any); !ok {
+				t.Errorf("%s: budget.%s = %v, want a list", id, k, v.Budget[k])
+			}
+		}
+		for _, k := range []string{"pots", "goals", "shortfalls", "insights"} {
+			if _, ok := v.Report[k].([]any); !ok {
+				t.Errorf("%s: report.%s = %v, want a list", id, k, v.Report[k])
+			}
+		}
+	}
+}
+
+func TestDebtPayoffOverHTTP(t *testing.T) {
+	c := setup(t)
+	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[
+		{"op":"add_item","value":{"name":"Bike sale","amount":"3000","category":"income","schedule":{"start":2,"every":0},"pot":"General"}},
+		{"op":"add_debt","value":{"name":"Store card","balance":"2500","apr_pct":"24","min_payment":"80","payoff_month":2,"payoff_from":"General"}}]}`, 200)
+	d := v["budget"].(map[string]any)["debts"].([]any)[0].(map[string]any)
+	if d["payoff_from"] != "savings" || d["payoff_month"] != float64(2) {
+		t.Fatalf("payoff stored as: %v", d)
+	}
+	m2 := v["report"].(map[string]any)["months"].([]any)[2].(map[string]any)
+	if m2["payoff"].(map[string]any)["amount"] == "0" || m2["payoff_from_pots"].(map[string]any)["amount"] != m2["payoff"].(map[string]any)["amount"] {
+		t.Fatalf("month 2: payoff %v from pots %v", m2["payoff"], m2["payoff_from_pots"])
+	}
+	if m2["debts"].([]any)[0].(map[string]any)["balance"].(map[string]any)["amount"] != "0" {
+		t.Errorf("not cleared: %v", m2["debts"])
+	}
+
+	// A payoff from a pot that doesn't exist is a validation issue with its path.
+	b, _ := json.Marshal(v["budget"])
+	bad := strings.Replace(string(b), `"payoff_from":"savings"`, `"payoff_from":"nowhere"`, 1)
+	out := c.do("PUT", "/api/budgets/home", fmt.Sprintf(`{"revision":%v,"budget":%s}`, v["revision"], bad), 422)
+	if issues := out["issues"].([]any); len(issues) != 1 || issues[0].(map[string]any)["path"] != "debts[0].payoff_from" {
+		t.Fatalf("issues: %v", issues)
+	}
+	// The pot can't be removed while the payoff uses it.
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"bike","value":{"pot":""}},{"op":"remove_pot","target":"savings"}]}`, 400)
 }
 
 func TestHistoryAndUndo(t *testing.T) {

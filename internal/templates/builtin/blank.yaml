@@ -2,8 +2,9 @@
 description: Empty budget with an income and an expense category.
 base_currency: EUR
 months: 12
-savings_start: 0
 extra_to_debt_pct: 0
 categories:
   - {id: income, label: Income, kind: income}
   - {id: living, label: Living, kind: expense}
+pots:
+  - {id: savings, name: General savings, kind: general, balance: 0}

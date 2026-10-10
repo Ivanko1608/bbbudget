@@ -216,8 +216,12 @@ func decode(r *http.Request, v any) error {
 // --- handlers ---
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
+	digits := map[string]int{}
+	for _, c := range money.Codes() {
+		digits[c] = money.MustLookup(c).Digits
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources,
+		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
 		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
 		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
 	})

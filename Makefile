@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test race cover check run mcp hooks clean
+.PHONY: build test race cover check e2e run mcp hooks clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/bbbudget ./cmd/bbbudget
@@ -17,6 +17,11 @@ cover:
 
 check:
 	gofmt -l . | (! grep .) && go vet ./... && go test -race ./...
+
+# Browser tests: the real binary and headless Chromium (CHROME=path to pick one).
+# Needs Node 22+; skipped when no Chromium is found.
+e2e: build
+	node --test e2e/*.test.mjs
 
 run: build
 	./bin/bbbudget serve

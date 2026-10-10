@@ -176,6 +176,39 @@ func TestDebtUpsert(t *testing.T) {
 	}
 }
 
+func TestDebtPayoff(t *testing.T) {
+	h := setup(t)
+	s := h.call("set_debt", map[string]any{"debt": "Car loan", "balance": "2000", "apr_pct": "6", "min_payment": "100", "payoff_month": 2, "payoff_from": "General"}, false)
+	var row map[string]any
+	for _, d := range s["debts"].([]any) {
+		if d.(map[string]any)["id"] == "car-loan" {
+			row = d.(map[string]any)
+		}
+	}
+	// The example fills the Emergency fund's target first, so General savings
+	// is empty in Dec 2026: the payoff can't happen and the insight says so.
+	if row == nil || row["payoff_plan"] != "Dec 2026 from General savings" {
+		t.Fatalf("payoff on create: %v", row)
+	}
+	flagged := false
+	for _, in := range s["insights"].([]any) {
+		flagged = flagged || strings.Contains(in.(string), "Car loan: General savings holds nothing in Dec 2026")
+	}
+	if !flagged {
+		t.Errorf("an empty pot must be flagged: %v", s["insights"])
+	}
+	s = h.call("set_debt", map[string]any{"debt": "car loan", "payoff_from": ""}, false)
+	if s["months"].([]any)[2].(map[string]any)["payoff"] == nil {
+		t.Errorf("a payoff from the month must show in month 2: %v", s["months"].([]any)[2])
+	}
+	s = h.call("set_debt", map[string]any{"debt": "car loan", "payoff_month": -1}, false)
+	for _, d := range s["debts"].([]any) {
+		if d.(map[string]any)["id"] == "car-loan" && d.(map[string]any)["payoff_plan"] != nil {
+			t.Errorf("payoff not removed: %v", d)
+		}
+	}
+}
+
 func TestWhatIfDoesNotSave(t *testing.T) {
 	h := setup(t)
 	s := h.call("what_if", map[string]any{"ops": []any{

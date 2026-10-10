@@ -42,3 +42,20 @@ func TestDescribeChangeIsCapped(t *testing.T) {
 		t.Errorf("capped: %q", got)
 	}
 }
+
+func TestDescribeChangeCoversPots(t *testing.T) {
+	b := fixture(t)
+	nb, err := Apply(b,
+		NewOp("add_pot", "", map[string]any{"name": "Holiday", "kind": "sinking", "balance": "0", "target": "900"}),
+		NewOp("add_withdrawal", "", map[string]any{"name": "Car repair", "pot": "savings", "amount": "300"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := DescribeChange(b, nb)
+	for _, want := range []string{"added pot Holiday", "added withdrawal Car repair"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
