@@ -40,7 +40,7 @@ func TestGoKeysExist(t *testing.T) {
 			t.Errorf("missing month.short.%d", m)
 		}
 	}
-	for _, k := range []string{"currency", "category", "item", "debt", "goal", "scenario"} {
+	for _, k := range []string{"currency", "category", "item", "debt", "pot", "withdrawal", "scenario"} {
 		if _, ok := en.Forms("thing." + k); !ok {
 			t.Errorf("missing thing.%s", k)
 		}

@@ -7,34 +7,32 @@ import (
 	"sort"
 
 	"bbbudget/internal/i18n"
+	"bbbudget/internal/money"
 )
 
 // maxChangeParts caps how many changes DescribeChange spells out.
 const maxChangeParts = 6
 
 // DescribeChange summarises the difference between two versions of a budget
-// in one item, for the change history: "Rent: amount 1150 → 1200; added
-// item Gym", in English. ChangeMsg is the same summary as a message, for
+// in one line of English, for the change history: "Rent: amount 1150 →
+// 1200; added item Gym". ChangeMsg is the same summary as a message, for
 // rendering in the reader's language.
-func DescribeChange(before, after Budget) string { return english().T(ChangeMsg(before, after)) }
+func DescribeChange(before, after Budget) string { return english().Render(ChangeMsg(before, after)) }
 
-// ChangeMsg summarises a change as a message. Items are matched by id
+// ChangeMsg summarises a change as a message. Things are matched by id
 // (currencies by code), so a rename reads as a change, not a removal plus an
 // addition. Equal documents give "no changes".
 func ChangeMsg(before, after Budget) i18n.Msg {
-	var parts []i18n.Msg
-	parts = append(parts, diffFields(settingsOf(before), settingsOf(after))...)
-	parts = append(parts, diffItems("currency", before.Currencies, after.Currencies,
-		func(c CurrencyRate) (string, string) { return c.Code, c.Code }, "rate_date", "rate_from")...)
-	parts = append(parts, diffItems("category", before.Categories, after.Categories,
-		func(c Category) (string, string) { return c.ID, c.Label })...)
-	parts = append(parts, diffItems("item", before.Items, after.Items, func(l Item) (string, string) { return l.ID, l.Name })...)
-	parts = append(parts, diffItems("debt", before.Debts, after.Debts, func(d Debt) (string, string) { return d.ID, d.Name })...)
-	parts = append(parts, diffItems("goal", before.Goals, after.Goals, func(g Goal) (string, string) { return g.ID, g.Name })...)
-	parts = append(parts, diffItems("scenario", before.Scenarios, after.Scenarios,
-		func(s Scenario) (string, string) { return s.ID, s.Name })...)
+	parts := diffJSONFields(settingsOf(before), settingsOf(after))
+	parts = append(parts, diffList("currency", before.Currencies, after.Currencies, currencyKey, "rate_date", "rate_from")...)
+	parts = append(parts, diffList("category", before.Categories, after.Categories, categoryKey)...)
+	parts = append(parts, diffList("item", before.Items, after.Items, itemKey)...)
+	parts = append(parts, diffList("debt", before.Debts, after.Debts, debtKey)...)
+	parts = append(parts, diffList("pot", before.Pots, after.Pots, potKey)...)
+	parts = append(parts, diffList("withdrawal", before.Withdrawals, after.Withdrawals, withdrawalKey)...)
+	parts = append(parts, diffList("scenario", before.Scenarios, after.Scenarios, scenarioKey)...)
 	if len(parts) == 0 {
-		return i18n.Msg{Key: "change.none"}
+		return msg("change.none", nil)
 	}
 	if len(parts) > maxChangeParts {
 		n := len(parts) - maxChangeParts
@@ -43,48 +41,77 @@ func ChangeMsg(before, after Budget) i18n.Msg {
 	return msg("change.list", args{"items": i18n.JoinedList(parts, "; ")})
 }
 
-// settingsOf is the budget without its lists, so settings diff field by field.
-func settingsOf(b Budget) Budget {
-	b.Currencies, b.Categories, b.Items, b.Debts, b.Goals, b.Scenarios = nil, nil, nil, nil, nil, nil
-	return b
+func currencyKey(c CurrencyRate) (string, string) { return c.Code, c.Code }
+func categoryKey(c Category) (string, string)     { return c.ID, c.Label }
+
+// budgetSettings is the part of a budget that isn't a list. A test checks
+// it covers every such field of Budget, so a new setting can't be missed.
+type budgetSettings struct {
+	Name           string        `json:"name"`
+	Description    string        `json:"description,omitempty"`
+	BaseCurrency   string        `json:"base_currency"`
+	StartMonth     string        `json:"start_month"`
+	Months         int           `json:"months"`
+	OverdraftStart money.Decimal `json:"overdraft_start,omitzero"`
+	ExtraToDebtPct money.Decimal `json:"extra_to_debt_pct"`
+	DebtStrategy   string        `json:"debt_strategy"`
 }
 
-// diffItems reports added, removed and changed items. key returns an item's
-// id and its display name; ignore lists fields that aren't worth reporting.
-func diffItems[T any](kind string, before, after []T, key func(T) (string, string), ignore ...string) []i18n.Msg {
-	old := map[string]T{}
-	for _, it := range before {
-		id, _ := key(it)
-		old[id] = it
+func settingsOf(b Budget) budgetSettings {
+	return budgetSettings{
+		Name:           b.Name,
+		Description:    b.Description,
+		BaseCurrency:   b.BaseCurrency,
+		StartMonth:     b.StartMonth,
+		Months:         b.Months,
+		OverdraftStart: b.OverdraftStart,
+		ExtraToDebtPct: b.ExtraToDebtPct,
+		DebtStrategy:   b.DebtStrategy,
 	}
-	thing := i18n.List([]i18n.Msg{{Key: "thing." + kind}})
-	seen := map[string]bool{}
+}
+
+// diffList reports what was added to, removed from and changed in a list.
+// key gives each element's id (how versions are matched) and the name to
+// show; ignore lists fields that aren't worth reporting.
+func diffList[T any](kind string, before, after []T, key func(T) (id, name string), ignore ...string) []i18n.Msg {
+	old := map[string]T{}
+	for _, el := range before {
+		id, _ := key(el)
+		old[id] = el
+	}
+	thing := i18n.Nested(msg("thing."+kind, nil))
+	kept := map[string]bool{}
 	var out []i18n.Msg
-	for _, it := range after {
-		id, name := key(it)
-		seen[id] = true
+	for _, el := range after {
+		id, name := key(el)
+		kept[id] = true
 		prev, ok := old[id]
 		if !ok {
 			out = append(out, msg("change.added", args{"kind": thing, "name": i18n.Text(name)}))
 			continue
 		}
-		_, prevName := key(prev)
-		if fields := diffFields(prev, it, ignore...); len(fields) > 0 {
-			out = append(out, msg("change.item", args{"name": i18n.Text(prevName), "fields": i18n.JoinedList(fields, ", ")}))
+		_, prevName := key(prev) // a rename is described under the old name
+		if fields := diffJSONFields(prev, el, ignore...); len(fields) > 0 {
+			out = append(out, msg("change.fields", args{"name": i18n.Text(prevName), "fields": i18n.JoinedList(fields, ", ")}))
 		}
 	}
-	for _, it := range before {
-		if id, name := key(it); !seen[id] {
+	for _, el := range before {
+		if id, name := key(el); !kept[id] {
 			out = append(out, msg("change.removed", args{"kind": thing, "name": i18n.Text(name)}))
 		}
 	}
 	return out
 }
 
-// diffFields compares two values field by field through their JSON form, so
-// it stays correct as fields are added: one "field old → new" per change.
-func diffFields(before, after any, ignore ...string) []i18n.Msg {
-	a, b := fieldsOf(before), fieldsOf(after)
+// diffJSONFields compares two values field by field through their JSON
+// form, so a field added to a type is covered without changing this code.
+// Each change reads "field old → new".
+func diffJSONFields(before, after any, ignore ...string) []i18n.Msg {
+	a, errA := jsonFields(before)
+	b, errB := jsonFields(after)
+	if errA != nil || errB != nil {
+		return []i18n.Msg{msg("change.changed", nil)} // can't happen for budget types
+	}
 	keys := make([]string, 0, len(a)+len(b))
 	for k := range a {
 		keys = append(keys, k)
@@ -105,21 +132,36 @@ func diffFields(before, after any, ignore ...string) []i18n.Msg {
 	return changes
 }
 
-func fieldsOf(v any) map[string]json.RawMessage {
-	raw, _ := json.Marshal(v) // budget types always marshal
-	var m map[string]json.RawMessage
-	json.Unmarshal(raw, &m)
-	for k, v := range m {
-		if string(v) == "null" || string(v) == `""` || string(v) == "[]" {
-			delete(m, k) // absent and empty read the same
+// jsonFields is v's JSON object as field name → raw value. Empty values are
+// left out, so "" or [] and a missing field read as the same thing.
+func jsonFields(v any) (map[string]json.RawMessage, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for k, v := range fields {
+		if isEmptyJSON(v) {
+			delete(fields, k)
 		}
 	}
-	return m
+	return fields, nil
+}
+
+func isEmptyJSON(v json.RawMessage) bool {
+	switch string(v) {
+	case "null", `""`, "[]", "{}":
+		return true
+	}
+	return false
 }
 
 func show(raw json.RawMessage) i18n.Arg {
 	if raw == nil {
-		return i18n.List([]i18n.Msg{{Key: "change.empty"}})
+		return i18n.Nested(msg("change.empty", nil))
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {

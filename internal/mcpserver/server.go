@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,14 +21,15 @@ import (
 
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
-Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), items (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
+Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), items (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), savings pots and planned withdrawals.
+Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}. Savings are balances, never income. Each month's leftover first repays any overdraft, then pays fixed monthly contributions, then the debt share, then fills pots that have a target (in order), then goes to the first general pot. A month that falls short is NOT covered from savings automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the user agrees. An item can also have a pot: income on it (a sale, a bonus) goes straight into that pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds were saved for. A debt can be paid off in full in one month: payoff_month (0-based) and payoff_from (a pot, or "" for that month's own money). The whole balance, that month's interest included, is paid after income routed to pots has landed, so a sale routed to a pot can pay off a debt in the same month; a pot that holds less pays what it can and the rest stays owed. set_debt with payoff_month -1 removes it. Offer general savings first, then sinking funds (say which planned cost it delays), and the emergency fund only as a last resort.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
 Language: text fields (insights, schedules, month labels) are in the user's configured language (app setting "locale"). Always answer in the language the user writes in. Each insight also has a key and typed args with the exact amounts and months; quote numbers from args, not from re-reading the text.
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
 Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
-Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Items/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
+Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Items/debts/pots/withdrawals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
 type Options struct {
@@ -69,7 +69,7 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			out, err := fn(store.WithChange(ctx, store.Change{Source: "mcp"}), in)
+			out, err := fn(store.WithChange(ctx, store.Change{Source: store.SourceMCP}), in)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
@@ -104,9 +104,9 @@ type CreateIn struct {
 }
 
 type ScheduleIn struct {
-	Every  *int   `json:"every,omitempty" jsonschema:"period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off"`
-	Starts string `json:"starts,omitempty" jsonschema:"first month YYYY-MM; default is the budget's start month"`
-	Ends   string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive); omit for no end"`
+	Every  *int    `json:"every,omitempty" jsonschema:"period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off"`
+	Starts string  `json:"starts,omitempty" jsonschema:"first month YYYY-MM; default is the budget's start month (add_item) or unchanged (update_item)"`
+	Ends   *string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive). In update_item omit to keep the current end, or send an empty string to remove it"`
 }
 
 type AddItemIn struct {
@@ -154,11 +154,13 @@ type SettingsIn struct {
 
 type DebtIn struct {
 	Ref
-	Debt       string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
-	Currency   *string        `json:"currency,omitempty"`
-	Balance    *money.Decimal `json:"balance,omitempty"`
-	APRPct     *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
-	MinPayment *money.Decimal `json:"min_payment,omitempty" jsonschema:"monthly minimum payment in the debt's currency"`
+	Debt        string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
+	Currency    *string        `json:"currency,omitempty"`
+	Balance     *money.Decimal `json:"balance,omitempty"`
+	APRPct      *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
+	MinPayment  *money.Decimal `json:"min_payment,omitempty" jsonschema:"monthly minimum payment in the debt's currency"`
+	PayoffMonth *int           `json:"payoff_month,omitempty" jsonschema:"pay the whole balance off in this month (0-based from start_month); -1 removes the payoff"`
+	PayoffFrom  *string        `json:"payoff_from,omitempty" jsonschema:"pot (id or name) that pays it off; empty string pays it from that month's own money"`
 }
 
 type OpsIn struct {
@@ -182,13 +184,14 @@ type CompareIn struct {
 
 type HistoryIn struct {
 	Ref
-	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20"`
+	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20 (store.DefaultHistoryPage)"`
 }
 
 type UndoIn struct {
 	Ref
-	Change int64 `json:"change,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
-	Force  bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
+	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
+	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
+	Latest   int64 `json:"latest,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
 }
 
 type ScenarioRef struct {
@@ -207,7 +210,8 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Item{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
+Value fields: Item{name, amount, currency, category, schedule, pot}, Debt{name, currency, balance, apr_pct, min_payment, payoff_month, payoff_from}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.
+Item schedules: give calendar months, {"starts":"YYYY-MM","ends":"YYYY-MM","every":N} (every: 1 monthly, the default; 3 quarterly; 12 yearly; 0 one-off in starts). In set_item only the given schedule fields change, and "ends":"" removes the end. The stored form uses 0-based month indexes {start, every, end}; don't mix the two in one schedule. Withdrawal schedules and payoff_month still take 0-based month indexes from start_month.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -221,7 +225,7 @@ func (h *handlers) register(s *mcp.Server) {
 		v, err := h.app.Create(ctx, in.ID, in.Name, in.Template)
 		return sum(v, err)
 	})
-	tool(s, "get_budget", "The full budget: settings, every item with its base-currency cost, debts, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
+	tool(s, "get_budget", "The full budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
 		func(ctx context.Context, in Ref) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -231,18 +235,12 @@ func (h *handlers) register(s *mcp.Server) {
 		})
 
 	tool(s, "add_item", "Add an income or cost item. Returns the updated budget.", func(ctx context.Context, in AddItemIn) (any, error) {
-		return h.withSchedule(ctx, in.Budget, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			l := budget.Item{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: budget.Monthly()}
-			if sch != nil {
-				l.Schedule = *sch
-			}
-			return []budget.Op{budget.NewOp("add_item", "", l)}
-		})
+		l := budget.ItemInput{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
+		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("add_item", "", l))
 	})
-	tool(s, "update_item", "Change fields of one item; omitted fields stay as they are. Returns the updated budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
-		return h.withSchedule(ctx, in.Budget, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			return []budget.Op{budget.NewOp("set_item", in.Item, budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: sch})}
-		})
+	tool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns the updated budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
+		p := budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
+		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
 	})
 	tool(s, "remove_item", "Delete one item. Returns the updated budget.", func(ctx context.Context, in ItemRef) (any, error) {
 		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
@@ -270,19 +268,19 @@ func (h *handlers) register(s *mcp.Server) {
 			}
 			return map[string]any{"rate_updates": updates, "budget": summarize(v)}, nil
 		})
-	tool(s, "update_settings", "Change budget settings (name, start_month, months, savings_start, extra_to_debt_pct, debt_strategy). Returns the updated budget.",
+	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns the updated budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
 			return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
 		})
-	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. Returns the updated budget.",
+	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns the updated budget.",
 		func(ctx context.Context, in DebtIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment}))
+			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment, PayoffMonth: in.PayoffMonth, PayoffFrom: in.PayoffFrom}))
 		})
-	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, goals and removals. Op kinds:"+opsHelp(),
+	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
 			rev := store.AnyRevision
 			if in.ExpectedRevision != nil {
@@ -348,7 +346,7 @@ func (h *handlers) register(s *mcp.Server) {
 				return nil, err
 			}
 			if in.Limit <= 0 {
-				in.Limit = 20
+				in.Limit = store.DefaultHistoryPage
 			}
 			return h.app.History(ctx, id, in.Limit)
 		})
@@ -358,7 +356,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Undo(ctx, id, in.Change, in.Force))
+			return sum(h.app.Undo(ctx, id, app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Latest}))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -386,54 +384,14 @@ func (h *handlers) apply(ctx context.Context, ref string, rev int64, ops ...budg
 	return sum(h.app.Apply(ctx, id, rev, ops))
 }
 
-// withSchedule resolves YYYY-MM schedule fields against the budget's start
-// month, then applies the ops built by mk (sch is nil when no schedule field was given).
-func (h *handlers) withSchedule(ctx context.Context, ref string, in ScheduleIn, mk func(*budget.Schedule) []budget.Op) (any, error) {
-	id, err := h.id(ref)
-	if err != nil {
-		return nil, err
+// spec turns the flat schedule fields of add_item/update_item into a
+// ScheduleSpec, or nil when none was given. Months are resolved inside the
+// store transaction (see budget.ScheduleSpec), never against a stale read.
+func (in ScheduleIn) spec() *budget.ScheduleSpec {
+	if in.Every == nil && in.Starts == "" && in.Ends == nil {
+		return nil
 	}
-	var sch *budget.Schedule
-	if in.Every != nil || in.Starts != "" || in.Ends != "" {
-		v, err := h.app.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		s := budget.Monthly()
-		if in.Every != nil {
-			s.Every = *in.Every
-		}
-		if in.Starts != "" {
-			if s.Start, err = monthIndex(v.Budget.StartMonth, in.Starts); err != nil {
-				return nil, err
-			}
-		}
-		if in.Ends != "" {
-			e, err := monthIndex(v.Budget.StartMonth, in.Ends)
-			if err != nil {
-				return nil, err
-			}
-			s.End = &e
-		}
-		sch = &s
-	}
-	return h.apply(ctx, id, store.AnyRevision, mk(sch)...)
-}
-
-func monthIndex(start, ym string) (int, error) {
-	s, err := time.Parse("2006-01", start)
-	if err != nil {
-		return 0, err
-	}
-	t, err := time.Parse("2006-01", ym)
-	if err != nil {
-		return 0, fmt.Errorf("month must be YYYY-MM, got %q", ym)
-	}
-	i := (t.Year()-s.Year())*12 + int(t.Month()-s.Month())
-	if i < 0 {
-		return 0, fmt.Errorf("%s is before the budget starts (%s)", ym, start)
-	}
-	return i, nil
+	return &budget.ScheduleSpec{Every: in.Every, Starts: in.Starts, Ends: in.Ends}
 }
 
 func sum(v *app.View, err error) (any, error) {

@@ -16,6 +16,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -44,6 +45,9 @@ type Arg struct {
 	Number string `json:"number,omitempty"`
 	// Text is shown as is: names the user typed, currency codes.
 	Text string `json:"text,omitempty"`
+	// Msg is another message, rendered in place ("added {kind} {name}",
+	// where kind is the message "item").
+	Msg *Msg `json:"msg,omitempty"`
 	// List is rendered item by item and joined with the locale's list
 	// separator, or with Sep when set.
 	List []Msg  `json:"list,omitempty"`
@@ -51,12 +55,13 @@ type Arg struct {
 }
 
 // Helpers for building arguments.
-func M(m money.Money) Arg { return Arg{Money: &m} }
-func Month(ym string) Arg { return Arg{Month: ym} }
-func Int(n int64) Arg     { return Arg{Int: &n} }
-func Num(d string) Arg    { return Arg{Number: d} }
-func Text(s string) Arg   { return Arg{Text: s} }
-func List(ms []Msg) Arg   { return Arg{List: ms} }
+func Money(m money.Money) Arg { return Arg{Money: &m} }
+func Month(ym string) Arg     { return Arg{Month: ym} }
+func Int(n int64) Arg         { return Arg{Int: &n} }
+func Num(d string) Arg        { return Arg{Number: d} }
+func Text(s string) Arg       { return Arg{Text: s} }
+func Nested(m Msg) Arg        { return Arg{Msg: &m} }
+func List(ms []Msg) Arg       { return Arg{List: ms} }
 
 // JoinedList is a list joined with sep in every language ("; " between changes).
 func JoinedList(ms []Msg, sep string) Arg { return Arg{List: ms, Sep: sep} }
@@ -102,32 +107,26 @@ func (m *message) UnmarshalJSON(b []byte) error {
 //go:embed locales/*.json
 var localeFS embed.FS
 
-var (
-	loadOnce sync.Once
-	catalogs map[string]*Catalog
-	loadErr  error
-)
+var catalogs = sync.OnceValues(loadCatalogs)
 
-func load() {
-	catalogs = map[string]*Catalog{}
+func loadCatalogs() (map[string]*Catalog, error) {
 	files, err := localeFS.ReadDir("locales")
 	if err != nil {
-		loadErr = err
-		return
+		return nil, err
 	}
+	out := map[string]*Catalog{}
 	for _, f := range files {
 		raw, err := localeFS.ReadFile("locales/" + f.Name())
 		if err != nil {
-			loadErr = err
-			return
+			return nil, err
 		}
 		c, err := parseCatalog(strings.TrimSuffix(f.Name(), path.Ext(f.Name())), raw)
 		if err != nil {
-			loadErr = err
-			return
+			return nil, err
 		}
-		catalogs[c.Locale] = c
+		out[c.Locale] = c
 	}
+	return out, nil
 }
 
 func parseCatalog(locale string, raw []byte) (*Catalog, error) {
@@ -155,11 +154,11 @@ func parseCatalog(locale string, raw []byte) (*Catalog, error) {
 
 // Catalogs returns every built-in catalog by locale.
 func Catalogs() map[string]*Catalog {
-	loadOnce.Do(load)
-	if loadErr != nil {
-		panic("i18n: " + loadErr.Error()) // embedded files; caught by the tests
+	cs, err := catalogs()
+	if err != nil {
+		panic("i18n: " + err.Error()) // embedded files; caught by the tests
 	}
-	return catalogs
+	return cs
 }
 
 // Locales lists the available locales, sorted.
@@ -180,6 +179,12 @@ func (c *Catalog) Keys() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Has reports whether the catalog has a message for key.
+func (c *Catalog) Has(key string) bool {
+	_, ok := c.messages[key]
+	return ok
 }
 
 // Forms returns a message's text, or its plural forms by category.
@@ -213,8 +218,20 @@ func (l *Localizer) Locale() string { return l.cat.Locale }
 // Meta is the locale's formatting data.
 func (l *Localizer) Meta() Meta { return l.cat.Meta }
 
+// Has reports whether the locale, or the English fallback, has a message for key.
+func (l *Localizer) Has(key string) bool { return l.cat.Has(key) || l.fallback.Has(key) }
+
 // Match returns the available locale for a language tag, or Default.
 func Match(tag string) string {
+	if m, ok := supported(tag); ok {
+		return m
+	}
+	return Default
+}
+
+// supported returns the available locale a language tag names, English
+// included, and whether there is one.
+func supported(tag string) (string, bool) {
 	tag = strings.ToLower(strings.TrimSpace(tag))
 	tag = strings.ReplaceAll(tag, "_", "-")
 	if i := strings.IndexAny(tag, ".@"); i >= 0 { // POSIX: de_DE.UTF-8
@@ -222,14 +239,14 @@ func Match(tag string) string {
 	}
 	cs := Catalogs()
 	if _, ok := cs[tag]; ok {
-		return tag
+		return tag, true
 	}
 	if base, _, _ := strings.Cut(tag, "-"); base != "" {
 		if _, ok := cs[base]; ok {
-			return base
+			return base, true
 		}
 	}
-	return Default
+	return "", false
 }
 
 // MatchAcceptLanguage picks the best available locale from an HTTP
@@ -252,7 +269,7 @@ func MatchAcceptLanguage(header string) string {
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].q > cands[j].q })
 	for _, c := range cands {
-		if m := Match(c.tag); m != Default || strings.HasPrefix(strings.ToLower(c.tag), Default) {
+		if m, ok := supported(c.tag); ok {
 			return m
 		}
 	}
@@ -266,14 +283,11 @@ func parseQ(v string) int {
 	if (whole != "0" && whole != "1") || len(frac) > 3 || strings.Trim(frac, "0123456789") != "" {
 		return 0
 	}
-	q := 0
+	thousandths, _ := strconv.Atoi(frac + strings.Repeat("0", 3-len(frac)))
 	if whole == "1" {
-		q = 1000
+		thousandths += 1000
 	}
-	for i, d := range (frac + "000")[:3] {
-		q += int(d-'0') * []int{100, 10, 1}[i]
-	}
-	return min(q, 1000)
+	return min(thousandths, 1000)
 }
 
 // FromEnv picks a locale from LC_ALL, LC_MESSAGES or LANG, or Default.
@@ -301,9 +315,9 @@ func FromContext(ctx context.Context) string {
 
 var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)
 
-// T renders a message. Missing keys render as the key itself, so a gap is
-// visible rather than blank (the catalog tests keep that from shipping).
-func (l *Localizer) T(m Msg) string {
+// Render renders a message. Missing keys render as the key itself, so a gap
+// is visible rather than blank (the catalog tests keep that from shipping).
+func (l *Localizer) Render(m Msg) string {
 	cat := l.cat
 	forms, ok := cat.Forms(m.Key)
 	if !ok {
@@ -326,9 +340,6 @@ func (l *Localizer) T(m Msg) string {
 	})
 }
 
-// Text renders a key with arguments.
-func (l *Localizer) Text(key string, args map[string]Arg) string { return l.T(Msg{key, args}) }
-
 // pluralText picks the form for count with the rule of the catalog the
 // message came from (a fallback's English forms need English rules).
 func pluralText(cat *Catalog, forms map[string]string, count Arg) string {
@@ -336,7 +347,7 @@ func pluralText(cat *Catalog, forms map[string]string, count Arg) string {
 	if count.Int != nil {
 		n = *count.Int
 	}
-	if t, ok := forms[pluralRules[cat.Meta.Plural](n)]; ok {
+	if t, ok := forms[pluralRules[cat.Meta.Plural].pick(n)]; ok {
 		return t
 	}
 	return forms["other"]
@@ -350,13 +361,15 @@ func (l *Localizer) Arg(a Arg) string {
 	case a.Month != "":
 		return l.Month(a.Month)
 	case a.Int != nil:
-		return l.group(fmt.Sprint(*a.Int))
+		return l.Number(fmt.Sprint(*a.Int))
 	case a.Number != "":
 		return l.Number(a.Number)
+	case a.Msg != nil:
+		return l.Render(*a.Msg)
 	case a.List != nil:
 		parts := make([]string, len(a.List))
 		for i, m := range a.List {
-			parts[i] = l.T(m)
+			parts[i] = l.Render(m)
 		}
 		if a.Sep != "" {
 			return strings.Join(parts, a.Sep)
@@ -372,95 +385,90 @@ func (l *Localizer) Month(ym string) string {
 	if !ok {
 		return ym
 	}
-	return l.Text("month.short."+strings.TrimLeft(m, "0"), map[string]Arg{"year": Text(y)})
+	return l.Render(Msg{Key: "month.short." + strings.TrimLeft(m, "0"), Args: map[string]Arg{"year": Text(y)}})
 }
 
 // Number renders an exact decimal string with the locale's separators.
 func (l *Localizer) Number(d string) string {
-	neg := strings.HasPrefix(d, "-")
-	intPart, frac, _ := strings.Cut(strings.TrimLeft(d, "+-"), ".")
-	s := l.group(intPart)
-	if frac != "" {
-		s += l.cat.Meta.Decimal + frac
-	}
-	if neg {
-		s = "−" + s
-	}
-	return s
-}
-
-func (l *Localizer) group(digits string) string {
-	neg := strings.HasPrefix(digits, "-")
-	digits = strings.TrimPrefix(digits, "-")
-	var b strings.Builder
-	for i, ch := range digits {
-		if i > 0 && (len(digits)-i)%3 == 0 {
-			b.WriteString(l.cat.Meta.Group)
-		}
-		b.WriteRune(ch)
-	}
-	if neg {
-		return "−" + b.String()
-	}
-	return b.String()
+	sign, digits := splitSign(d)
+	return sign + l.unsigned(digits)
 }
 
 // Money renders an amount the way money.Money.Display does (whole units for
 // fiat, the exact amount without trailing zeros for crypto) in this locale.
 func (l *Localizer) Money(m money.Money) string {
-	c := m.Currency()
-	var digits string
-	if c.Crypto {
-		digits = m.Decimal().String()
-	} else {
-		digits = money.RoundInt(m.Rat(), money.HalfEven).String()
+	if m.Currency().Crypto {
+		return l.withSymbol(m.Currency(), m.Decimal().String())
 	}
-	neg := strings.HasPrefix(digits, "-")
-	num := l.Number(strings.TrimPrefix(digits, "-"))
-	sign := ""
-	if neg && strings.Trim(digits, "-0.") != "" {
-		sign = "−"
-	}
-	if c.SymbolFirst && l.cat.Meta.Currency != "after" {
-		return sign + c.Symbol + num
-	}
-	return sign + num + l.cat.Meta.CurrencySep + c.Symbol
+	return l.withSymbol(m.Currency(), money.RoundInt(m.Rat(), money.HalfEven).String())
 }
 
 // MoneyExact renders an amount with all its minor digits ("€1,234.50").
 func (l *Localizer) MoneyExact(m money.Money) string {
-	c := m.Currency()
-	digits := m.String()
-	neg := strings.HasPrefix(digits, "-")
-	num := l.Number(strings.TrimPrefix(digits, "-"))
-	sign := ""
-	if neg && strings.Trim(digits, "-0.") != "" {
-		sign = "−"
-	}
+	return l.withSymbol(m.Currency(), m.String())
+}
+
+// withSymbol renders a decimal amount with the currency symbol where the
+// locale puts it, and the sign before both ("−€12", "−12 €").
+func (l *Localizer) withSymbol(c money.Currency, d string) string {
+	sign, digits := splitSign(d)
+	num := l.unsigned(digits)
 	if c.SymbolFirst && l.cat.Meta.Currency != "after" {
 		return sign + c.Symbol + num
 	}
 	return sign + num + l.cat.Meta.CurrencySep + c.Symbol
 }
 
-// pluralRules map a whole number to its CLDR plural category.
-var pluralRules = map[string]func(n int64) string{
+// splitSign separates a decimal's sign from its digits. The sign is a real
+// minus ("−"), and a negative zero has none.
+func splitSign(d string) (sign, digits string) {
+	digits = strings.TrimLeft(d, "+-")
+	if strings.HasPrefix(d, "-") && strings.Trim(digits, "0.") != "" {
+		sign = "−"
+	}
+	return sign, digits
+}
+
+// unsigned renders digits without a sign: groups, then the decimal part.
+func (l *Localizer) unsigned(digits string) string {
+	intPart, frac, _ := strings.Cut(digits, ".")
+	var b strings.Builder
+	for i, ch := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteString(l.cat.Meta.Group)
+		}
+		b.WriteRune(ch)
+	}
+	if frac != "" {
+		b.WriteString(l.cat.Meta.Decimal + frac)
+	}
+	return b.String()
+}
+
+// pluralRule maps a whole number to its CLDR plural category.
+type pluralRule struct {
+	// categories are every category pick can return, sorted.
+	categories []string
+	pick       func(n int64) string
+}
+
+var pluralRules = map[string]pluralRule{
 	// English, German, Spanish, Italian, Dutch, Swedish, ...
-	"one_other": func(n int64) string {
+	"one_other": {[]string{"one", "other"}, func(n int64) string {
 		if n == 1 {
 			return "one"
 		}
 		return "other"
-	},
+	}},
 	// French, Portuguese (Brazil): 0 and 1 are "one".
-	"french": func(n int64) string {
+	"french": {[]string{"one", "other"}, func(n int64) string {
 		if n == 0 || n == 1 {
 			return "one"
 		}
 		return "other"
-	},
+	}},
 	// Russian and the other East Slavic languages.
-	"east_slavic": func(n int64) string {
+	"east_slavic": {[]string{"few", "many", "one"}, func(n int64) string {
 		n = abs(n)
 		switch m10, m100 := n%10, n%100; {
 		case m10 == 1 && m100 != 11:
@@ -470,9 +478,9 @@ var pluralRules = map[string]func(n int64) string{
 		default:
 			return "many"
 		}
-	},
+	}},
 	// Polish.
-	"polish": func(n int64) string {
+	"polish": {[]string{"few", "many", "one"}, func(n int64) string {
 		n = abs(n)
 		switch m10, m100 := n%10, n%100; {
 		case n == 1:
@@ -482,25 +490,14 @@ var pluralRules = map[string]func(n int64) string{
 		default:
 			return "many"
 		}
-	},
+	}},
 	// Chinese, Japanese, Korean, ...: no plural forms.
-	"none": func(int64) string { return "other" },
+	"none": {[]string{"other"}, func(int64) string { return "other" }},
 }
 
 // PluralCategories lists the categories a rule can produce; each catalog
 // message with plural forms must cover them.
-func PluralCategories(rule string) []string {
-	seen := map[string]bool{}
-	for n := int64(0); n < 200; n++ {
-		seen[pluralRules[rule](n)] = true
-	}
-	var out []string
-	for c := range seen {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
-}
+func PluralCategories(rule string) []string { return pluralRules[rule].categories }
 
 func abs(n int64) int64 {
 	if n < 0 {

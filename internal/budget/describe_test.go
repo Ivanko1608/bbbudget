@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -10,12 +11,11 @@ func TestDescribeChange(t *testing.T) {
 	if got := DescribeChange(b, b); got != "no changes" {
 		t.Errorf("equal: %q", got)
 	}
-	months := 24 // not intp(): that helper arrives with another branch
 	nb, err := Apply(b,
 		NewOp("set_item", "rent", ItemPatch{Amount: decp("1200"), Name: strp("Flat rent")}),
 		NewOp("add_item", "", map[string]any{"name": "Gym", "amount": "35", "category": "home"}),
 		NewOp("remove_item", "school supplies", nil),
-		NewOp("set_settings", "", SettingsPatch{Months: &months}),
+		NewOp("set_settings", "", SettingsPatch{Months: intp(24)}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -40,5 +40,37 @@ func TestDescribeChangeIsCapped(t *testing.T) {
 	}
 	if got := DescribeChange(b, nb); !strings.HasSuffix(got, "; and 2 more changes") || strings.Contains(got, "item H") {
 		t.Errorf("capped: %q", got)
+	}
+}
+
+func TestDescribeChangeCoversPots(t *testing.T) {
+	b := fixture(t)
+	nb, err := Apply(b,
+		NewOp("add_pot", "", map[string]any{"name": "Holiday", "kind": "sinking", "balance": "0", "target": "900"}),
+		NewOp("add_withdrawal", "", map[string]any{"name": "Car repair", "pot": "savings", "amount": "300"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := DescribeChange(b, nb)
+	for _, want := range []string{"added pot Holiday", "added withdrawal Car repair"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+// Every field of Budget that isn't a list is a setting, and must be diffed.
+func TestBudgetSettingsCoverEveryField(t *testing.T) {
+	have := map[string]bool{}
+	settings := reflect.TypeFor[budgetSettings]()
+	for i := range settings.NumField() {
+		have[settings.Field(i).Name] = true
+	}
+	doc := reflect.TypeFor[Budget]()
+	for i := range doc.NumField() {
+		if f := doc.Field(i); f.Type.Kind() != reflect.Slice && !have[f.Name] {
+			t.Errorf("Budget.%s is missing from budgetSettings, so changes to it never show in the history", f.Name)
+		}
 	}
 }

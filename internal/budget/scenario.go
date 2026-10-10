@@ -94,7 +94,7 @@ func Compare(b Budget, refs []string, l *i18n.Localizer) ([]Outcome, error) {
 		return nil, err
 	}
 	baseRep.Localize(l)
-	baseline := outcome("baseline", l.Text("compare.baseline", nil), baseRep, nil)
+	baseline := outcome("baseline", l.Render(msg("compare.baseline", nil)), baseRep, nil)
 	out := []Outcome{baseline}
 
 	var scen []Scenario

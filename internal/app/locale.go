@@ -4,17 +4,28 @@ import (
 	"context"
 
 	"bbbudget/internal/i18n"
+	"bbbudget/internal/settings"
 )
 
-// Locale is the language to render text in for this call: one set on the
-// context by the transport (from the request), else the app setting, else
-// the environment (LANG), else English.
+// Locale is the language to render text in for this call: the one the
+// transport put on the context, else what ResolveLocale picks with no
+// browser preference.
 func (a *App) Locale(ctx context.Context) string {
 	if l := i18n.FromContext(ctx); l != "" {
 		return i18n.Match(l)
 	}
-	if s, err := a.Settings(); err == nil && s.Locale != "" && s.Locale != "auto" {
+	return a.ResolveLocale("")
+}
+
+// ResolveLocale picks the language for a reader: the app setting if one is
+// chosen, else the browser's Accept-Language header (empty outside HTTP),
+// else the environment (LANG), else English.
+func (a *App) ResolveLocale(acceptLanguage string) string {
+	if s, err := a.Settings(); err == nil && s.Locale != "" && s.Locale != settings.LocaleAuto {
 		return i18n.Match(s.Locale)
+	}
+	if l := i18n.MatchAcceptLanguage(acceptLanguage); l != "" {
+		return l
 	}
 	return i18n.FromEnv()
 }

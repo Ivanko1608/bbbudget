@@ -128,12 +128,56 @@ func fsRead(name string) ([]byte, error) {
 func TestPluralRules(t *testing.T) {
 	ru := map[int64]string{0: "many", 1: "one", 2: "few", 4: "few", 5: "many", 11: "many", 12: "many", 14: "many", 21: "one", 22: "few", 25: "many", 101: "one", 111: "many"}
 	for n, want := range ru {
-		if got := pluralRules["east_slavic"](n); got != want {
+		if got := pluralRules["east_slavic"].pick(n); got != want {
 			t.Errorf("east_slavic(%d) = %s, want %s", n, got, want)
 		}
 	}
-	if pluralRules["one_other"](1) != "one" || pluralRules["one_other"](0) != "other" {
+	if pluralRules["one_other"].pick(1) != "one" || pluralRules["one_other"].pick(0) != "other" {
 		t.Error("one_other")
+	}
+	// Each rule lists exactly the categories it can pick.
+	for name, r := range pluralRules {
+		seen := map[string]bool{}
+		for n := int64(0); n < 200; n++ {
+			seen[r.pick(n)] = true
+		}
+		got := make([]string, 0, len(seen))
+		for c := range seen {
+			got = append(got, c)
+		}
+		sort.Strings(got)
+		if !slices.Equal(got, r.categories) {
+			t.Errorf("%s picks %v but lists %v", name, got, r.categories)
+		}
+	}
+}
+
+func TestSigns(t *testing.T) {
+	eur := money.MustLookup("EUR")
+	neg, _ := money.FromDecimal(money.MustDecimal("-1234.5"), eur)
+	zero, _ := money.FromDecimal(money.MustDecimal("-0.4"), eur)
+	cases := []struct{ got, want string }{
+		{For("en").Money(neg), "−€1,234"},
+		{For("ru").Money(neg), "−1\u00a0234\u00a0€"},
+		{For("en").MoneyExact(neg), "−€1,234.50"},
+		{For("en").Money(zero), "€0"},
+		{For("en").Number("-1234.5"), "−1,234.5"},
+		{For("en").Arg(Int(-1500)), "−1,500"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
+func TestNestedArg(t *testing.T) {
+	m := Msg{Key: "change.added", Args: map[string]Arg{"kind": Nested(Msg{Key: "thing.item"}), "name": Text("Gym")}}
+	if got := For("en").Render(m); got != "added item Gym" {
+		t.Errorf("nested: %q", got)
+	}
+	if !For("ru").Has("thing.item") || For("ru").Has("no.such.key") {
+		t.Error("Has")
 	}
 }
 
@@ -141,7 +185,7 @@ func TestRenderRussian(t *testing.T) {
 	l := For("ru-RU")
 	cases := map[int64]string{1: "каждый 1 месяц", 2: "каждые 2 месяца", 5: "каждые 5 месяцев", 21: "каждый 21 месяц"}
 	for n, want := range cases {
-		if got := l.Text("schedule.every", map[string]Arg{"count": Int(n)}); got != want {
+		if got := l.Render(Msg{Key: "schedule.every", Args: map[string]Arg{"count": Int(n)}}); got != want {
 			t.Errorf("schedule.every %d: %q, want %q", n, got, want)
 		}
 	}
@@ -169,7 +213,7 @@ func TestFallbacks(t *testing.T) {
 	if l := For("xx-YY"); l.Locale() != Default {
 		t.Errorf("unknown locale: %s", l.Locale())
 	}
-	if got := For("ru").Text("no.such.key", nil); got != "no.such.key" {
+	if got := For("ru").Render(Msg{Key: "no.such.key"}); got != "no.such.key" {
 		t.Errorf("missing key: %q", got)
 	}
 	for tag, want := range map[string]string{"ru_RU.UTF-8": "ru", "RU": "ru", "en-GB": "en", "de": Default, "": Default} {
