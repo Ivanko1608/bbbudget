@@ -57,6 +57,10 @@ Few and short.
 - Build strings in named variables before you interpolate them.
 - No ternaries nested inside template literals.
 
+## Pull requests
+
+- **Keep a PR under 1000 added lines**. 1500 is the hard limit. Split bigger work into stacked PRs, each one reviewable on its own.
+
 ## Before you finish
 
 Reread your diff as someone who has never seen it.
