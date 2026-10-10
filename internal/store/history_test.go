@@ -14,7 +14,7 @@ import (
 
 func setRent(amount string) func(budget.Budget) (budget.Budget, error) {
 	return func(b budget.Budget) (budget.Budget, error) {
-		b.Lines[1].Amount = money.MustDecimal(amount)
+		b.Items[1].Amount = money.MustDecimal(amount)
 		return b, nil
 	}
 }
@@ -49,8 +49,8 @@ func TestHistoryRecordsEveryWrite(t *testing.T) {
 		t.Error("listing should not carry documents")
 	}
 	old, err := s.Snapshot(ctx, "home", 1)
-	if err != nil || old.Lines[1].Amount.String() != "1150" {
-		t.Fatalf("snapshot r1: %v %v", old.Lines[1].Amount, err)
+	if err != nil || old.Items[1].Amount.String() != "1150" {
+		t.Fatalf("snapshot r1: %v %v", old.Items[1].Amount, err)
 	}
 	if _, err := s.Snapshot(ctx, "home", 9); !errors.Is(err, ErrNoSnapshot) {
 		t.Fatalf("missing revision: %v", err)
@@ -61,7 +61,7 @@ func TestRejectedWriteLeavesNoHistory(t *testing.T) {
 	s, b := newStore(t)
 	s.Create(ctx, "home", b)
 	s.Update(ctx, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
-		b.Lines[0].Currency = "XXX" // invalid
+		b.Items[0].Currency = "XXX" // invalid
 		return b, nil
 	})
 	if h, _ := s.History(ctx, "home", 0); len(h) != 1 {
@@ -123,7 +123,7 @@ func TestBaselineForBudgetsWithoutHistory(t *testing.T) {
 	if len(h) != 2 || h[1].Source != SourceEarlier {
 		t.Fatalf("history: %+v", h)
 	}
-	if old, err := s.Snapshot(ctx, "home", 1); err != nil || old.Lines[1].Amount.String() != "1150" {
+	if old, err := s.Snapshot(ctx, "home", 1); err != nil || old.Items[1].Amount.String() != "1150" {
 		t.Fatalf("baseline snapshot: %v", err)
 	}
 }
@@ -136,7 +136,7 @@ func TestPhantomEntryIsIgnored(t *testing.T) {
 	s.Create(ctx, "home", b)
 	cur, _ := s.Get(ctx, "home")
 	next := cur
-	next.Revision, next.Budget.Lines[1].Amount = 2, money.MustDecimal("9999")
+	next.Revision, next.Budget.Items[1].Amount = 2, money.MustDecimal("9999")
 	if err := s.record(as("mcp"), &cur, next); err != nil { // the budget write "failed" after this
 		t.Fatal(err)
 	}
@@ -148,8 +148,8 @@ func TestPhantomEntryIsIgnored(t *testing.T) {
 	if len(h) != 2 || h[0].Source != "cli" || !strings.Contains(h[0].Summary, "1150 → 1200") {
 		t.Fatalf("after the real r2: %+v", h)
 	}
-	if snap, _ := s.Snapshot(ctx, "home", 2); snap.Lines[1].Amount.String() != "1200" {
-		t.Fatalf("snapshot r2 is the phantom: %v", snap.Lines[1].Amount)
+	if snap, _ := s.Snapshot(ctx, "home", 2); snap.Items[1].Amount.String() != "1200" {
+		t.Fatalf("snapshot r2 is the phantom: %v", snap.Items[1].Amount)
 	}
 }
 

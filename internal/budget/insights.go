@@ -38,7 +38,7 @@ var DefaultRules = []Rule{
 	{"cash_out_loss", ruleCashOutLoss},
 	{"one_offs", ruleOneOffs},
 	{"first_month", ruleFirstMonth},
-	{"biggest_line", ruleBiggestLine},
+	{"biggest_item", ruleBiggestItem},
 	{"debt", ruleDebt},
 	{"goals", ruleGoals},
 	{"negative_savings", ruleNegativeSavings},
@@ -77,7 +77,7 @@ func ruleCategoryShare(pr *Projection) []Insight {
 	p := pr.Plan
 	inc := p.RecurringIncome()
 	totals := map[string]money.Money{}
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		if !l.Income && l.Schedule.Start == 0 {
 			t, ok := totals[l.Category]
 			if !ok {
@@ -112,7 +112,7 @@ func foreignRecurring(p *Plan) map[string]money.Money {
 		}
 		out[code] = t.Add(m.Mul(big.NewRat(1, int64(every)), money.HalfEven))
 	}
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		if !l.Income && l.Schedule.Start == 0 {
 			add(l.Amt, l.Schedule.Every)
 		}
@@ -183,7 +183,7 @@ func ruleFXRisk(pr *Projection) []Insight {
 // foreignIncome sums recurring income per foreign currency, per month, in that currency.
 func foreignIncome(p *Plan) map[string]money.Money {
 	out := map[string]money.Money{}
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		c := l.Amt.Currency()
 		if !l.Income || c.Code == p.Base.Code || l.Schedule.Every == 0 || l.Schedule.Start != 0 {
 			continue
@@ -244,7 +244,7 @@ func ruleCashOutLoss(pr *Projection) []Insight {
 func ruleOneOffs(pr *Projection) []Insight {
 	p := pr.Plan
 	var out []Insight
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		if l.Schedule.Every != 0 || l.Schedule.Start >= p.Months {
 			continue
 		}
@@ -262,7 +262,7 @@ func ruleOneOffs(pr *Projection) []Insight {
 func ruleFirstMonth(pr *Projection) []Insight {
 	m := pr.Months[0]
 	if m.Left.IsNegative() {
-		return []Insight{{Tone: ToneWarn, Text: fmt.Sprintf("%s is **%s short**. Savings take the hit unless a line comes down.", m.Label, w(m.Left.Neg()))}}
+		return []Insight{{Tone: ToneWarn, Text: fmt.Sprintf("%s is **%s short**. Savings take the hit unless an item comes down.", m.Label, w(m.Left.Neg()))}}
 	}
 	inc := m.Income
 	thin := !inc.IsPositive() || pct(m.Saved, inc) < 5
@@ -274,22 +274,22 @@ func ruleFirstMonth(pr *Projection) []Insight {
 	return []Insight{{Tone: ToneGood, Text: text}}
 }
 
-func ruleBiggestLine(pr *Projection) []Insight {
+func ruleBiggestItem(pr *Projection) []Insight {
 	p := pr.Plan
-	var best *PlanLine
+	var best *PlanItem
 	var bestAmt money.Money
-	for i, l := range p.Lines {
+	for i, l := range p.Items {
 		if l.Income || l.Schedule.Every == 0 {
 			continue
 		}
 		if a := p.MonthlyEquivalent(l); best == nil || a.Cmp(bestAmt) > 0 {
-			best, bestAmt = &p.Lines[i], a
+			best, bestAmt = &p.Items[i], a
 		}
 	}
 	if best == nil {
 		return nil
 	}
-	return []Insight{{Tone: ToneInfo, Text: fmt.Sprintf("Biggest recurring line: **%s** at %s a month (%d%% of income).",
+	return []Insight{{Tone: ToneInfo, Text: fmt.Sprintf("Biggest recurring item: **%s** at %s a month (%d%% of income).",
 		best.Name, w(bestAmt), pct(bestAmt, p.RecurringIncome()))}}
 }
 
