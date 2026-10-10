@@ -77,7 +77,7 @@ func (a *App) Create(ctx context.Context, id, name, template string) (*View, err
 	if err != nil {
 		return nil, err
 	}
-	localizeCategories(&b, a.Localizer(ctx))
+	localizeTemplate(&b, a.Localizer(ctx))
 	r, err := a.Store.Create(ctx, id, b)
 	if err != nil {
 		return nil, err
@@ -85,16 +85,24 @@ func (a *App) Create(ctx context.Context, id, name, template string) (*View, err
 	return a.view(ctx, r)
 }
 
-// localizeCategories translates category labels a template left as they
-// are in English ("Income" for id income) into the reader's language. A
-// label anyone changed is theirs and stays as it is.
-func localizeCategories(b *budget.Budget, l *i18n.Localizer) {
+// localizeTemplate translates the category labels and pot names a template
+// left as they are in English ("Income" for category income, "General
+// savings" for pot savings) into the reader's language. A name anyone
+// changed is theirs and stays as it is.
+func localizeTemplate(b *budget.Budget, l *i18n.Localizer) {
 	en := i18n.For(i18n.Default)
-	for i, c := range b.Categories {
-		key := i18n.Msg{Key: "category." + c.ID}
-		if en.Has(key.Key) && en.Render(key) == c.Label {
-			b.Categories[i].Label = l.Render(key)
+	translate := func(key, name string) string {
+		m := i18n.Msg{Key: key}
+		if en.Has(key) && en.Render(m) == name {
+			return l.Render(m)
 		}
+		return name
+	}
+	for i, c := range b.Categories {
+		b.Categories[i].Label = translate("category."+c.ID, c.Label)
+	}
+	for i, p := range b.Pots {
+		b.Pots[i].Name = translate("pot."+p.ID, p.Name)
 	}
 }
 

@@ -11,6 +11,8 @@
   "category.education": "Образование",
   "category.travel": "Путешествия",
   "category.cards": "Карты",
+  "pot.savings": "Общие сбережения",
+  "pot.emergency": "Резервный фонд",
 
   "schedule.once": "разово, {month}",
   "schedule.monthly": "ежемесячно",

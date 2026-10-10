@@ -139,8 +139,8 @@ p{margin:0}
 .ins b{font-weight:600}
 details.ins summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px}
 details.ins summary::-webkit-details-marker{display:none}
-details.ins summary::after{content:"Show";color:var(--accent-ink);font-weight:500;flex:none}
-details.ins[open] summary::after{content:"Hide"}
+details.ins summary::after{content:attr(data-show);color:var(--accent-ink);font-weight:500;flex:none}
+details.ins[open] summary::after{content:attr(data-hide)}
 details.ins .ins-group{margin-top:8px;display:flex;flex-direction:column;gap:6px}
 details.ins .ins-group p{padding-top:6px;border-top:1px solid color-mix(in srgb,var(--muted) 25%,transparent)}
 /* where leftover money goes */

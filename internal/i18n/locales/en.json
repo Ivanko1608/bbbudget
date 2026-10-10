@@ -11,6 +11,8 @@
   "category.education": "Education",
   "category.travel": "Travel",
   "category.cards": "Cards",
+  "pot.savings": "General savings",
+  "pot.emergency": "Emergency fund",
 
   "schedule.once": "once, {month}",
   "schedule.monthly": "monthly",

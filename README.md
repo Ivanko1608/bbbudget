@@ -175,6 +175,7 @@ App-wide preferences live on the **Settings** page (top right of the UI), in `bb
 | `default_rate_source` | `auto` | The source a newly added currency gets. |
 | `auto_refresh` | `off` | `hourly` or `daily`: while `bbbudget serve` runs, refresh every budget's non-manual rates. The page shows the last run. |
 | `coingecko_api_key` | — | Optional CoinGecko demo key. The file is written with mode 0600, and the key is never sent back to the browser or printed. |
+| `locale` | `auto` | The language for text. `auto` follows the browser in the UI, and `$LANG` for the CLI and MCP server. See [Languages](#languages). |
 
 ```
 bbbudget settings                                   # show
@@ -244,6 +245,25 @@ bbbudget import home ./budget.yaml         # or create a budget straight from a 
 
 Ids are derived from names when omitted. YAML numbers keep their exact text: `450.50` is never a float. Unknown fields, exponents and sub-cent amounts are rejected, and a broken template file is reported by file name. The format is the same document the API and **Download JSON** in the UI produce, so you can export a budget and save it as a template.
 
+## Languages
+
+The UI, the insights, schedule descriptions, month names, validation messages, change history and the CLI report come in **English** and **Russian**. Pick one on the Settings page, or with `bbbudget settings -set locale=ru`. `auto`, the default, follows your browser's languages in the UI and `$LANG` on the command line.
+
+Numbers follow the language as well: `€1,235` in English and `1 235 €` in Russian. Amount fields take what's natural in that language, so in Russian `12,50` means twelve and a half and `1 234,5` works too. Amounts stay exact strings all the way through, and the UI formats them with `Intl.NumberFormat` straight from those strings, never through a float.
+
+Your own data is never translated: names of items, debts, pots and categories stay as you typed them. The one exception is a new budget made from a built-in template, whose default category and pot names are created in your language.
+
+The change history stores each change as a message (a key plus what changed), so it reads in your language too, even for changes made before you switched.
+
+For assistants, each insight comes with its message key and typed arguments (exact amounts and months) alongside the text, so a model can quote numbers instead of re-reading prose. The server instructions tell it to answer in whatever language you write in.
+
+**Adding a language** takes one file on each side and no code:
+
+- `internal/i18n/locales/<code>.json`: server messages, plus an `@meta` block with the separators, the currency placement and the plural rule (`one_other`, `french`, `east_slavic`, `polish` or `none`);
+- `web/static/i18n/<code>.json`: UI strings (plurals come from the browser's `Intl.PluralRules`).
+
+The tests fail if a catalog is missing a key, drops or renames a `{placeholder}`, or lacks a plural form its language needs. They also fail if code uses a key that doesn't exist, or if report text bypasses the catalogs (checked with a pseudo-locale that brackets every message).
+
 ## History and undo
 
 Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it.
@@ -281,6 +301,7 @@ The web UI and the MCP server can run as separate processes on the same data dir
 ```
 cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | history | undo
 internal/money/      Money, Decimal, Currency, rounding. No dependencies.
+internal/i18n/       Message catalogs (locales/*.json), plural rules, locale-aware money and numbers
 internal/budget/     Document model, validation (Compile → Plan), projection engine,
                      insight rules, ops (edits), scenarios, YAML/JSON documents, report
 internal/rates/      Exchange-rate providers (ECB, currency-api, CoinGecko), chain + cache
@@ -291,10 +312,10 @@ internal/app/        Use cases shared by every transport
 internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards
 internal/mcpserver/  MCP tools and resources
 web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html,
-                     manifest.webmanifest and icons (icon.svg is the source of the PNGs)
+                     i18n.js + i18n/*.json, manifest.webmanifest and icons (icon.svg is the source of the PNGs)
 ```
 
-Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← transports. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
+Dependencies only point inward: `money` ← `i18n` ← `budget` ← `store`/`app` ← transports. The domain never builds sentences: it emits message keys with typed arguments, and the transports render them in the reader's language. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
 
 ### HTTP API
 
@@ -308,7 +329,7 @@ Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← trans
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |
-| `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?}` | app settings (the key is reported only as `coingecko_api_key_set`) |
+| `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?, locale?}` | app settings (the key is reported only as `coingecko_api_key_set`) |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
 
 The server binds to 127.0.0.1 and accepts only these requests:
@@ -322,9 +343,10 @@ The server binds to 127.0.0.1 and accepts only these requests:
 
 - **A currency.** Add it to the table in `internal/money/currency.go` (code, minor-unit digits, symbol, crypto/stablecoin flags). For a coin, add its id to `coinGeckoIDs` in `internal/rates/providers.go`.
 - **A rate provider.** Implement `rates.Provider`, register it in `rates.Registry`, and add its name to `budget.RateSources`.
-- **An insight.** Write `func(*budget.Projection) []budget.Insight` and append it to `DefaultRules` in `insights.go`. Rules are pure functions of the projection.
+- **An insight.** Write `func(*budget.Projection) []budget.Insight` and append it to `DefaultRules` in `insights.go`. Rules are pure functions of the projection. An insight carries a message key and typed arguments, never finished text: add the key to every catalog in `internal/i18n/locales/`.
 - **An edit type.** Add a case to `applyOne` in `ops.go` and document it in `OpKinds`. It then works in `apply_ops`, `what_if`, scenarios and the HTTP API.
 - **A template.** Drop a YAML or JSON file in your template directory. Only add a built-in (`internal/templates/builtin/`) if it is generic and fictional.
+- **A language.** See [Languages](#languages).
 - **A storage backend** (SQLite, a remote API, …). Implement the `store.Store` interface. `Update(id, expectedRevision, fn)` must run `fn` and the write atomically, and every write must be recorded for `History` and `Snapshot` with the `store.Change` on its context.
 - **A new frontend.** Call `app.App`. Never re-implement calculations outside `internal/budget`.
 

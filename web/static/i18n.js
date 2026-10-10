@@ -41,17 +41,33 @@ export async function loadLocale(locale, crypto = []) {
 
 export const locale = () => LOCALE;
 
-// t renders a message. A "count" argument picks the plural form
-// ({"one": ..., "few": ..., "other": ...}) with the browser's CLDR rules.
+// t renders a message as plain text. A "count" argument picks the plural
+// form ({"one": ..., "few": ..., "other": ...}) with the browser's CLDR rules.
 export function t(key, args = {}) {
+  return fill(template(key, args), args, String);
+}
+
+// tHTML renders a message whose catalog text holds markup (<b>…</b>): the
+// text is trusted, as it ships with the app, and every argument is escaped.
+export function tHTML(key, args = {}) {
+  return fill(template(key, args), args, escapeHTML);
+}
+
+function template(key, args) {
   let msg = CAT[key] ?? FALLBACK[key];
   if (msg == null) return key; // visible, and caught by the catalog tests
   if (typeof msg === "object") {
     const rules = new Intl.PluralRules(CAT[key] ? LOCALE : "en");
     msg = msg[rules.select(Number(args.count ?? 0))] ?? msg.other;
   }
-  return msg.replace(/\{([a-z_0-9]+)\}/g, (ph, k) => (k in args ? String(args[k]) : ph));
+  return msg;
 }
+
+function fill(msg, args, show) {
+  return msg.replace(/\{([a-z_0-9]+)\}/g, (ph, k) => (k in args ? show(args[k]) : ph));
+}
+
+const escapeHTML = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 // translatePage fills elements that have a data-i18n attribute (text) and
 // data-i18n-attr, a list like "placeholder:some.key;aria-label:other.key" (attributes).
@@ -67,24 +83,25 @@ export function translatePage(root = document) {
 
 // money renders {amount, currency} the way the server's Display does: whole
 // units for fiat, the exact amount for crypto. Rounding is half-even like Go.
-export function money(m) {
+// With exact, fiat keeps its minor units too ("€0.61").
+export function money(m, { exact = false } = {}) {
   if (!m) return "—";
   if (CRYPTO.has(m.currency)) {
     const n = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 20 }).format(m.amount);
     return `${n} ${m.currency}`;
   }
+  const digits = exact ? {} : { maximumFractionDigits: 0, minimumFractionDigits: 0 };
   try {
-    return new Intl.NumberFormat(LOCALE, {
-      style: "currency", currency: m.currency, maximumFractionDigits: 0, minimumFractionDigits: 0, roundingMode: "halfEven",
-    }).format(m.amount);
+    return new Intl.NumberFormat(LOCALE, { style: "currency", currency: m.currency, roundingMode: "halfEven", ...digits }).format(m.amount);
   } catch {
     return m.display || `${m.amount} ${m.currency}`;
   }
 }
 
 // moneyAxis formats a chart axis value (a float: pixels, not money).
-export function moneyAxis(v, currency) {
-  return new Intl.NumberFormat(LOCALE, { style: "currency", currency, maximumFractionDigits: 0 }).format(v);
+// compact shortens it for narrow charts ("€10K", "10 тыс. €").
+export function moneyAxis(v, currency, compact = false) {
+  return new Intl.NumberFormat(LOCALE, { style: "currency", currency, maximumFractionDigits: 0, notation: compact ? "compact" : "standard" }).format(v);
 }
 
 // number groups an exact decimal string ("1000.5" → "1,000.5" / "1 000,5").
@@ -111,7 +128,7 @@ export function parseDecimal(input) {
   return /^[+-]?\d+(\.\d+)?$/.test(s) ? s : null;
 }
 
-// monthName is the full name of month "YYYY-MM" ("October", "жовтень").
+// monthName is the full name of month "YYYY-MM" ("October", "октябрь").
 export function monthName(ym) {
   const [y, m] = ym.split("-").map(Number);
   return new Intl.DateTimeFormat(LOCALE, { month: "long", timeZone: "UTC" }).format(Date.UTC(y, m - 1, 15));
@@ -121,6 +138,9 @@ export function dateTime(iso) {
   return new Date(iso).toLocaleString(LOCALE);
 }
 
+// date renders a timestamp, or a calendar date ("2026-10-07") as that day
+// wherever the reader is.
 export function date(iso) {
-  return new Date(iso).toLocaleDateString(LOCALE);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  return new Date(iso).toLocaleDateString(LOCALE, day ? { timeZone: "UTC" } : {});
 }
