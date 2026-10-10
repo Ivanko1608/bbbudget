@@ -2,7 +2,7 @@
 // document (amounts stay exact decimal strings) and renders the server's
 // report. The only floats here are pixel positions and display-only formatting.
 //
-// Layout: five views (Overview, Lines, Plan, Scenarios, Setup) behind one tab
+// Layout: five views (Overview, Items, Plan, Scenarios, Setup) behind one tab
 // list, shown as top tabs with a summary rail on wide screens and as a bottom
 // tab bar with a pinned mini-summary on phones (the shape a native app would
 // take). The route is #<budget>/<view>.
@@ -13,12 +13,12 @@ const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 const DEC_RE = /^[+-]?\d+(\.\d+)?$/;
 const SAVE_DELAY = 600;
 const POLL_MS = 3000;
-const VIEWS = ["overview", "lines", "plan", "scenarios", "setup"];
+const VIEWS = ["overview", "items", "plan", "scenarios", "setup"];
 const UNDO_MS = 6000;
 
 const S = {
   meta: null,
-  prefs: { fetch_rates: true, default_rate_source: "auto" }, // app settings (settings.html)
+  prefs: { fetch_rates: false, default_rate_source: "auto" }, // app settings (settings.html); offline until loaded
   list: [],
   id: null,
   view: "overview",
@@ -30,7 +30,7 @@ const S = {
   fetching: 0, // rate fetches in flight: saving waits so a placeholder rate is never stored
   notice: null, // an error to keep showing after the next save, instead of "saved"
   timer: null,
-  sheet: null, // index of the line open in the editor sheet
+  sheet: null, // index of the item open in the editor sheet
   allInsights: false,
   lastSummary: "",
   wi: [], // what-if draft ops
@@ -111,7 +111,7 @@ function setView(view, { focus = false } = {}) {
     if (on && focus) tab.focus();
   }
   for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;
-  $("#appAdd").hidden = view !== "lines";
+  $("#appAdd").hidden = view !== "items";
   $("#minibar").hidden = view === "overview" || !S.report;
   setRoute();
   if (view === "overview") drawChart(); // it can't measure itself while hidden
@@ -316,7 +316,7 @@ function renderFlow() {
   ].join("");
 }
 
-// scheduleText describes a withdrawal's schedule like the report does for lines.
+// scheduleText describes a withdrawal's schedule like the report does for items.
 function scheduleText(s) {
   const label = (m) => S.report?.months[m]?.label || monthKey(m);
   if (!s || s.every === 0) return `once, ${label(s?.start || 0)}`;
@@ -345,11 +345,11 @@ function renderEditors() {
   ].join("");
 
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
-  renderLines();
+  renderBudgetItems();
   renderItems();
   if (S.sheet && $("#sheet").open) renderSheet();
   renderWhatIf();
-  renderLineNumbers();
+  renderItemNumbers();
   renderRateNotes();
   restoreFocus(active);
 }
@@ -394,7 +394,7 @@ function renderItems() {
     if (pt.target) parts.push(!g ? `target ${esc(pt.target)}` : g.already_met ? "target met" : g.reached_label ? `target ${esc(g.target.display)} by ${esc(g.reached_label)}` : `target ${esc(g.target.display)} not reached`);
     if (pt.monthly) parts.push(`${esc(pt.monthly)} a month`);
     if (rep?.default) parts.push("gets the rest of the leftover");
-    const fed = b.lines.filter((l) => l.pot === pt.id);
+    const fed = b.items.filter((l) => l.pot === pt.id);
     if (fed.length) parts.push(fed.map((l) => esc(l.name)).join(", ") + (fed.length === 1 ? " goes through it" : " go through it"));
     return itemRow({ kind: "pots", i, name: pt.name, color: POT_COLOR[pt.kind] || "var(--save)", meta: parts.join(" · "), value: `${money(pt.balance)} <small>now</small>` });
   }).join("") || `<p class="muted pad">No pots. Add one: money left over each month goes there.</p>`;
@@ -411,53 +411,53 @@ function renderItems() {
     value: `${esc(c.per_base)} <small>per ${esc(b.base_currency)}</small>` })).join("") || `<p class="muted pad">Only ${esc(b.base_currency)} so far.</p>`;
 
   $("#categories").innerHTML = b.categories.map((c, i) => {
-    const n = b.lines.filter((l) => l.category === c.id).length;
+    const n = b.items.filter((l) => l.category === c.id).length;
     return itemRow({ kind: "categories", i, name: c.label, color: c.color || "var(--line)",
-      meta: `${c.kind === "income" ? "Income" : "Cost"} · ${n} line${n === 1 ? "" : "s"}` });
+      meta: `${c.kind === "income" ? "Income" : "Cost"} · ${n} item${n === 1 ? "" : "s"}` });
   }).join("");
 }
 
-// ---------- lines: grouped list + editor sheet ----------
+// ---------- items: grouped list + editor sheet ----------
 
-// lineGroups orders lines income first, then by expense category, as
-// [{cat, lines: [index, ...]}].
-function lineGroups() {
+// itemGroups orders items income first, then by expense category, as
+// [{cat, items: [index, ...]}].
+function itemGroups() {
   const b = S.budget;
   const order = [...b.categories.filter((c) => c.kind === "income"), ...b.categories.filter((c) => c.kind !== "income")];
-  const groups = order.map((cat) => ({ cat, lines: [] }));
+  const groups = order.map((cat) => ({ cat, items: [] }));
   const byId = Object.fromEntries(groups.map((g) => [g.cat.id, g]));
-  const other = { cat: { id: "", label: "Other", color: "" }, lines: [] };
-  b.lines.forEach((l, i) => (byId[l.category] || other).lines.push(i));
-  return [...groups, other].filter((g) => g.lines.length);
+  const other = { cat: { id: "", label: "Other", color: "" }, items: [] };
+  b.items.forEach((l, i) => (byId[l.category] || other).items.push(i));
+  return [...groups, other].filter((g) => g.items.length);
 }
 
-function renderLines() {
+function renderBudgetItems() {
   const b = S.budget;
-  const rep = Object.fromEntries((S.report?.lines || []).map((l) => [l.id, l]));
-  $("#lines").innerHTML = lineGroups().map(({ cat, lines }) => `<div class="group">
+  const rep = Object.fromEntries((S.report?.items || []).map((l) => [l.id, l]));
+  $("#items").innerHTML = itemGroups().map(({ cat, items }) => `<div class="group">
       <div class="group-head"><span><span class="sw" style="background:${esc(cat.color || "var(--line)")}"></span>${esc(cat.label)}</span>
         <span class="total" data-total="${esc(cat.id)}"></span></div>
-      ${lines.map((i) => {
-        const l = b.lines[i];
-        return `<div class="line" data-row="lines.${i}" style="box-shadow:inset 3px 0 0 ${esc(cat.color || "var(--line)")}">
-          <button type="button" class="line-main" data-action="edit" data-kind="lines" data-i="${i}" aria-label="Edit ${esc(l.name)}">
+      ${items.map((i) => {
+        const l = b.items[i];
+        return `<div class="line" data-row="items.${i}" style="box-shadow:inset 3px 0 0 ${esc(cat.color || "var(--line)")}">
+          <button type="button" class="line-main" data-action="edit" data-kind="items" data-i="${i}" aria-label="Edit ${esc(l.name)}">
             <span class="name">${esc(l.name)}</span><span class="meta">${esc(rep[l.id]?.schedule_text || "")}</span></button>
           <label class="amt"><span class="sr">Amount for ${esc(l.name)}</span>
-            <input data-path="lines.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(fmtAmount(l.amount, l.currency))}">
+            <input data-path="items.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(fmtAmount(l.amount, l.currency))}">
             <span class="cur">${esc(l.currency)}</span></label>
-          <span class="chev-hit" data-action="edit" data-kind="lines" data-i="${i}">${CHEVRON}</span>
+          <span class="chev-hit" data-action="edit" data-kind="items" data-i="${i}">${CHEVRON}</span>
           <span class="base" data-base="${esc(l.id)}"></span>
         </div>`;
       }).join("")}
-    </div>`).join("") || `<div class="card"><p class="muted">No lines yet. Add your income and regular costs.</p></div>`;
+    </div>`).join("") || `<div class="card"><p class="muted">No items yet. Add your income and regular costs.</p></div>`;
 }
 
-// renderLineNumbers updates the computed figures in place, so typing in an
+// renderItemNumbers updates the computed figures in place, so typing in an
 // amount never loses focus when the report comes back.
-function renderLineNumbers() {
+function renderItemNumbers() {
   if (!S.report || !S.budget) return;
   const base = S.report.base_currency;
-  const byId = Object.fromEntries(S.report.lines.map((l) => [l.id, l]));
+  const byId = Object.fromEntries(S.report.items.map((l) => [l.id, l]));
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
     if (!l) { el.textContent = ""; return; }
@@ -468,7 +468,7 @@ function renderLineNumbers() {
   });
   // Group totals, display only: recurring per month, one-offs separately.
   const totals = {}, once = {};
-  for (const l of S.report.lines) {
+  for (const l of S.report.items) {
     const cat = S.budget.categories.some((c) => c.id === l.category) ? l.category : "";
     totals[cat] = (totals[cat] || 0) + parseFloat(l.monthly_equivalent_base.amount);
     if (l.schedule.every === 0) once[cat] = (once[cat] || 0) + parseFloat(l.per_occurrence_base.amount);
@@ -481,17 +481,17 @@ function renderLineNumbers() {
     if (o) parts.push(`${esc(fmt.format(o))}<small> once</small>`);
     el.innerHTML = parts.join(" + ");
   });
-  // Schedule texts come from the report too; add where a routed line goes.
-  document.querySelectorAll('#lines .line[data-row^="lines."]').forEach((row) => {
-    const l = S.budget.lines[+row.dataset.row.split(".")[1]];
+  // Schedule texts come from the report too; add where a routed item goes.
+  document.querySelectorAll('#items .line[data-row^="items."]').forEach((row) => {
+    const l = S.budget.items[+row.dataset.row.split(".")[1]];
     const meta = row.querySelector(".meta");
     if (!l || !meta) return;
     const pot = l.pot && S.budget.pots.find((p) => p.id === l.pot);
     const route = pot ? (byId[l.id]?.income ? ` · straight into ${pot.name}` : ` · paid from ${pot.name}`) : "";
     meta.textContent = (byId[l.id]?.schedule_text || "") + route;
   });
-  if ($("#sheet").open && S.sheet?.kind === "lines") {
-    const l = S.budget.lines[S.sheet.i];
+  if ($("#sheet").open && S.sheet?.kind === "items") {
+    const l = S.budget.items[S.sheet.i];
     const r = l && byId[l.id];
     const el = $("#sheetBase");
     if (el) el.textContent = r && r.amount.currency !== base
@@ -509,12 +509,12 @@ function categorySelect(path) {
   return `<label class="f">Category<select data-path="${esc(path)}" data-kind="text" data-structural>${group("income", "Income")}${group("expense", "Costs")}</select></label>`;
 }
 
-// potRouteSelect lets a line skip the month's budget: income goes straight
+// potRouteSelect lets an item skip the month's budget: income goes straight
 // into a pot, a cost is paid from one.
 function potRouteSelect(l, i) {
   const income = S.budget.categories.find((c) => c.id === l.category)?.kind === "income";
   const opts2 = [["", "This month's budget"], ...S.budget.pots.map((p) => [p.id, p.name])];
-  return `<label class="f wide">${income ? "Goes into" : "Paid from"}<select data-path="lines.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
+  return `<label class="f wide">${income ? "Goes into" : "Paid from"}<select data-path="items.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
     <p class="base">${income
       ? "Pick a pot to save all of it straight away, for example a sale or a bonus. It then isn't spendable that month and no share of it goes to debts."
       : "Pick a pot to pay this from savings you set aside for it. If the pot holds less, the rest comes out of that month."}</p>`;
@@ -523,18 +523,18 @@ function potRouteSelect(l, i) {
 // SHEETS describes the editor for each kind of item: its title, fields and
 // the delete action. Fields use the same data-path inputs as everywhere else.
 const SHEETS = {
-  lines: {
-    noun: "line", title: (l) => l.name,
+  items: {
+    noun: "item", title: (l) => l.name,
     body(l, i) {
       const sch = l.schedule;
-      return `${field("Name", `lines.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${field("Amount", `lines.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
-        ${select("Currency", `lines.${i}.currency`, currencyOptions(), { structural: true })}
-        ${categorySelect(`lines.${i}.category`)}
-        ${select("Repeats", `lines.${i}.schedule.every`, EVERY, { structural: true })}
-        <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="lines.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
+      return `${field("Name", `items.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field("Amount", `items.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
+        ${select("Currency", `items.${i}.currency`, currencyOptions(), { structural: true })}
+        ${categorySelect(`items.${i}.category`)}
+        ${select("Repeats", `items.${i}.schedule.every`, EVERY, { structural: true })}
+        <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="items.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
         ${sch.every === 0 ? "<span></span>" :
-          `<label class="f">Until (optional)<input type="month" data-path="lines.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+          `<label class="f">Until (optional)<input type="month" data-path="items.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
         ${potRouteSelect(l, i)}
         <p class="base" id="sheetBase"></p>`;
     },
@@ -619,7 +619,7 @@ function renderSheet() {
       <button type="button" class="danger" data-action="delete-item" data-kind="${kind}" data-i="${i}">Delete ${def.noun}</button>
       <button type="button" class="primary" data-action="close-sheet">Done</button>
     </div>`;
-  renderLineNumbers();
+  renderItemNumbers();
   renderRateNotes();
 }
 
@@ -628,10 +628,10 @@ function openSheet(kind, i, { focusFirst = false } = {}) {
   renderSheet();
   const d = $("#sheet");
   if (!d.open) d.showModal();
-  renderLineNumbers(); // the base-currency note needs the sheet open
-  // A new item starts on its name; an existing line on its amount.
+  renderItemNumbers(); // the base-currency note needs the sheet open
+  // A new item starts on its name; an existing item on its amount.
   const first = focusFirst ? d.querySelector("#sheetBody input, #sheetBody select")
-    : kind === "lines" ? d.querySelector(`[data-path="lines.${i}.amount"]`) : null;
+    : kind === "items" ? d.querySelector(`[data-path="items.${i}.amount"]`) : null;
   first?.focus();
   if (focusFirst && first?.select) first.select();
 }
@@ -672,7 +672,7 @@ function onEditorInput(e) {
   if (path === "months" || path.endsWith(".every")) v = parseInt(v, 10);
   const cur = path.match(/^currencies\.(\d+)\.(\w+)$/);
   if (cur && cur[2] === "cash_out_fee_pct" && v === "") v = undefined;
-  if (/^lines\.\d+\.pot$/.test(path) && v === "") v = undefined;
+  if (/^items\.\d+\.pot$/.test(path) && v === "") v = undefined;
   if (path.startsWith("withdrawals.") && path.endsWith(".schedule.every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   if (cur && (cur[2] === "code" || cur[2] === "source")) {
     // Selects fire input then change: act once, on change.
@@ -787,13 +787,13 @@ function renderRateNotes() {
 }
 
 const ACTIONS = {
-  "add-line"() {
+  "add-item"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
     if (!cat) { setView("setup"); status("Add a category first.", true); return; }
-    b.lines.push({ id: newId("New line", b.lines), name: "New line", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
+    b.items.push({ id: newId("New item", b.items), name: "New item", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
-    openSheet("lines", b.lines.length - 1, { focusFirst: true });
+    openSheet("items", b.items.length - 1, { focusFirst: true });
   },
   edit(i, el) { openSheet(el.dataset.kind, i); },
   "close-sheet"() { closeSheet(); },
@@ -801,18 +801,18 @@ const ACTIONS = {
     const kind = el.dataset.kind;
     const item = S.budget[kind][i];
     if (kind === "currencies") {
-      const user = [...S.budget.lines, ...S.budget.debts].find((x) => x.currency === item.code);
+      const user = [...S.budget.items, ...S.budget.debts].find((x) => x.currency === item.code);
       if (user) { status(`${item.code} is still used by “${user.name}”.`, true); return; }
     }
     if (kind === "pots") {
       const w = S.budget.withdrawals.find((x) => x.pot === item.id);
       if (w) { status(`“${item.name}” is used by the transfer “${w.name}”.`, true); return; }
-      const l = S.budget.lines.find((x) => x.pot === item.id);
-      if (l) { status(`“${item.name}” is used by the line “${l.name}”. Route that line elsewhere first.`, true); return; }
+      const l = S.budget.items.find((x) => x.pot === item.id);
+      if (l) { status(`“${item.name}” is used by the item “${l.name}”. Route that item elsewhere first.`, true); return; }
       if (S.budget.pots.length === 1) { status("Keep at least one pot: money left over each month goes there.", true); return; }
     }
-    if (kind === "categories" && S.budget.lines.some((l) => l.category === item.id)) {
-      status(`“${item.label}” is still used by a line.`, true);
+    if (kind === "categories" && S.budget.items.some((l) => l.category === item.id)) {
+      status(`“${item.label}” is still used by an item.`, true);
       return;
     }
     removeWithUndo(kind, i, kind === "currencies" ? item.code : `“${item.name || item.label}”`);
@@ -889,7 +889,7 @@ const ACTIONS = {
   "all-insights"() { S.allInsights = !S.allInsights; renderInsights(); },
   new() { openNewDialog(); },
   export() { exportJSON(); },
-  "add-wi"() { S.wi.push({ kind: "line", target: S.budget.lines[0]?.id || "", value: "" }); renderWhatIf(); },
+  "add-wi"() { S.wi.push({ kind: "item", target: S.budget.items[0]?.id || "", value: "" }); renderWhatIf(); },
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
   "save-wi"() { saveWhatIf(); },
@@ -1058,7 +1058,7 @@ function renderOutputs() {
     h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td>${hasFrom ? `<td>${esc(m.from_savings.display)}</td>` : ""}${hasOwed ? `<td class="${owed ? "neg" : ""}">${esc(m.overdraft.display)}</td>` : ""}<td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td>${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
   }
   $("#table").innerHTML = h + "</tbody>";
-  renderLineNumbers();
+  renderItemNumbers();
   $("#minibar").hidden = S.view === "overview";
 }
 
@@ -1154,15 +1154,15 @@ function drawChart() {
 
 // ---------- scenarios ----------
 
-const WI_KINDS = [["line", "Change a line's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove a line"]];
+const WI_KINDS = [["item", "Change an item's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove an item"]];
 
 function renderWhatIf() {
   const b = S.budget;
-  const lineOpts = b.lines.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  const itemOpts = b.items.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
   const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} (now ${esc(c.per_base)})</option>`).join("");
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
       <label class="f">Change<select data-wi="${i}" data-k="kind">${WI_KINDS.map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Line"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : lineOpts}</select></label>`}
+      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Item"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
       ${o.kind === "remove" ? "<span></span>" : `<label class="f">New value<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
       ${del("del-wi", i, "change")}
     </div>`).join("") || `<p class="muted">Add a change, for example rent down to 1,000 or a different exchange rate, then preview it.</p>`;
@@ -1175,10 +1175,10 @@ function wiOps() {
     if (o.kind !== "remove" && !DEC_RE.test(String(o.value).trim())) throw new Error("Each new value must be a plain number like 800 or 92.5");
     const value = String(o.value).trim();
     switch (o.kind) {
-      case "line": return { op: "set_line", target: o.target, value: { amount: value } };
+      case "item": return { op: "set_item", target: o.target, value: { amount: value } };
       case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
       case "extra": return { op: "set_settings", value: { extra_to_debt_pct: value } };
-      case "remove": return { op: "remove_line", target: o.target };
+      case "remove": return { op: "remove_item", target: o.target };
     }
   });
 }
@@ -1298,8 +1298,8 @@ document.addEventListener("change", (e) => {
 // Show amounts with their currency's decimals once the field is left.
 document.addEventListener("focusout", (e) => {
   const el = e.target;
-  const m = el.dataset?.path?.match(/^lines\.(\d+)\.amount$/);
-  if (m && DEC_RE.test(el.value.trim())) el.value = fmtAmount(el.value.trim(), S.budget.lines[+m[1]]?.currency);
+  const m = el.dataset?.path?.match(/^items\.(\d+)\.amount$/);
+  if (m && DEC_RE.test(el.value.trim())) el.value = fmtAmount(el.value.trim(), S.budget.items[+m[1]]?.currency);
 });
 document.addEventListener("click", (e) => {
   const link = e.target.closest("[data-view-link]");
@@ -1327,9 +1327,9 @@ sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); }
 sheet.addEventListener("close", () => {
   const was = S.sheet;
   S.sheet = null;
-  renderLines();
+  renderBudgetItems();
   renderItems();
-  renderLineNumbers();
+  renderItemNumbers();
   renderRateNotes();
   // Back to the row that was edited, for keyboard users.
   if (was) document.querySelector(`[data-row="${was.kind}.${was.i}"] .line-main, button[data-row="${was.kind}.${was.i}"]`)?.focus({ preventScroll: true });

@@ -13,9 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preload" href="fonts/golos-text-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,7 +24,7 @@
     <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
   </div>
   <div class="appbar-actions">
-    <button id="appAdd" type="button" class="icon-btn compact-only" data-action="add-line" aria-label="Add a line" hidden>
+    <button id="appAdd" type="button" class="icon-btn compact-only" data-action="add-item" aria-label="Add an item" hidden>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
     <button id="newBtn" type="button" class="desktop-only">New</button>
     <a class="btn desktop-only" href="settings.html">Settings</a>
@@ -63,8 +61,8 @@
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button type="button" role="tab" id="tab-overview" aria-controls="view-overview" data-view="overview">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span>Overview</span></button>
-      <button type="button" role="tab" id="tab-lines" aria-controls="view-lines" data-view="lines">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>Lines</span></button>
+      <button type="button" role="tab" id="tab-items" aria-controls="view-items" data-view="items">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>Items</span></button>
       <button type="button" role="tab" id="tab-plan" aria-controls="view-plan" data-view="plan">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><span>Plan</span></button>
       <button type="button" role="tab" id="tab-scenarios" aria-controls="view-scenarios" data-view="scenarios">
@@ -101,14 +99,14 @@
       </section>
     </section>
 
-    <!-- Lines -->
-    <section class="view" id="view-lines" role="tabpanel" aria-labelledby="tab-lines" hidden>
+    <!-- Items -->
+    <section class="view" id="view-items" role="tabpanel" aria-labelledby="tab-items" hidden>
       <div class="view-head">
         <h2>Income and costs</h2>
-        <p class="muted">Change an amount right in the list, or open a line for the rest. ≈ is the monthly amount in <span class="baseCode"></span>.</p>
+        <p class="muted">Change an amount right in the list, or open an item for the rest. ≈ is the monthly amount in <span class="baseCode"></span>.</p>
       </div>
-      <div id="lines"></div>
-      <button class="add" type="button" data-action="add-line">+ Add a line</button>
+      <div id="items"></div>
+      <button class="add" type="button" data-action="add-item">+ Add an item</button>
     </section>
 
     <!-- Plan: debts, savings pots, withdrawals -->
@@ -120,12 +118,12 @@
       </section>
       <section class="card" aria-labelledby="h-flow">
         <h2 id="h-flow">Where leftover money goes</h2>
-        <p class="muted">Each month, what's left after spending and minimum debt payments goes through these steps, in order. Income you send straight to a pot (on its line) skips them.</p>
+        <p class="muted">Each month, what's left after spending and minimum debt payments goes through these steps, in order. Income you send straight to a pot (on its item) skips them.</p>
         <ol class="flow" id="flow"></ol>
       </section>
       <section class="card" aria-labelledby="h-pots">
         <h2 id="h-pots">Savings pots</h2>
-        <p class="muted">Savings are never spent to cover a short month unless you plan it. To send a sale or bonus straight into a pot, or pay a cost from one, open that line and pick the pot.</p>
+        <p class="muted">Savings are never spent to cover a short month unless you plan it. To send a sale or bonus straight into a pot, or pay a cost from one, open that item and pick the pot.</p>
         <div id="pots" class="items"></div>
         <button class="add" type="button" data-action="add-pot">+ Add a pot</button>
       </section>
@@ -183,6 +181,12 @@
           <button type="button" data-action="export">Download JSON</button>
         </div>
       </section>
+      <!-- AGPL-3.0 section 13: users of a modified version must be offered its source.
+           If you run a fork, point this link at your fork's source. -->
+      <footer class="foot muted">
+        bbbudget is free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU AGPL v3</a>
+        <span class="nowrap">· <a href="https://github.com/Ivanko1608/bbbudget" target="_blank" rel="noopener noreferrer">Source code</a></span>
+      </footer>
     </section>
   </div>
 </div>
@@ -192,11 +196,11 @@
 <!-- Screen readers hear only what an edit changed, once (not the whole summary three times). -->
 <p class="sr" id="announce" role="status" aria-live="polite"></p>
 
-<!-- Line editor: a bottom sheet on phones, a dialog on wide screens. -->
+<!-- Editor: a bottom sheet on phones, a dialog on wide screens. -->
 <dialog id="sheet" class="sheet" aria-labelledby="sheetTitle">
   <div class="sheet-grip" aria-hidden="true"></div>
   <div class="sheet-head">
-    <h2 id="sheetTitle">Edit line</h2>
+    <h2 id="sheetTitle">Edit item</h2>
     <button type="button" class="icon-btn" data-action="close-sheet" aria-label="Close">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>

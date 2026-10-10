@@ -14,7 +14,7 @@ import (
 // Bounds that keep every intermediate sum far inside int64 minor units.
 const (
 	MaxMonths = 600
-	MaxLines  = 2000
+	MaxItems  = 2000
 	// MaxAmountMajor caps any single amount (10^12 major units).
 	MaxAmountMajor = 1_000_000_000_000
 	// MaxAmountMinor caps it in minor units too, which binds for currencies
@@ -48,7 +48,7 @@ type Plan struct {
 	ExtraPct    money.Decimal
 	Strategy    string
 	Categories  map[string]Category
-	Lines       []PlanLine
+	Items       []PlanItem
 	Debts       []PlanDebt
 	Pots        []PlanPot
 	Withdrawals []PlanWithdrawal
@@ -68,11 +68,11 @@ type fx struct {
 	keepMul *big.Rat // 1 - cash-out fee/100: the share of income that arrives
 }
 
-type PlanLine struct {
-	Line
+type PlanItem struct {
+	Item
 	Amt    money.Money
 	Income bool
-	// PotIdx indexes Plan.Pots for a line routed through a pot, else -1.
+	// PotIdx indexes Plan.Pots for an item routed through a pot, else -1.
 	PotIdx int
 }
 
@@ -224,12 +224,12 @@ func Compile(b Budget) (*Plan, error) {
 		p.Categories[cat.ID] = cat
 	}
 
-	if len(b.Lines) > MaxLines {
-		c.add("lines", "at most %d lines", MaxLines)
+	if len(b.Items) > MaxItems {
+		c.add("items", "at most %d items", MaxItems)
 	}
 	seen = map[string]bool{}
-	for i, l := range b.Lines {
-		path := fmt.Sprintf("lines[%d]", i)
+	for i, l := range b.Items {
+		path := fmt.Sprintf("items[%d]", i)
 		c.id(path+".id", l.ID, seen)
 		cat, ok := p.Categories[l.Category]
 		if !ok {
@@ -242,7 +242,7 @@ func Compile(b Budget) (*Plan, error) {
 		if !ok {
 			continue
 		}
-		p.Lines = append(p.Lines, PlanLine{Line: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome, PotIdx: -1})
+		p.Items = append(p.Items, PlanItem{Item: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome, PotIdx: -1})
 	}
 
 	seen = map[string]bool{}
@@ -289,14 +289,14 @@ func Compile(b Budget) (*Plan, error) {
 	if p.DefaultPot < 0 {
 		p.DefaultPot = len(p.Pots) - 1
 	}
-	for i := range p.Lines {
-		if ref := p.Lines[i].Pot; ref != "" {
+	for i := range p.Items {
+		if ref := p.Items[i].Pot; ref != "" {
 			k, ok := potIdx[ref]
 			if !ok {
-				c.add(fmt.Sprintf("lines[%d].pot", indexWhere(b.Lines, func(l Line) bool { return l.ID == p.Lines[i].ID })), "unknown pot %q", ref)
+				c.add(fmt.Sprintf("items[%d].pot", indexWhere(b.Items, func(l Item) bool { return l.ID == p.Items[i].ID })), "unknown pot %q", ref)
 				continue
 			}
-			p.Lines[i].PotIdx = k
+			p.Items[i].PotIdx = k
 		}
 	}
 

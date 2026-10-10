@@ -167,9 +167,9 @@ func (pr *Projection) TotalInterestBase() money.Money {
 	return t
 }
 
-// MonthlyEquivalent is a recurring line's cost (or income) per month in base:
-// a quarterly €300 line is €100/month. One-off lines return zero.
-func (p *Plan) MonthlyEquivalent(l PlanLine) money.Money {
+// MonthlyEquivalent is a recurring item's cost (or income) per month in base:
+// a quarterly €300 item is €100/month. One-off items return zero.
+func (p *Plan) MonthlyEquivalent(l PlanItem) money.Money {
 	if l.Schedule.Every == 0 {
 		return money.Zero(p.Base)
 	}
@@ -180,10 +180,10 @@ func (p *Plan) MonthlyEquivalent(l PlanLine) money.Money {
 	return per.Mul(big.NewRat(1, int64(l.Schedule.Every)), money.HalfEven)
 }
 
-// RecurringIncome is the monthly-equivalent income from recurring lines active at month 0.
+// RecurringIncome is the monthly-equivalent income from recurring items active at month 0.
 func (p *Plan) RecurringIncome() money.Money {
 	t := money.Zero(p.Base)
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		if l.Income && l.Schedule.Start == 0 {
 			t = t.Add(p.MonthlyEquivalent(l))
 		}

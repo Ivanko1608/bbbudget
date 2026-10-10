@@ -13,7 +13,7 @@ import (
 // holds to the cent:
 //
 //	Left      = Income − IncomeToPots − (Expenses − PaidFromPots) − DebtMinCost
-//	            (the month's own money: lines routed through pots excluded)
+//	            (the month's own money: items routed through pots excluded)
 //	Left + Transfers + (Overdraft − previous Overdraft) = ExtraCost + (ToSavings − IncomeToPots)
 //	FromSavings = Transfers + PaidFromPots
 //	Saved     = ToSavings − FromSavings                (net change in savings)
@@ -42,7 +42,7 @@ type Month struct {
 	IncomeToPots money.Money `json:"income_to_pots"`
 	// PaidFromPots is the part of pot-routed costs their pots paid.
 	PaidFromPots money.Money `json:"paid_from_pots"`
-	// Left is the month's own money: income minus spending, with lines routed
+	// Left is the month's own money: income minus spending, with items routed
 	// through pots and savings left out.
 	Left money.Money `json:"left"`
 	// Transfers is what planned transfers (withdrawals) moved from pots into the month.
@@ -103,7 +103,7 @@ type WithdrawalMonth struct {
 
 // PotCostMonth is a cost routed through a pot, in a month it is due.
 type PotCostMonth struct {
-	LineID string      `json:"line"`
+	ItemID string      `json:"item"`
 	Cost   money.Money `json:"cost"`
 	Paid   money.Money `json:"paid"`
 }
@@ -165,11 +165,11 @@ func Project(p *Plan) (proj *Projection, err error) {
 			}
 		}
 
-		// 2. Income and expense lines. Lines routed through a pot are settled
+		// 2. Income and expense items. Items routed through a pot are settled
 		// against it below.
-		var routed []PlanLine
+		var routed []PlanItem
 		var routedAmt []money.Money
-		for _, l := range p.Lines {
+		for _, l := range p.Items {
 			if !l.Schedule.ActiveIn(m) {
 				continue
 			}
@@ -198,7 +198,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 			mo.DebtMinCost = mo.DebtMinCost.Add(cost)
 		}
 
-		// Routed lines: income goes straight into its pot first, then costs are
+		// Routed items: income goes straight into its pot first, then costs are
 		// paid from theirs, as far as each pot holds.
 		for i, l := range routed {
 			if l.Income {
@@ -214,7 +214,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 			pots[l.PotIdx] = pots[l.PotIdx].Sub(paid)
 			pm[l.PotIdx].Out = pm[l.PotIdx].Out.Add(paid)
 			mo.PaidFromPots = mo.PaidFromPots.Add(paid)
-			mo.PotCosts = append(mo.PotCosts, PotCostMonth{LineID: l.ID, Cost: routedAmt[i], Paid: paid})
+			mo.PotCosts = append(mo.PotCosts, PotCostMonth{ItemID: l.ID, Cost: routedAmt[i], Paid: paid})
 		}
 
 		mo.Left = mo.Income.Sub(mo.IncomeToPots).Sub(mo.Expenses.Sub(mo.PaidFromPots)).Sub(mo.DebtMinCost)

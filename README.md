@@ -1,15 +1,123 @@
+<div align="center">
+
 # bbbudget
 
-Plan and explore household budgets across currencies: a projection engine with exact money, a web UI, a CLI and an MCP server so Claude (or any MCP client) can read and edit your budgets.
+**A budget planner that does exact money math and keeps your numbers on your machine.**
+
+Multi-currency household budgets, month-by-month projections, debt payoff and what-if scenarios.
+A web UI, a CLI and an MCP server in a single Go binary that runs on your machine and keeps your numbers there.
+
+![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)
+![Telemetry: none](https://img.shields.io/badge/telemetry-none-1f8a5b)
+![Runs on: localhost](https://img.shields.io/badge/runs%20on-localhost-2b59c3)
+![MCP ready](https://img.shields.io/badge/MCP-ready-7a6ff0)
+![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-c2412d)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="bbbudget web UI showing a fictional household's monthly split and insights" src="docs/screenshot-light.png" width="760">
+</picture>
+
+</div>
+
+## Why bbbudget
+
+- 🔒 **Private by design.** No account, no cloud, no analytics, no tracking. Your budget is a plain file in your home directory. Out of the box it never touches the network. Fetching exchange rates is opt-in.
+- 🧮 **Exact to the cent.** No floating point anywhere. Rounding is explicit and pessimistic, so the plan never looks better than reality.
+- 💱 **Built for messy, multi-currency lives.** Get paid in one currency, pay rent in another and tuition in a third. bbbudget prices in the FX rate *and* the transfer fees you lose along the way.
+- 📉 **Debts, goals and what-ifs.** Avalanche or snowball payoff, savings goal ETAs, and scenarios you compare side by side before changing anything.
+- 🤖 **Talk to your budget.** A built-in MCP server lets Claude (or any MCP client) read and edit budgets: *"what if rent goes up to 1200?"*
+- 📦 **One static binary.** The UI is embedded. No Node, no database, no Docker.
+
+## Install
+
+Packages for each release are on the [Releases](https://github.com/Ivanko1608/bbbudget/releases) page, for x86_64 and arm64. Each one installs a single static binary plus a systemd user service.
+
+**Debian / Ubuntu**
 
 ```
-make build
-./bin/bbbudget init home -template example     # a fictional household to explore
-./bin/bbbudget serve            # http://127.0.0.1:8080  (MCP at /mcp)
-./bin/bbbudget report home      # projection + insights in the terminal
+sudo apt install ./bbbudget_<version>_amd64.deb
 ```
 
-Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27). One static binary; the UI is embedded.
+**Fedora / RHEL / openSUSE**
+
+```
+sudo dnf install ./bbbudget-<version>-1.x86_64.rpm      # openSUSE: sudo zypper install ./bbbudget-…rpm
+```
+
+**Arch Linux**: from the AUR (`yay -S bbbudget`), or install the release package directly:
+
+```
+sudo pacman -U ./bbbudget-<version>-1-x86_64.pkg.tar.zst
+```
+
+**Nix / NixOS**: try it without installing:
+
+```
+nix run github:Ivanko1608/bbbudget -- serve
+```
+
+Or add it to your system flake:
+
+```nix
+{
+  inputs.bbbudget.url = "github:Ivanko1608/bbbudget";
+  inputs.bbbudget.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { nixpkgs, bbbudget, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        bbbudget.nixosModules.default
+        { programs.bbbudget.enable = true; }   # autoStart = true; starts it for every user at login
+      ];
+    };
+  };
+}
+```
+
+There's also `overlays.default` if you'd rather use `pkgs.bbbudget` with home-manager or anything else.
+
+**From source** (Go 1.25+, the MCP SDK's minimum):
+
+```
+make build    # ./bin/bbbudget
+```
+
+### Run it in the background
+
+Every package ships a systemd **user** service. It runs as you, on your own budgets, and only listens on `127.0.0.1`:
+
+```
+systemctl --user enable --now bbbudget     # then open http://127.0.0.1:8080
+```
+
+To change its flags, run `systemctl --user edit bbbudget` and clear the command before setting a new one (on NixOS the binary is `/run/current-system/sw/bin/bbbudget`):
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/bbbudget serve -budget home
+```
+
+## Quick start
+
+```
+bbbudget init home -template example     # a fictional household to explore
+bbbudget serve                           # http://127.0.0.1:8080  (MCP at /mcp)
+bbbudget report home                     # projection + insights in the terminal
+```
+
+## Privacy
+
+A budget is about as personal as data gets, so bbbudget is built to keep it on your machine:
+
+- **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
+- **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
+- **Offline by default.** Fetching exchange rates is off until you turn it on in [Settings](#settings) (`fetch_rates`). Until then you type rates by hand and nothing goes online. Once it's on, the app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default too. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up.
+- **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file.
+- **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
+
+One honest caveat: when you use the MCP server with a hosted AI assistant, the MCP server itself still runs locally, but whatever budget data the assistant reads is sent to that assistant's provider as part of the conversation. If that matters to you, use a local MCP client or stick to the web UI and CLI.
 
 ## What it models
 
@@ -19,14 +127,14 @@ Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27). One static binary;
 | **Currencies** | Fiat or crypto (BTC, ETH, SOL, LTC, BNB, XRP, ADA, TRX, DOGE, USDT, USDC, DAI). `per_base` rate (e.g. US$ per €), `transfer_fee_pct` (the share lost on every payment in that currency) and `cash_out_fee_pct` (the share lost when income in it is converted to base, such as fees for selling crypto). |
 | **Rate source** | Per currency: `manual` (typed) or fetched from `ecb`, `currency-api`, `coingecko` or `auto`. See [Exchange rates](#exchange-rates). |
 | **Categories** | `income` or `expense`, with a label and colour. |
-| **Lines** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
+| **Items** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
 | **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
 | **Savings pots** | Savings split by purpose: general savings, sinking funds (saving ahead for a known cost) and an emergency fund. Each has a balance and optionally a target and a fixed monthly contribution. Each month's leftover pays the contributions, then the share to debts, then fills pots with a target (top to bottom), then goes to the first general pot. |
 | **Short months** | Savings are balances, never income. A month that falls short is **not** paid from savings automatically: it's reported with the pots that could cover it (general first, sinking funds next, the emergency fund last), and otherwise owed on the current account and repaid from the next surplus before anything is saved. |
 | **Withdrawals** | Planned transfers out of a pot ("take €300 from General savings in October"), shown as *from savings*, never as income. One tap on a short month plans one. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest line, whether debt minimums cover interest, payoff dates, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
 
 ## Money handling
 
@@ -35,7 +143,7 @@ Insights cover category shares, transfer losses, cash-out losses, how much incom
 - **Rounding is explicit and pessimistic.** There is one rounding per conversion. Money you pay rounds **up**, money you receive rounds **down**, and interest charged to you rounds up. A plan therefore never looks better than reality, and is off by at most one minor unit per conversion.
 - **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `left + from savings + change in overdraft = extra debt payment + into savings`, `saved = into savings − from savings`, `savings = previous + saved = the sum of the pots`, and every pot reconciles (`opening + in − out = closing`, never below zero). Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies, schedules, pots, withdrawals and overdrafts.
 - **Overflow can't wrap.** Arithmetic is checked: overflow and currency mismatches become errors, never wrapped values or crashes. Inputs are bounded (amounts ≤ 10¹² units and ≤ 10¹⁵ minor units, ≤ 600 months).
-- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`lines[3].amount`). The UI highlights the matching fields.
+- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`items[3].amount`). The UI highlights the matching fields.
 
 ## Exchange rates
 
@@ -49,7 +157,7 @@ Rates can be typed by hand or fetched. Each currency has a `source`:
 | `coingecko` | CoinGecko live market prices. The keyless API is rate-limited; set `COINGECKO_API_KEY` to a free demo key to raise the limit. | Crypto only |
 | `auto` | ECB where it has a rate, otherwise currency-api. | Everything |
 
-Rates are refreshed when you ask, or on a schedule if you turn that on in [Settings](#settings):
+Fetching is **off by default**, so bbbudget stays fully offline until you turn on `fetch_rates` in [Settings](#settings) (or run `bbbudget settings -set fetch_rates=true`). After that, rates are refreshed when you ask, or on a schedule if you turn that on too:
 
 - **UI:** choose **Rate from** per currency, then **Update rates now**. Adding a currency or changing its source fetches its rate straight away. Typing a rate yourself switches that currency to manual.
 - **CLI:** `bbbudget rates home` refreshes every non-manual currency. `-only USD,BTC` names currencies (a manual one named here switches to `auto`), and `-dry-run` shows the rates without saving. Put it in cron to keep a budget current.
@@ -63,7 +171,7 @@ App-wide preferences live on the **Settings** page (top right of the UI), in `bb
 
 | Setting | Default | |
 |---|---|---|
-| `fetch_rates` | `true` | `false` is fully offline: nothing contacts a rate provider. |
+| `fetch_rates` | `false` | Off is fully offline: nothing contacts a rate provider and every rate is typed by hand. Turn it on to fetch rates. |
 | `default_rate_source` | `auto` | The source a newly added currency gets. |
 | `auto_refresh` | `off` | `hourly` or `daily`: while `bbbudget serve` runs, refresh every budget's non-manual rates. The page shows the last run. |
 | `coingecko_api_key` | — | Optional CoinGecko demo key. The file is written with mode 0600, and the key is never sent back to the browser or printed. |
@@ -77,23 +185,23 @@ A broken settings file is an error naming the file, never silently replaced by d
 
 ### Crypto income
 
-Add the coin as a currency and write the income line in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
+Add the coin as a currency and write the income item in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
 
 ```yaml
 currencies:
   - {code: BTC, source: auto, per_base: 0.0000135, cash_out_fee_pct: 1.5}
-lines:
+items:
   - {name: Freelance (paid in BTC), amount: 0.012, currency: BTC, category: income}
 ```
 
 ## The app
 
-The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Lines** (income and costs grouped by category, amounts editable in place), **Plan** (debts, savings pots, planned withdrawals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
+The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Items** (income and costs grouped by category, amounts editable in place), **Plan** (debts, savings pots, planned withdrawals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
 
 - **Wide screens** show the views as tabs next to a summary that stays in view: what's left this month, savings at the end, goal and debt-free dates and the top warning. Every edit's effect shows up there straight away.
-- **Phones and small tablets** get an app layout: a bottom tab bar, a pinned bar with the two key numbers, and bottom sheets for editing a line. Touch targets are at least 44px, and safe-area insets clear notches and the home indicator.
+- **Phones and small tablets** get an app layout: a bottom tab bar, a pinned bar with the two key numbers, and bottom sheets for editing an item. Touch targets are at least 44px, and safe-area insets clear notches and the home indicator.
 - **Installable.** The page ships a web app manifest and icons, so a phone or desktop browser can install it ("Add to Home Screen"); it then opens full screen like an app. The same layout is meant to be wrapped as an Android or iOS app later (for example with Capacitor or a Trusted Web Activity). A native shell needs a reachable server; this one only listens on localhost.
-- Deletes can be undone for a few seconds. The current view is in the URL (`#home/lines`), so reloading keeps your place.
+- Deletes can be undone for a few seconds. The current view is in the URL (`#home/items`), so reloading keeps your place.
 
 ## Templates and your own data
 
@@ -110,7 +218,7 @@ currencies:
 categories:
   - {label: Income, kind: income}
   - {label: Home}                                        # kind defaults to expense
-lines:
+items:
   - {name: Salary, amount: 3900, category: income}       # currency defaults to base
   - {name: Rent, amount: 1150, category: home}           # schedule defaults to monthly
   - {name: Insurance, amount: 240, category: home, schedule: {every: 12, start: 2}}
@@ -147,9 +255,9 @@ Ids are derived from names when omitted. YAML numbers keep their exact text: `45
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`. There is also a resource, `budget://{id}`, with the raw document.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`. There is also a resource, `budget://{id}`, with the raw document.
 
-`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Lines are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
+`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Items are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
 The web UI and the MCP server can run as separate processes on the same data directory. Writes are serialised with a file lock and guarded by revision numbers. The UI polls and picks up Claude's edits within a few seconds. If you were mid-edit when a change arrived, the UI reloads and tells you, rather than overwriting the other change.
 
@@ -208,9 +316,12 @@ The server binds to 127.0.0.1 and accepts only these requests:
 
 ```
 make check     # gofmt, go vet, go test -race
+make hooks     # enable the pre-commit leak check in .githooks/
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
+
+Releases are cut by pushing a `vX.Y.Z` tag: [GoReleaser](.goreleaser.yaml) builds the tarballs and the `.deb`, `.rpm` and Arch packages and attaches them to a GitHub release. Try it locally with `goreleaser release --snapshot --clean`. The Nix package lives in [`flake.nix`](flake.nix), and the AUR recipe in [`packaging/aur`](packaging/aur/PKGBUILD).
 
 The tests include:
 
@@ -219,3 +330,17 @@ The tests include:
 - the store under concurrent writers from two "processes";
 - MCP tools via an in-memory client;
 - an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio.
+
+The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
+
+## Contributing and security
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, checks and the ground rules that keep the numbers exact. Found a vulnerability? Please report it privately as described in [SECURITY.md](SECURITY.md), which also spells out the threat model.
+
+## License
+
+Copyright (C) 2026 Ivanko1608
+
+bbbudget is free software, licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). You can use, study, modify and share it, but anything you build from it has to stay open source under the same license. That includes running a modified version as a web service: the AGPL's network clause means people using it over a network are entitled to its source too.
+
+The bundled Golos Text font is under the [SIL Open Font License 1.1](web/static/fonts/OFL.txt). Go dependencies keep their own (MIT, Apache-2.0 and BSD) licenses.

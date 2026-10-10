@@ -7,8 +7,8 @@ import (
 	"bbbudget/internal/money"
 )
 
-// LineReport is a line with its cost in base currency.
-type LineReport struct {
+// ItemReport is an item with its cost in base currency.
+type ItemReport struct {
 	ID       string      `json:"id"`
 	Name     string      `json:"name"`
 	Category string      `json:"category"`
@@ -16,7 +16,7 @@ type LineReport struct {
 	Amount   money.Money `json:"amount"`
 	// PerOccurrence is one occurrence in base, transfer loss included for costs.
 	PerOccurrence money.Money `json:"per_occurrence_base"`
-	// MonthlyEquivalent spreads a recurring line over its period; zero for one-offs.
+	// MonthlyEquivalent spreads a recurring item over its period; zero for one-offs.
 	MonthlyEquivalent money.Money `json:"monthly_equivalent_base"`
 	Schedule          Schedule    `json:"schedule"`
 	ScheduleText      string      `json:"schedule_text"`
@@ -37,7 +37,7 @@ type Report struct {
 	Name         string        `json:"name"`
 	BaseCurrency string        `json:"base_currency"`
 	Months       []Month       `json:"months"`
-	Lines        []LineReport  `json:"lines"`
+	Items        []ItemReport  `json:"items"`
 	Debts        []DebtSummary `json:"debts"`
 	// Pots are the savings pots; Goals repeats the ones with a target.
 	Pots  []PotSummary `json:"pots"`
@@ -83,14 +83,15 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	r = &Report{
 		Name: p.Doc.Name, BaseCurrency: p.Base.Code, Months: pr.Months,
 		Debts: pr.DebtSummaries(), Pots: pr.PotSummaries(), Goals: pr.GoalStatuses(), Shortfalls: pr.Shortfalls(),
+		Items:    []ItemReport{},
 		Insights: Insights(pr, DefaultRules),
 	}
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		per := p.PayCost(l.Amt, roundPay)
 		if l.Income {
 			per = p.IncomeValue(l.Amt, roundReceive)
 		}
-		r.Lines = append(r.Lines, LineReport{
+		r.Items = append(r.Items, ItemReport{
 			ID: l.ID, Name: l.Name, Category: l.Category, Income: l.Income, Amount: l.Amt,
 			PerOccurrence: per, MonthlyEquivalent: p.MonthlyEquivalent(l),
 			Schedule: l.Schedule, ScheduleText: describeSchedule(p, l.Schedule),

@@ -1,4 +1,4 @@
-# An empty budget: one income and one expense category, no lines.
+# An empty budget: one income and one expense category, no items.
 description: Empty budget with an income and an expense category.
 base_currency: EUR
 months: 12

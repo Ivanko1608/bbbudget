@@ -26,6 +26,7 @@ func offlineRates() map[string]rates.Provider {
 
 func TestRates(t *testing.T) {
 	c := setup(t)
+	c.do("PUT", "/api/settings", `{"fetch_rates":true}`, 200) // off by default
 	var q []map[string]any
 	w := c.req("GET", "/api/rates?base=EUR&codes=usd,BTC", "", nil)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &q) != nil || len(q) != 2 || q[1]["new"] != "0.00001352" {
@@ -135,7 +136,7 @@ func TestValidationIssuesAreReturned(t *testing.T) {
 	bad := strings.Replace(string(b), `"amount":"1150"`, `"amount":"1150.001"`, 1)
 	out := c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":`+bad+`}`, 422)
 	issues := out["issues"].([]any)
-	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "lines[1].amount" {
+	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "items[1].amount" {
 		t.Fatalf("issues: %v", issues)
 	}
 	// A float-y or malformed amount never reaches the domain.
@@ -145,13 +146,13 @@ func TestValidationIssuesAreReturned(t *testing.T) {
 
 func TestOpsWhatIfScenarios(t *testing.T) {
 	c := setup(t)
-	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"tuition","value":{"amount":"450"}}]}`, 200)
+	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"tuition","value":{"amount":"450"}}]}`, 200)
 	if endSavings(v) != "15509.88" { // +5100.00
 		t.Fatalf("ops: %s", endSavings(v))
 	}
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"school","value":{"amount":"1"}}]}`, 400) // ambiguous
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"nope","value":{"amount":"1"}}]}`, 400)   // no match inside an op
-	c.do("POST", "/api/budgets/home/ops", `{"revision":1,"ops":[{"op":"remove_line","target":"rent"}]}`, 409)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"school","value":{"amount":"1"}}]}`, 400) // ambiguous
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"nope","value":{"amount":"1"}}]}`, 400)   // no match inside an op
+	c.do("POST", "/api/budgets/home/ops", `{"revision":1,"ops":[{"op":"remove_item","target":"rent"}]}`, 409)
 
 	wi := c.do("POST", "/api/budgets/home/what-if", `{"ops":[{"op":"set_currency","target":"USD","value":{"per_base":"1"}}]}`, 200)
 	if wi["report"] == nil {
@@ -217,6 +218,9 @@ func TestStaticAndMeta(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "<title>ui</title>") {
 		t.Fatalf("index: %d %s", w.Code, w.Body)
 	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("UI without a same-origin CSP: %q", csp)
+	}
 	if w := c.req("POST", "/mcp", `{}`, nil); w.Code != 299 {
 		t.Fatalf("mcp not mounted alongside the UI: %d", w.Code)
 	}
@@ -232,7 +236,7 @@ func TestStaticAndMeta(t *testing.T) {
 func TestSettings(t *testing.T) {
 	c := setup(t)
 	v := c.do("GET", "/api/settings", "", 200)
-	if v["fetch_rates"] != true || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
+	if v["fetch_rates"] != false || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
 		t.Fatalf("defaults: %v", v)
 	}
 	if v["paths"].(map[string]any)["data"] != "/d" || v["auto_refresh_status"] == nil {
@@ -306,12 +310,12 @@ func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 	legacy := `{"id":"old","revision":3,"updated_at":"2026-10-01T00:00:00Z","budget":{
 		"name":"Old","base_currency":"EUR","start_month":"2026-10","months":12,"savings_start":"250",
 		"currencies":[],"categories":[{"id":"income","label":"Income","kind":"income"}],
-		"lines":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income","schedule":{"start":0,"every":1}}],
+		"items":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income","schedule":{"start":0,"every":1}}],
 		"debts":[],"extra_to_debt_pct":"0","debt_strategy":"avalanche",
 		"goals":[{"id":"emergency","name":"Emergency fund","target":"2000"}],"scenarios":[]}}`
 	nulls := `{"id":"nulls","revision":1,"updated_at":"2026-10-01T00:00:00Z","budget":{
 		"name":"Nulls","base_currency":"EUR","start_month":"2026-10","months":12,
-		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],"lines":null,"debts":null,
+		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],"items":null,"debts":null,
 		"extra_to_debt_pct":"0","debt_strategy":"avalanche",
 		"pots":[{"id":"savings","name":"General savings","kind":"general","balance":"0"}],"withdrawals":null,"scenarios":null}}`
 	for name, raw := range map[string]string{"old.json": legacy, "nulls.json": nulls} {
@@ -339,7 +343,7 @@ func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 			t.Fatal(err)
 		}
-		for _, k := range []string{"currencies", "categories", "lines", "debts", "pots", "withdrawals", "scenarios"} {
+		for _, k := range []string{"currencies", "categories", "items", "debts", "pots", "withdrawals", "scenarios"} {
 			if _, ok := v.Budget[k].([]any); !ok {
 				t.Errorf("%s: budget.%s = %v, want a list", id, k, v.Budget[k])
 			}

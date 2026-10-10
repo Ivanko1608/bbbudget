@@ -11,7 +11,7 @@ import (
 func cryptoBudget() Budget {
 	b := blank()
 	b.Currencies = []CurrencyRate{{Code: "BTC", PerBase: d("0.00001"), TransferFeePct: d("0"), CashOutFeePct: d("1"), Source: SourceAuto}}
-	b.Lines = []Line{
+	b.Items = []Item{
 		{ID: "salary", Name: "Salary", Amount: d("2000"), Currency: "EUR", Category: "income", Schedule: Monthly()},
 		{ID: "mining", Name: "Mining payout", Amount: d("0.015"), Currency: "BTC", Category: "income", Schedule: Monthly()},
 		{ID: "rent", Name: "Rent", Amount: d("2500"), Currency: "EUR", Category: "living", Schedule: Monthly()},
@@ -53,11 +53,11 @@ func TestCryptoValidation(t *testing.T) {
 	}
 
 	b = cryptoBudget()
-	b.Lines[1].Amount = d("20000000") // 2×10^15 satoshi: over MaxAmountMinor
+	b.Items[1].Amount = d("20000000") // 2×10^15 satoshi: over MaxAmountMinor
 	b.Currencies[0].CashOutFeePct = d("100")
 	b.Currencies[0].Source = "google"
 	_, err := Compile(b)
-	for _, want := range []string{"lines[1].amount", "cash_out_fee_pct", "currencies[0].source"} {
+	for _, want := range []string{"items[1].amount", "cash_out_fee_pct", "currencies[0].source"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("want an issue at %s, got %v", want, err)
 		}
@@ -107,7 +107,7 @@ func TestReportCurrencies(t *testing.T) {
 
 func TestCryptoAmountsOnTheWire(t *testing.T) {
 	r := mustReport(t, cryptoBudget())
-	raw, err := json.Marshal(r.Lines[1].Amount)
+	raw, err := json.Marshal(r.Items[1].Amount)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,14 +126,14 @@ currencies:
   - {code: BTC, source: auto, per_base: 0.0000135211580123, cash_out_fee_pct: 1.5}
   - {code: USDT, per_base: 1.12122692}
 categories: [{label: Income, kind: income}]
-lines:
+items:
   - {name: Payout, amount: 0.00012345, currency: BTC, category: income}
   - {name: Stable, amount: 250.123456, currency: USDT, category: income}
 `), "yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Currencies[0].PerBase.String() != "0.0000135211580123" || b.Lines[0].Amount.String() != "0.00012345" || b.Lines[1].Amount.String() != "250.123456" {
+	if b.Currencies[0].PerBase.String() != "0.0000135211580123" || b.Items[0].Amount.String() != "0.00012345" || b.Items[1].Amount.String() != "250.123456" {
 		t.Fatalf("exact values lost: %+v", b)
 	}
 	if b.Currencies[1].Source != "" || !b.Currencies[1].IsManual() || !b.Currencies[1].CashOutFeePct.IsZero() {
@@ -151,7 +151,7 @@ lines:
 
 func TestFXRiskShowsSmallRates(t *testing.T) {
 	b := cryptoBudget()
-	b.Lines = append(b.Lines, Line{ID: "node", Name: "Node hosting", Amount: d("0.001"), Currency: "BTC", Category: "living", Schedule: Monthly()})
+	b.Items = append(b.Items, Item{ID: "node", Name: "Node hosting", Amount: d("0.001"), Currency: "BTC", Category: "living", Schedule: Monthly()})
 	for _, in := range mustReport(t, b).Insights {
 		if in.ID == "fx_risk_btc" {
 			if !strings.Contains(in.Text, "0.000009 per EUR") || !strings.Contains(in.Text, "0.000011") {
@@ -166,7 +166,7 @@ func TestFXRiskShowsSmallRates(t *testing.T) {
 func TestStablecoinIncomeIsNotCryptoRisk(t *testing.T) {
 	b := blank()
 	b.Currencies = []CurrencyRate{{Code: "USDT", PerBase: d("1.1"), TransferFeePct: d("0")}}
-	b.Lines = []Line{{ID: "pay", Name: "Pay", Amount: d("1100"), Currency: "USDT", Category: "income", Schedule: Monthly()}}
+	b.Items = []Item{{ID: "pay", Name: "Pay", Amount: d("1100"), Currency: "USDT", Category: "income", Schedule: Monthly()}}
 	for _, in := range mustReport(t, b).Insights {
 		if in.ID == "crypto_income" {
 			t.Fatalf("stablecoin flagged as volatile: %s", in.Text)
@@ -176,7 +176,7 @@ func TestStablecoinIncomeIsNotCryptoRisk(t *testing.T) {
 
 func TestCryptoShortfallWarns(t *testing.T) {
 	b := cryptoBudget()
-	b.Lines[2].Amount = d("3300") // €185 left; a €445.50 fall leaves €260.50 short (shown half-even)
+	b.Items[2].Amount = d("3300") // €185 left; a €445.50 fall leaves €260.50 short (shown half-even)
 	for _, in := range mustReport(t, b).Insights {
 		if in.ID == "crypto_income" {
 			if in.Tone != ToneWarn || !strings.Contains(in.Text, "**€260 short**") {
@@ -203,5 +203,17 @@ func TestManualRateHasNoFetchMetadata(t *testing.T) {
 		if c := nb.Currencies[0]; c.RateDate != "" || c.RateFrom != "" || !c.IsManual() {
 			t.Errorf("%+v left %+v", p, c)
 		}
+	}
+}
+
+// A budget with nothing in it is what every new user starts from, and the UI
+// calls .map on these lists.
+func TestEmptyReportHasNoNullLists(t *testing.T) {
+	raw, err := json.Marshal(mustReport(t, blank()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), ":null") {
+		t.Errorf("lists must be [] rather than null in JSON: %s", raw)
 	}
 }

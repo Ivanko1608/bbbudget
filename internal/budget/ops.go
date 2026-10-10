@@ -14,7 +14,7 @@ import (
 // Op is one edit to a budget. Every change (UI, MCP, scenarios) is expressed
 // as Ops so it can be previewed (what-if), saved (scenario) or applied.
 //
-//	{"op":"set_line","target":"rent","value":{"amount":"800"}}
+//	{"op":"set_item","target":"rent","value":{"amount":"800"}}
 type Op struct {
 	Op string `json:"op"`
 	// Target names the thing to change: an id, an exact name, or an
@@ -25,13 +25,13 @@ type Op struct {
 
 // Patches: nil fields are left unchanged.
 
-type LinePatch struct {
+type ItemPatch struct {
 	Name     *string        `json:"name,omitempty"`
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
 	Category *string        `json:"category,omitempty"`
 	Schedule *Schedule      `json:"schedule,omitempty"`
-	// Pot routes the line through a pot; "" puts it back in the month's budget.
+	// Pot routes the item through a pot; "" puts it back in the month's budget.
 	Pot *string `json:"pot,omitempty"`
 }
 
@@ -117,9 +117,9 @@ var OpKinds = map[string]string{
 	"add_category":      "value: Category",
 	"set_category":      "target: category; value: CategoryPatch",
 	"remove_category":   "target: category (must be unused)",
-	"add_line":          "value: Line (id optional)",
-	"set_line":          "target: line; value: LinePatch",
-	"remove_line":       "target: line",
+	"add_item":          "value: Item (id optional)",
+	"set_item":          "target: item; value: ItemPatch",
+	"remove_item":       "target: item",
 	"add_debt":          "value: Debt (id optional)",
 	"set_debt":          "target: debt; value: DebtPatch",
 	"remove_debt":       "target: debt",
@@ -237,9 +237,9 @@ func applyOne(b *Budget, op Op) error {
 
 	case "remove_currency":
 		code := strings.ToUpper(strings.TrimSpace(op.Target))
-		for _, l := range b.Lines {
+		for _, l := range b.Items {
 			if l.Currency == code {
-				return fmt.Errorf("currency %s is used by line %q", code, l.Name)
+				return fmt.Errorf("currency %s is used by item %q", code, l.Name)
 			}
 		}
 		for _, d := range b.Debts {
@@ -284,20 +284,20 @@ func applyOne(b *Budget, op Op) error {
 		if err != nil {
 			return err
 		}
-		for _, l := range b.Lines {
+		for _, l := range b.Items {
 			if l.Category == b.Categories[i].ID {
-				return fmt.Errorf("category %q is used by line %q", b.Categories[i].Label, l.Name)
+				return fmt.Errorf("category %q is used by item %q", b.Categories[i].Label, l.Name)
 			}
 		}
 		b.Categories = remove(b.Categories, i)
 
-	case "add_line":
-		var v Line // an omitted schedule decodes as monthly (see Line.UnmarshalJSON)
+	case "add_item":
+		var v Item // an omitted schedule decodes as monthly (see Item.UnmarshalJSON)
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
 		if v.ID == "" {
-			v.ID = uniqueID(v.Name, ids(b.Lines, lineKey))
+			v.ID = uniqueID(v.Name, ids(b.Items, itemKey))
 		}
 		if v.Currency == "" {
 			v.Currency = b.BaseCurrency
@@ -312,18 +312,18 @@ func applyOne(b *Budget, op Op) error {
 			}
 			v.Pot = id
 		}
-		b.Lines = append(b.Lines, v)
+		b.Items = append(b.Items, v)
 
-	case "set_line":
-		var v LinePatch
+	case "set_item":
+		var v ItemPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
-		i, err := find("line", op.Target, ids(b.Lines, lineKey))
+		i, err := find("item", op.Target, ids(b.Items, itemKey))
 		if err != nil {
 			return err
 		}
-		l := &b.Lines[i]
+		l := &b.Items[i]
 		setIf(&l.Name, v.Name)
 		setIf(&l.Amount, v.Amount)
 		setIf(&l.Currency, v.Currency)
@@ -339,12 +339,12 @@ func applyOne(b *Budget, op Op) error {
 			l.Pot = id
 		}
 
-	case "remove_line":
-		i, err := find("line", op.Target, ids(b.Lines, lineKey))
+	case "remove_item":
+		i, err := find("item", op.Target, ids(b.Items, itemKey))
 		if err != nil {
 			return err
 		}
-		b.Lines = remove(b.Lines, i)
+		b.Items = remove(b.Items, i)
 
 	case "add_debt":
 		var v Debt
@@ -433,9 +433,9 @@ func applyOne(b *Budget, op Op) error {
 				return fmt.Errorf("pot %q is used by the transfer %q; remove that first", b.Pots[i].Name, w.Name)
 			}
 		}
-		for _, l := range b.Lines {
+		for _, l := range b.Items {
 			if l.Pot == b.Pots[i].ID {
-				return fmt.Errorf("pot %q is used by the line %q; route that line elsewhere first", b.Pots[i].Name, l.Name)
+				return fmt.Errorf("pot %q is used by the item %q; route that item elsewhere first", b.Pots[i].Name, l.Name)
 			}
 		}
 		b.Pots = remove(b.Pots, i)
@@ -516,7 +516,7 @@ func ids[T any](s []T, key func(T) (string, string)) []idName {
 	return out
 }
 
-func lineKey(l Line) (string, string)             { return l.ID, l.Name }
+func itemKey(l Item) (string, string)             { return l.ID, l.Name }
 func debtKey(d Debt) (string, string)             { return d.ID, d.Name }
 func potKey(p Pot) (string, string)               { return p.ID, p.Name }
 func withdrawalKey(w Withdrawal) (string, string) { return w.ID, w.Name }
@@ -543,7 +543,7 @@ func defaultPot(b *Budget) int {
 
 // find resolves a reference: exact id, then exact name, then a unique
 // substring of a name (all case-insensitive). Ambiguity is an error rather
-// than a guess, so "school" never silently edits the wrong line.
+// than a guess, so "school" never silently edits the wrong item.
 func find(kind, ref string, items []idName) (int, error) {
 	r := strings.ToLower(strings.TrimSpace(ref))
 	if r == "" {

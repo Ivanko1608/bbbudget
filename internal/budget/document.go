@@ -45,7 +45,7 @@ func ParseDocument(data []byte, format string) (Budget, error) {
 }
 
 // Normalize fills in what a hand-written document may leave out: empty lists,
-// ids derived from names, the base currency on lines and debts, the default
+// ids derived from names, the base currency on items and debts, the default
 // debt strategy and a 12-month window. It never changes a value that was set.
 func Normalize(b *Budget) {
 	if b.Months == 0 {
@@ -64,10 +64,10 @@ func Normalize(b *Budget) {
 			c.Kind = KindExpense
 		}
 	}
-	for i := range b.Lines {
-		l := &b.Lines[i]
+	for i := range b.Items {
+		l := &b.Items[i]
 		if l.ID == "" {
-			l.ID = uniqueID(l.Name, ids(b.Lines, lineKey))
+			l.ID = uniqueID(l.Name, ids(b.Items, itemKey))
 		}
 		if l.Currency == "" {
 			l.Currency = b.BaseCurrency
@@ -108,8 +108,8 @@ func emptyLists(b *Budget) {
 	if b.Categories == nil {
 		b.Categories = []Category{}
 	}
-	if b.Lines == nil {
-		b.Lines = []Line{}
+	if b.Items == nil {
+		b.Items = []Item{}
 	}
 	if b.Debts == nil {
 		b.Debts = []Debt{}
@@ -185,8 +185,8 @@ func MigrateSavings(start *money.Decimal, goals []Goal, overdraft *money.Decimal
 
 // UnmarshalJSON makes an omitted schedule mean "monthly" (the common case)
 // rather than the zero value, which would be a one-off in the first month.
-func (l *Line) UnmarshalJSON(data []byte) error {
-	type plain Line // no methods: avoids recursion
+func (l *Item) UnmarshalJSON(data []byte) error {
+	type plain Item // no methods: avoids recursion
 	var in struct {
 		plain
 		Schedule *Schedule `json:"schedule"`
@@ -196,7 +196,7 @@ func (l *Line) UnmarshalJSON(data []byte) error {
 	if err := d.Decode(&in); err != nil {
 		return err
 	}
-	*l = Line(in.plain)
+	*l = Item(in.plain)
 	l.Schedule = Monthly()
 	if in.Schedule != nil {
 		l.Schedule = *in.Schedule

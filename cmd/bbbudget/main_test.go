@@ -15,8 +15,16 @@ import (
 // runCLI runs a command in-process. Tests never read the user's own settings.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	// Keep commands that omit -dir, -templates or -settings out of the real home
+	// (which is unwritable in sandboxed builds such as Nix).
 	if os.Getenv("BBBUDGET_SETTINGS") == "" {
 		t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	}
+	if os.Getenv("BBBUDGET_DIR") == "" {
+		t.Setenv("BBBUDGET_DIR", t.TempDir())
+	}
+	if os.Getenv("BBBUDGET_TEMPLATES") == "" {
+		t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	}
 	var out, errb bytes.Buffer
 	err := run(context.Background(), args, &out, &errb)
@@ -41,7 +49,7 @@ func TestCLI(t *testing.T) {
 	}
 	// Flags may follow positionals; YAML imports keep exact amounts.
 	file := filepath.Join(t.TempDir(), "mine.yaml")
-	os.WriteFile(file, []byte("name: Mine\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nlines:\n  - {name: Pay, amount: 2000.10, category: pay}\n  - {name: Rent, amount: 950, category: living}\n"), 0o600)
+	os.WriteFile(file, []byte("name: Mine\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nitems:\n  - {name: Pay, amount: 2000.10, category: pay}\n  - {name: Rent, amount: 950, category: living}\n"), 0o600)
 	if out, err := runCLI(t, "import", "mine", file, "-dir", dir); err != nil {
 		t.Fatalf("import: %v %s", err, out)
 	}
@@ -124,6 +132,7 @@ func TestStdioMCP(t *testing.T) {
 		t.Skip("builds the binary")
 	}
 	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json")) // inherited by the binary
+	t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	bin := filepath.Join(t.TempDir(), "bbbudget")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
@@ -144,9 +153,9 @@ func TestStdioMCP(t *testing.T) {
 	if cs.InitializeResult().Instructions == "" {
 		t.Error("server instructions missing")
 	}
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "update_line", Arguments: map[string]any{"line": "rent", "amount": "1200"}})
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "update_item", Arguments: map[string]any{"item": "rent", "amount": "1200"}})
 	if err != nil || res.IsError {
-		t.Fatalf("update_line: %v %+v", err, res)
+		t.Fatalf("update_item: %v %+v", err, res)
 	}
 	if !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `"amount": "1200.00"`) {
 		t.Fatal("update not reflected")

@@ -14,7 +14,7 @@ func shortBudget() Budget {
 		{ID: "holiday", Name: "Holiday fund", Kind: PotSinking, Balance: d("600")},
 		{ID: "emergency", Name: "Emergency fund", Kind: PotEmergency, Balance: d("2000")},
 	}
-	b.Lines = []Line{
+	b.Items = []Item{
 		{ID: "pay", Name: "Pay", Amount: d("1000"), Currency: "EUR", Category: "income", Schedule: Monthly()},
 		{ID: "rent", Name: "Rent", Amount: d("800"), Currency: "EUR", Category: "living", Schedule: Monthly()},
 		{ID: "car", Name: "Car repair", Amount: d("500"), Currency: "EUR", Category: "living", Schedule: Once(0)},
@@ -96,7 +96,7 @@ func TestSurplusOrder(t *testing.T) {
 		{ID: "car", Name: "Car", Kind: PotSinking, Balance: d("0"), Monthly: d("100")},
 		{ID: "emergency", Name: "Emergency fund", Kind: PotEmergency, Balance: d("950"), Target: d("1000")},
 	}
-	b.Lines = []Line{{ID: "pay", Name: "Pay", Amount: d("500"), Currency: "EUR", Category: "income", Schedule: Monthly()}}
+	b.Items = []Item{{ID: "pay", Name: "Pay", Amount: d("500"), Currency: "EUR", Category: "income", Schedule: Monthly()}}
 	b.Debts = []Debt{{ID: "card", Name: "Card", Currency: "EUR", Balance: d("10000"), APRPct: d("0"), MinPayment: d("0")}}
 	m0 := mustReport(t, b).Months[0]
 	// 500: car 100, debt 50% of 400 = 200, emergency fills its last 50, general gets 150.
@@ -114,7 +114,7 @@ base_currency: EUR
 start_month: "2026-10"
 savings_start: 500
 categories: [{id: income, label: Income, kind: income}]
-lines: [{name: Pay, amount: 1000, category: income}]
+items: [{name: Pay, amount: 1000, category: income}]
 goals:
   - {name: Emergency fund, target: 1000}
   - {name: Laptop, target: 1000}
@@ -205,7 +205,7 @@ func TestIncomeRoutedToPotSkipsLeftoverRules(t *testing.T) {
 		{ID: "savings", Name: "General savings", Kind: PotGeneral, Balance: d("0")},
 		{ID: "move", Name: "Move fund", Kind: PotSinking, Balance: d("0"), Target: d("2000")},
 	}
-	b.Lines = []Line{
+	b.Items = []Item{
 		{ID: "pay", Name: "Pay", Amount: d("1000"), Currency: "EUR", Category: "income", Schedule: Monthly()},
 		{ID: "rent", Name: "Rent", Amount: d("800"), Currency: "EUR", Category: "living", Schedule: Monthly()},
 		{ID: "sale", Name: "Car sale", Amount: d("10000"), Currency: "EUR", Category: "income", Schedule: Once(1), Pot: "savings"},
@@ -223,7 +223,7 @@ func TestIncomeRoutedToPotSkipsLeftoverRules(t *testing.T) {
 // A cost routed to a pot is paid from it as far as it holds; the rest hits the month.
 func TestCostPaidFromPot(t *testing.T) {
 	b := shortBudget()
-	b.Lines[2].Pot = "holiday" // the 500 car repair, from a pot holding 600
+	b.Items[2].Pot = "holiday" // the 500 car repair, from a pot holding 600
 	r := mustReport(t, b)
 	m0 := r.Months[0]
 	eq(t, "paid from pot", m0.PaidFromPots, "500.00")
@@ -231,7 +231,7 @@ func TestCostPaidFromPot(t *testing.T) {
 	eq(t, "short", m0.Short, "0.00")
 	eq(t, "holiday", m0.Pots[1].Balance, "100.00") // 600 − 500; the 200 leftover goes to General savings
 
-	b.Lines[2].Amount = d("900") // more than the pot holds
+	b.Items[2].Amount = d("900") // more than the pot holds
 	r = mustReport(t, b)
 	eq(t, "paid capped", r.Months[0].PaidFromPots, "600.00")
 	eq(t, "rest is short", r.Months[0].Short, "100.00")
@@ -243,13 +243,13 @@ func TestCostPaidFromPot(t *testing.T) {
 		t.Error("a cost bigger than its pot must be flagged")
 	}
 	if _, err := Apply(b, NewOp("remove_pot", "holiday", nil)); err == nil || !strings.Contains(err.Error(), "Car repair") {
-		t.Errorf("removing a pot a line uses: %v", err)
+		t.Errorf("removing a pot an item uses: %v", err)
 	}
-	nb, err := Apply(b, NewOp("set_line", "car", LinePatch{Pot: strp("General")}))
-	if err != nil || nb.Lines[2].Pot != "savings" {
-		t.Fatalf("route by name: %v %+v", err, nb.Lines[2])
+	nb, err := Apply(b, NewOp("set_item", "car", ItemPatch{Pot: strp("General")}))
+	if err != nil || nb.Items[2].Pot != "savings" {
+		t.Fatalf("route by name: %v %+v", err, nb.Items[2])
 	}
-	if nb, err = Apply(nb, NewOp("set_line", "car", LinePatch{Pot: strp("")})); err != nil || nb.Lines[2].Pot != "" {
-		t.Fatalf("unroute: %v %+v", err, nb.Lines[2])
+	if nb, err = Apply(nb, NewOp("set_item", "car", ItemPatch{Pot: strp("")})); err != nil || nb.Items[2].Pot != "" {
+		t.Fatalf("unroute: %v %+v", err, nb.Items[2])
 	}
 }

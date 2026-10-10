@@ -36,7 +36,7 @@ type Budget struct {
 	// Currencies lists every non-base currency used, with its rate and transfer loss.
 	Currencies []CurrencyRate `json:"currencies"`
 	Categories []Category     `json:"categories"`
-	Lines      []Line         `json:"lines"`
+	Items      []Item         `json:"items"`
 	Debts      []Debt         `json:"debts"`
 	// ExtraToDebtPct is the percent of each month's positive leftover sent to debts.
 	ExtraToDebtPct money.Decimal `json:"extra_to_debt_pct"`
@@ -94,24 +94,24 @@ type Category struct {
 	Color string `json:"color,omitempty"`
 }
 
-// Line is one income or cost line.
-type Line struct {
+// Item is one source of income or one cost.
+type Item struct {
 	ID       string        `json:"id"`
 	Name     string        `json:"name"`
 	Amount   money.Decimal `json:"amount"`
 	Currency string        `json:"currency"`
 	Category string        `json:"category"`
 	Schedule Schedule      `json:"schedule"`
-	// Pot routes the line through a savings pot instead of the month's
+	// Pot routes the item through a savings pot instead of the month's
 	// budget: income goes straight into the pot (it is not spendable that
 	// month and no share of it goes to debts); a cost is paid from the pot,
 	// as far as the pot holds, and only the rest comes out of the month.
 	Pot string `json:"pot,omitempty"`
 }
 
-// Schedule says in which projection months (0-based) a line applies.
+// Schedule says in which projection months (0-based) an item applies.
 type Schedule struct {
-	// Start is the first month index the line applies.
+	// Start is the first month index the item applies.
 	Start int `json:"start"`
 	// Every is the period in months: 1 = monthly, 3 = quarterly, 12 = yearly, 0 = once (in Start).
 	Every int `json:"every"`

@@ -41,7 +41,7 @@ type Settings struct {
 
 // Defaults are used when there is no settings file.
 func Defaults() Settings {
-	return Settings{FetchRates: true, DefaultRateSource: "auto", AutoRefresh: RefreshOff}
+	return Settings{FetchRates: false, DefaultRateSource: "auto", AutoRefresh: RefreshOff}
 }
 
 // RateSources is the set DefaultRateSource must come from. The app checks it
