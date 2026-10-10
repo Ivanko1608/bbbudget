@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -354,4 +355,32 @@ func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDebtPayoffOverHTTP(t *testing.T) {
+	c := setup(t)
+	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[
+		{"op":"add_item","value":{"name":"Bike sale","amount":"3000","category":"income","schedule":{"start":2,"every":0},"pot":"General"}},
+		{"op":"add_debt","value":{"name":"Store card","balance":"2500","apr_pct":"24","min_payment":"80","payoff_month":2,"payoff_from":"General"}}]}`, 200)
+	d := v["budget"].(map[string]any)["debts"].([]any)[0].(map[string]any)
+	if d["payoff_from"] != "savings" || d["payoff_month"] != float64(2) {
+		t.Fatalf("payoff stored as: %v", d)
+	}
+	m2 := v["report"].(map[string]any)["months"].([]any)[2].(map[string]any)
+	if m2["payoff"].(map[string]any)["amount"] == "0" || m2["payoff_from_pots"].(map[string]any)["amount"] != m2["payoff"].(map[string]any)["amount"] {
+		t.Fatalf("month 2: payoff %v from pots %v", m2["payoff"], m2["payoff_from_pots"])
+	}
+	if m2["debts"].([]any)[0].(map[string]any)["balance"].(map[string]any)["amount"] != "0" {
+		t.Errorf("not cleared: %v", m2["debts"])
+	}
+
+	// A payoff from a pot that doesn't exist is a validation issue with its path.
+	b, _ := json.Marshal(v["budget"])
+	bad := strings.Replace(string(b), `"payoff_from":"savings"`, `"payoff_from":"nowhere"`, 1)
+	out := c.do("PUT", "/api/budgets/home", fmt.Sprintf(`{"revision":%v,"budget":%s}`, v["revision"], bad), 422)
+	if issues := out["issues"].([]any); len(issues) != 1 || issues[0].(map[string]any)["path"] != "debts[0].payoff_from" {
+		t.Fatalf("issues: %v", issues)
+	}
+	// The pot can't be removed while the payoff uses it.
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"bike","value":{"pot":""}},{"op":"remove_pot","target":"savings"}]}`, 400)
 }

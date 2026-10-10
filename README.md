@@ -317,6 +317,7 @@ The server binds to 127.0.0.1 and accepts only these requests:
 
 ```
 make check     # gofmt, go vet, go test -race
+make e2e       # browser tests: real binary + headless Chromium (Node 22+)
 make hooks     # enable the pre-commit leak check in .githooks/
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
@@ -330,7 +331,8 @@ The tests include:
 - the randomized invariant test;
 - the store under concurrent writers from two "processes";
 - MCP tools via an in-memory client;
-- an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio.
+- an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio;
+- browser tests in [`e2e/`](e2e/) that run `bbbudget serve` on a throwaway directory and drive the page in headless Chromium over the DevTools protocol: every view, editing in place, adding and undoing, covering a short month, routing income to a pot, paying off a debt, what-if, the phone layout and the settings page. They fail on any script error or request to another origin. They use only Node's built-in test runner and WebSocket, and skip when no Chromium is found (set `CHROME` to pick one).
 
 The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
 

@@ -174,3 +174,57 @@ func TestPayoffValidation(t *testing.T) {
 		}
 	}
 }
+
+// A foreign debt costs its converted balance plus the transfer loss, and a pot
+// that can't cover that pays exactly what it buys.
+func TestPayoffInForeignCurrency(t *testing.T) {
+	b := blank()
+	b.Currencies = []CurrencyRate{{Code: "USD", PerBase: d("1.1"), TransferFeePct: d("2")}}
+	b.Pots[0].Balance = d("2000")
+	zero := 0
+	b.Debts = []Debt{{ID: "loan", Name: "Loan", Currency: "USD", Balance: d("1100"), APRPct: d("0"), MinPayment: d("0"), PayoffMonth: &zero, PayoffFrom: "savings"}}
+	m0 := mustReport(t, b).Months[0]
+	eq(t, "paid in USD", m0.Debts[0].Payoff, "1100.00")
+	eq(t, "cost: 1100 / 1.1 × 1.02", m0.Payoff, "1020.00")
+	eq(t, "pot", m0.Pots[0].Balance, "980.00")
+
+	b.Pots[0].Balance = d("510")
+	m0 = mustReport(t, b).Months[0]
+	eq(t, "what 510 buys: 510 × 1.1 / 1.02", m0.Debts[0].Payoff, "550.00")
+	eq(t, "cost never exceeds the pot", m0.PayoffFromPots, "510.00")
+	eq(t, "rest owed", m0.Debts[0].Balance, "550.00")
+	eq(t, "pot emptied", m0.Pots[0].Balance, "0.00")
+}
+
+// A payoff comes before planned transfers from the same pot that month, and a
+// transfer that then finds the pot short is flagged.
+func TestPayoffBeforeTransferFromSamePot(t *testing.T) {
+	b := blank()
+	b.Pots[0].Balance = d("1000")
+	zero := 0
+	b.Debts = []Debt{{ID: "card", Name: "Card", Currency: "EUR", Balance: d("600"), APRPct: d("0"), MinPayment: d("0"), PayoffMonth: &zero, PayoffFrom: "savings"}}
+	b.Withdrawals = []Withdrawal{{ID: "tyres", Name: "Tyres", Pot: "savings", Amount: d("600"), Schedule: Once(0)}}
+	r := mustReport(t, b)
+	m0 := r.Months[0]
+	eq(t, "payoff", m0.Payoff, "600.00")
+	eq(t, "transfer gets the rest", m0.Transfers, "400.00")
+	eq(t, "from savings", m0.FromSavings, "1000.00")
+	if insight(r, "withdrawal_cut_tyres") == nil {
+		t.Error("a transfer the pot can't fully pay after a payoff must be flagged")
+	}
+}
+
+// A payoff in a scenario is compared against the real budget like any edit.
+func TestPayoffInScenario(t *testing.T) {
+	b := saleBudget()
+	b.Debts[0].PayoffMonth, b.Debts[0].PayoffFrom = nil, ""
+	one := 1
+	sc, err := Apply(b, NewOp("set_debt", "card", DebtPatch{PayoffMonth: &one, PayoffFrom: strp("General")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, with := mustReport(t, b), mustReport(t, sc)
+	if with.Totals.TotalInterest.Cmp(base.Totals.TotalInterest) >= 0 {
+		t.Errorf("paying off early must cut interest: %s vs %s", with.Totals.TotalInterest, base.Totals.TotalInterest)
+	}
+}

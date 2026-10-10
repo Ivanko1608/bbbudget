@@ -28,7 +28,7 @@ Use a throwaway data directory while developing, so you don't touch your real bu
 
 ## Checks
 
-`make check` has to pass before a PR is merged. It runs `gofmt`, `go vet` and `go test -race ./...`. For changes to money parsing, also run the fuzzer for a bit:
+`make check` has to pass before a PR is merged. It runs `gofmt`, `go vet` and `go test -race ./...`. UI changes should also pass `make e2e` (needs Node 22+ and Chromium; CI runs it too). For changes to money parsing, also run the fuzzer for a bit:
 
 ```
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
