@@ -6,6 +6,11 @@
 // list, shown as top tabs with a summary rail on wide screens and as a bottom
 // tab bar with a pinned mini-summary on phones (the shape a native app would
 // take). The route is #<budget>/<view>.
+//
+// Every piece of text comes from i18n/<locale>.json through t(), and money is
+// formatted for the reader's locale from the exact amounts the server sends.
+
+import { t, tHTML, loadLocale, money, moneyAxis, number, monthName, date, dateTime, toInput, parseDecimal } from "./i18n.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -138,7 +143,7 @@ async function open(id, view = S.view) {
   $("#picker").value = id;
   try { localStorage.setItem("bbbudget.last", id); } catch {}
   setView(view);
-  status("All changes saved");
+  status(t("status.saved"));
   loadCompare();
   loadActivity();
 }
@@ -157,7 +162,7 @@ function adopt(view, rerenderEditors) {
 function edited({ structural = false } = {}) {
   S.pending = true;
   if (structural) renderEditors();
-  status("Saving…");
+  status(t("status.saving"));
   clearTimeout(S.timer);
   S.timer = setTimeout(save, SAVE_DELAY);
 }
@@ -176,20 +181,20 @@ async function save() {
     showIssues([]);
     renderOutputs();
     if (S.notice) status(S.notice, true);
-    else status("All changes saved");
+    else status(t("status.saved"));
     S.notice = null;
     loadCompare();
     loadActivity();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
-      status("Not saved: fix the highlighted fields.", true);
+      status(t("status.fix_fields"), true);
     } else if (e.status === 409) {
-      status("This budget was changed elsewhere (e.g. by Claude). Reloaded the latest version.", true);
+      status(t("status.conflict"), true);
       await open(S.id);
     } else {
       S.pending = true;
-      status(`Not saved: ${e.message}. Retrying…`, true);
+      status(t("status.retrying", { error: e.message }), true);
       S.timer = setTimeout(save, 3000);
     }
   } finally {
@@ -207,7 +212,7 @@ async function poll() {
     if (me && me.revision > S.revision && !S.pending && !S.saving) {
       const v = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}`);
       adopt(v, true);
-      status("Updated with changes made elsewhere");
+      status(t("status.updated_elsewhere"));
       loadCompare();
       loadActivity();
     }
@@ -219,7 +224,7 @@ function showIssues(issues) {
   const box = $("#issues");
   box.hidden = issues.length === 0;
   if (!issues.length) return;
-  box.innerHTML = `<b>These need fixing before the budget can be saved:</b><ul>${issues.map((i) => `<li>${esc(i.path)}: ${esc(i.message)}</li>`).join("")}</ul>`;
+  box.innerHTML = `<b>${esc(t("issues.title"))}</b><ul>${issues.map((i) => `<li>${esc(i.path)}: ${esc(i.message)}</li>`).join("")}</ul>`;
   for (const i of issues) {
     const path = i.path.replace(/\[(\d+)\]/g, ".$1");
     document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((el) => el.classList.add("invalid"));
@@ -246,7 +251,7 @@ function removeWithUndo(list, i, what) {
   const arr = S.budget[list];
   const [item] = arr.splice(i, 1);
   edited({ structural: true });
-  toast(`Deleted ${what}`, () => {
+  toast(t("toast.deleted", { what }), () => {
     S.budget[list].splice(Math.min(i, S.budget[list].length), 0, item);
     edited({ structural: true });
   });
@@ -267,31 +272,28 @@ function setPath(obj, path, value) {
 
 const field = (label, path, { type = "text", attrs = "", cls = "", value, opt = false } = {}) => {
   const v = value ?? getPath(S.budget, path);
+  const shown = type === "decimal" ? toInput(v) : v;
   return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type === "decimal" ? "decimal" : type}" ${opt ? "data-optional" : ""} ${
     type === "decimal" ? 'inputmode="decimal" autocomplete="off"' : type === "int" ? 'type="number" step="1"' : `type="${type}"`
-  } value="${esc(v ?? "")}" ${attrs}></label>`;
+  } value="${esc(shown ?? "")}" ${attrs}></label>`;
 };
 const opts = (options, v) => options.map(([val, text]) => `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(text)}</option>`).join("");
 const select = (label, path, options, { structural = false, cls = "" } = {}) => {
   const v = getPath(S.budget, path);
   return `<label class="f ${cls}">${esc(label)}<select data-path="${esc(path)}" data-kind="text" ${structural ? "data-structural" : ""}>${opts(options, v)}</select></label>`;
 };
-const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="Remove ${esc(what)}">✕</button>`;
+const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="${esc(t("remove", { what }))}">✕</button>`;
 
 function currencyOptions() {
   return [S.budget.base_currency, ...S.budget.currencies.map((c) => c.code)].map((c) => [c, c]);
 }
 
-const RATE_SOURCES = [
-  ["manual", "Typed by hand"],
-  ["auto", "Auto: ECB, else market"],
-  ["ecb", "ECB (official)"],
-  ["currency-api", "currency-api (fiat + crypto)"],
-  ["coingecko", "CoinGecko (crypto)"],
-];
+const RATE_SOURCES = ["manual", "auto", "ecb", "currency-api", "coingecko"];
+const rateSourceOptions = () => RATE_SOURCES.map((s) => [s, t(`source_opt.${s}`)]);
 const isManual = (c) => !c.source || c.source === "manual";
 
-const POT_KINDS = { general: "General savings", sinking: "Saving for a cost", emergency: "Emergency fund" };
+const POT_KINDS = ["general", "sinking", "emergency"];
+const potKind = (kind) => (POT_KINDS.includes(kind) ? t(`pot_kind.${kind}`) : kind);
 const POT_COLOR = { general: "var(--save)", sinking: "#7a6ff0", emergency: "var(--debt)" };
 
 // renderFlow lists, in order, where each month's leftover goes, with the
@@ -299,36 +301,38 @@ const POT_COLOR = { general: "var(--save)", sinking: "#7a6ff0", emergency: "var(
 function renderFlow() {
   if ($("#flow").contains(document.activeElement)) return; // don't redraw under the cursor
   const b = S.budget, r = S.report;
-  const fmt = (v) => esc(fmtAmount(v, b.base_currency)) + " " + esc(b.base_currency);
+  const fmtItem = (name, v) => esc(t("flow.fixed.item", { name, amount: money({ amount: v, currency: b.base_currency }) }));
   const owes = parseFloat(b.overdraft_start || 0) > 0 || (r?.months || []).some((m) => parseFloat(m.overdraft.amount) > 0);
   const fixed = b.pots.filter((p) => p.monthly);
   const debts = b.debts.filter((d) => parseFloat(d.balance) > 0);
   const targets = b.pots.filter((p) => p.target);
-  const def = (r?.pots || []).find((x) => x.default)?.name || b.pots[0]?.name || "a pot";
-  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, { avalanche: "highest interest first", snowball: "smallest balance first", listed: "in the order listed" }[s] || s]);
+  const def = (r?.pots || []).find((x) => x.default)?.name || b.pots[0]?.name || t("flow.a_pot");
+  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, t(`strategy.${s}`)]);
   const step = (what, detail, off = false) => `<li class="${off ? "off" : ""}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
   $("#flow").innerHTML = [
-    step("Repay anything owed", owes ? "A short month is owed on your current account; the next leftover pays it back first." : "Nothing is owed in this plan.", !owes),
-    step("Fixed monthly amounts", fixed.length ? fixed.map((p) => `${esc(p.name)}: ${fmt(p.monthly)}`).join(" · ") : "None. Set “Put in each month” on a pot.", !fixed.length),
-    step("Extra payments on debts", (debts.length
-      ? `A share of what's left pays debts down faster.`
-      : `No debts with a balance, so this step is skipped.`) + `<br>
-      <label class="inline">Share<input data-path="extra_to_debt_pct" data-kind="decimal" inputmode="decimal" value="${esc(b.extra_to_debt_pct)}" aria-label="Share of leftover to debts, percent">%</label>
-      ${debts.length > 1 ? `<label class="inline">Order${select("", "debt_strategy", strategies).replace(/^<label class="f ">|<\/label>$/g, "")}</label>` : ""}`, !debts.length || !parseFloat(b.extra_to_debt_pct)),
-    step("Fill pots that have a target, top to bottom", targets.length ? targets.map((p) => `${esc(p.name)} up to ${fmt(p.target)}`).join(" · ") + ". Change the order in a pot's editor." : "None. Set a target on a pot.", !targets.length),
-    step(`The rest goes to ${esc(def)}`, "The first general pot gets whatever is left."),
+    step(esc(t("flow.repay")), esc(t(owes ? "flow.repay.owes" : "flow.repay.none")), !owes),
+    step(esc(t("flow.fixed")), fixed.length ? fixed.map((p) => fmtItem(p.name, p.monthly)).join(" · ") : esc(t("flow.fixed.none")), !fixed.length),
+    step(esc(t("flow.extra")), esc(t(debts.length ? "flow.extra.some" : "flow.extra.none")) + `<br>
+      <label class="inline">${esc(t("flow.share"))}<input data-path="extra_to_debt_pct" data-kind="decimal" inputmode="decimal" value="${esc(toInput(b.extra_to_debt_pct))}" aria-label="${esc(t("flow.share_aria"))}">%</label>
+      ${debts.length > 1 ? `<label class="inline">${esc(t("flow.order"))}${select("", "debt_strategy", strategies).replace(/^<label class="f ">|<\/label>$/g, "")}</label>` : ""}`, !debts.length || !parseFloat(b.extra_to_debt_pct)),
+    step(esc(t("flow.targets")), targets.length
+      ? esc(t("flow.targets.list", { list: targets.map((p) => t("flow.targets.item", { name: p.name, amount: money({ amount: p.target, currency: b.base_currency }) })).join(" · ") }))
+      : esc(t("flow.targets.none")), !targets.length),
+    step(esc(t("flow.rest", { pot: def })), esc(t("flow.rest.detail"))),
   ].join("");
 }
 
 // scheduleText describes a withdrawal's schedule like the report does for items.
 function scheduleText(s) {
   const label = (m) => S.report?.months[m]?.label || monthKey(m);
-  if (!s || s.every === 0) return `once, ${label(s?.start || 0)}`;
-  const every = (EVERY.find(([n]) => n === s.every) || [0, `every ${s.every} months`])[1].toLowerCase();
-  return `${every} from ${label(s.start)}${s.end != null ? ` to ${label(s.end)}` : ""}`;
+  if (!s || s.every === 0) return t("sched.once", { month: label(s?.start || 0) });
+  const every = [1, 3, 12].includes(s.every) ? t(`sched.every.${s.every}`) : t("sched.every", { count: s.every });
+  const from = t("sched.from", { schedule: every, month: label(s.start) });
+  return s.end != null ? t("sched.until", { schedule: from, month: label(s.end) }) : from;
 }
 
-const EVERY = [[0, "One-off"], [1, "Monthly"], [2, "Every 2 months"], [3, "Quarterly"], [6, "Every 6 months"], [12, "Yearly"]];
+const EVERY_N = [0, 1, 2, 3, 6, 12];
+const everyOptions = () => EVERY_N.map((n) => [n, t(`every.${n}`)]);
 
 function renderEditors() {
   const b = S.budget;
@@ -336,16 +340,16 @@ function renderEditors() {
   const ae = document.activeElement?.dataset || {};
   const active = { path: ae.path, row: ae.row };
 
-  document.title = `${b.name} · Budget planner`;
-  document.querySelectorAll(".baseCode").forEach((el) => { el.textContent = b.base_currency; });
+  document.title = t("app.page_title", { name: b.name });
+  $("#itemsText").textContent = t("items.text", { currency: b.base_currency });
   const crypto = new Set(S.meta?.crypto || []);
   $("#settings").innerHTML = [
-    field("Name", "name"),
-    select("Base currency", "base_currency", (S.meta?.currencies || [b.base_currency]).filter((c) => !crypto.has(c)).map((c) => [c, c]), { structural: true }),
-    field("First month", "start_month", { type: "month" }),
-    select("Months to project", "months", [[6, "6"], [12, "12"], [24, "24"], [36, "36"], [60, "60"]].concat(
+    field(t("field.name"), "name"),
+    select(t("field.base_currency"), "base_currency", (S.meta?.currencies || [b.base_currency]).filter((c) => !crypto.has(c)).map((c) => [c, c]), { structural: true }),
+    field(t("field.first_month"), "start_month", { type: "month" }),
+    select(t("field.months"), "months", [[6, "6"], [12, "12"], [24, "24"], [36, "36"], [60, "60"]].concat(
       [6, 12, 24, 36, 60].includes(b.months) ? [] : [[b.months, String(b.months)]])),
-    field(`Already owed on current account (${b.base_currency})`, "overdraft_start", { type: "decimal", opt: true, attrs: 'placeholder="0"' }),
+    field(t("field.overdraft_start", { currency: b.base_currency }), "overdraft_start", { type: "decimal", opt: true, attrs: 'placeholder="0"' }),
   ].join("");
 
   $("#refreshRates").hidden = !b.currencies.length || !S.prefs.fetch_rates;
@@ -382,43 +386,53 @@ function renderItems() {
 
   $("#debts").innerHTML = b.debts.map((d, i) => {
     const rep = debtRep[d.id];
-    const when = rep ? (rep.paid_off_label ? `paid off ${esc(rep.paid_off_label)}` : parseFloat(d.balance) > 0 ? "not paid off in this window" : "") : "";
-    const payoff = d.payoff_month == null ? "" : `pay off in full ${esc(r?.months?.[d.payoff_month]?.label || monthKey(d.payoff_month))} from ${esc(b.pots.find((p) => p.id === d.payoff_from)?.name || "that month's money")}`;
+    const when = rep ? (rep.paid_off_label ? t("debt.paid_off", { month: rep.paid_off_label }) : parseFloat(d.balance) > 0 ? t("debt.not_paid") : "") : "";
+    const payoff = d.payoff_month == null ? "" : t("debt.payoff", {
+      month: r?.months?.[d.payoff_month]?.label || monthKey(d.payoff_month),
+      from: b.pots.find((p) => p.id === d.payoff_from)?.name || t("debt.month_money"),
+    });
+    const meta = [t("debt.apr", { apr: number(d.apr_pct) }), t("debt.min", { amount: money({ amount: d.min_payment, currency: d.currency }) }), payoff, when];
     return itemRow({ kind: "debts", i, name: d.name, color: "var(--debt)",
-      meta: [`${esc(d.apr_pct)}% APR`, `min ${esc(fmtAmount(d.min_payment, d.currency))} ${esc(d.currency)}/mo`, payoff, when].filter(Boolean).join(" · "),
-      value: `${esc(fmtAmount(d.balance, d.currency))} <small>${esc(d.currency)}</small>` });
-  }).join("") || `<p class="muted pad">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
+      meta: esc(meta.filter(Boolean).join(" · ")),
+      value: `${esc(toInput(fmtAmount(d.balance, d.currency)))} <small>${esc(d.currency)}</small>` });
+  }).join("") || `<p class="muted pad">${esc(t("debts.empty"))}</p>`;
 
   const potRep = Object.fromEntries((r?.pots || []).map((x) => [x.id, x]));
-  const money = (v) => `${esc(fmtAmount(v, b.base_currency))} <small>${esc(b.base_currency)}</small>`;
+  const base = (v) => money({ amount: v, currency: b.base_currency });
   $("#pots").innerHTML = b.pots.map((pt, i) => {
     const rep = potRep[pt.id], g = rep?.goal;
-    const kind = POT_KINDS[pt.kind] || pt.kind;
+    const kind = potKind(pt.kind);
     const parts = pt.name.toLowerCase() === kind.toLowerCase() ? [] : [kind];
-    if (rep) parts.push(`${esc(rep.end.display)} after ${S.report.months.length} months`);
-    if (pt.target) parts.push(!g ? `target ${esc(pt.target)}` : g.already_met ? "target met" : g.reached_label ? `target ${esc(g.target.display)} by ${esc(g.reached_label)}` : `target ${esc(g.target.display)} not reached`);
-    if (pt.monthly) parts.push(`${esc(pt.monthly)} a month`);
-    if (rep?.default) parts.push("gets the rest of the leftover");
+    if (rep) parts.push(t("pot.after", { amount: money(rep.end), count: S.report.months.length }));
+    if (pt.target) {
+      const target = base(pt.target);
+      parts.push(!g ? t("pot.target", { amount: target }) : g.already_met ? t("pot.target_met")
+        : g.reached_label ? t("pot.target_by", { amount: target, month: g.reached_label }) : t("pot.target_missed", { amount: target }));
+    }
+    if (pt.monthly) parts.push(t("pot.monthly", { amount: base(pt.monthly) }));
+    if (rep?.default) parts.push(t("pot.default"));
     const fed = b.items.filter((l) => l.pot === pt.id);
-    if (fed.length) parts.push(fed.map((l) => esc(l.name)).join(", ") + (fed.length === 1 ? " goes through it" : " go through it"));
-    return itemRow({ kind: "pots", i, name: pt.name, color: POT_COLOR[pt.kind] || "var(--save)", meta: parts.join(" · "), value: `${money(pt.balance)} <small>now</small>` });
-  }).join("") || `<p class="muted pad">No pots. Add one: money left over each month goes there.</p>`;
+    if (fed.length) parts.push(t("pot.fed", { names: fed.map((l) => l.name).join(", "), count: fed.length }));
+    return itemRow({ kind: "pots", i, name: pt.name, color: POT_COLOR[pt.kind] || "var(--save)", meta: esc(parts.join(" · ")),
+      value: `${esc(base(pt.balance))} <small>${esc(t("pot.now"))}</small>` });
+  }).join("") || `<p class="muted pad">${esc(t("pots.empty"))}</p>`;
   renderFlow();
 
   $("#withdrawals").innerHTML = b.withdrawals.map((wd, i) => {
     const pot = b.pots.find((x) => x.id === wd.pot);
     return itemRow({ kind: "withdrawals", i, name: wd.name, color: "var(--accent)",
-      meta: `from ${esc(pot?.name || wd.pot)} · ${esc(scheduleText(wd.schedule))}`, value: money(wd.amount) });
-  }).join("") || `<p class="muted pad">None. Nothing leaves your pots unless you plan it here.</p>`;
+      meta: esc(t("wd.meta", { pot: pot?.name || wd.pot, schedule: scheduleText(wd.schedule) })), value: esc(base(wd.amount)) });
+  }).join("") || `<p class="muted pad">${esc(t("wd.empty"))}</p>`;
 
   $("#currencies").innerHTML = b.currencies.map((c, i) => itemRow({ kind: "currencies", i,
-    name: crypto.has(c.code) ? `${c.code} · crypto` : c.code, metaAttrs: `data-rate="${esc(c.code)}"`,
-    value: `${esc(c.per_base)} <small>per ${esc(b.base_currency)}</small>` })).join("") || `<p class="muted pad">Only ${esc(b.base_currency)} so far.</p>`;
+    name: crypto.has(c.code) ? t("cur.crypto_row", { code: c.code }) : c.code, metaAttrs: `data-rate="${esc(c.code)}"`,
+    value: `${esc(toInput(c.per_base))} <small>${esc(t("cur.per", { base: b.base_currency }))}</small>` })).join("")
+    || `<p class="muted pad">${esc(t("currencies.only_base", { currency: b.base_currency }))}</p>`;
 
   $("#categories").innerHTML = b.categories.map((c, i) => {
     const n = b.items.filter((l) => l.category === c.id).length;
     return itemRow({ kind: "categories", i, name: c.label, color: c.color || "var(--line)",
-      meta: `${c.kind === "income" ? "Income" : "Cost"} · ${n} item${n === 1 ? "" : "s"}` });
+      meta: esc(`${t(c.kind === "income" ? "kind.income" : "kind.expense")} · ${t("cat.items", { count: n })}`) });
   }).join("");
 }
 
@@ -431,7 +445,7 @@ function itemGroups() {
   const order = [...b.categories.filter((c) => c.kind === "income"), ...b.categories.filter((c) => c.kind !== "income")];
   const groups = order.map((cat) => ({ cat, items: [] }));
   const byId = Object.fromEntries(groups.map((g) => [g.cat.id, g]));
-  const other = { cat: { id: "", label: "Other", color: "" }, items: [] };
+  const other = { cat: { id: "", label: t("items.other_group"), color: "" }, items: [] };
   b.items.forEach((l, i) => (byId[l.category] || other).items.push(i));
   return [...groups, other].filter((g) => g.items.length);
 }
@@ -445,16 +459,16 @@ function renderBudgetItems() {
       ${items.map((i) => {
         const l = b.items[i];
         return `<div class="line" data-row="items.${i}" style="box-shadow:inset 3px 0 0 ${esc(cat.color || "var(--line)")}">
-          <button type="button" class="line-main" data-action="edit" data-kind="items" data-i="${i}" aria-label="Edit ${esc(l.name)}">
+          <button type="button" class="line-main" data-action="edit" data-kind="items" data-i="${i}" aria-label="${esc(t("items.edit_aria", { name: l.name }))}">
             <span class="name">${esc(l.name)}</span><span class="meta">${esc(rep[l.id]?.schedule_text || "")}</span></button>
-          <label class="amt"><span class="sr">Amount for ${esc(l.name)}</span>
-            <input data-path="items.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(fmtAmount(l.amount, l.currency))}">
+          <label class="amt"><span class="sr">${esc(t("items.amount_for", { name: l.name }))}</span>
+            <input data-path="items.${i}.amount" data-kind="decimal" data-cur="${esc(l.currency)}" inputmode="decimal" autocomplete="off" value="${esc(toInput(fmtAmount(l.amount, l.currency)))}">
             <span class="cur">${esc(l.currency)}</span></label>
           <span class="chev-hit" data-action="edit" data-kind="items" data-i="${i}">${CHEVRON}</span>
           <span class="base" data-base="${esc(l.id)}"></span>
         </div>`;
       }).join("")}
-    </div>`).join("") || `<div class="card"><p class="muted">No items yet. Add your income and regular costs.</p></div>`;
+    </div>`).join("") || `<div class="card"><p class="muted">${esc(t("items.empty"))}</p></div>`;
 }
 
 // renderItemNumbers updates the computed figures in place, so typing in an
@@ -469,7 +483,7 @@ function renderItemNumbers() {
     const once = l.schedule.every === 0;
     const v = once ? l.per_occurrence_base : l.monthly_equivalent_base;
     const foreign = l.amount.currency !== base;
-    el.textContent = once ? (foreign ? `≈ ${v.display} once` : "once") : foreign || l.schedule.every !== 1 ? `≈ ${v.display}/mo` : "";
+    el.textContent = once ? (foreign ? t("base.once_foreign", { amount: money(v) }) : t("base.once")) : foreign || l.schedule.every !== 1 ? t("base.per_month", { amount: money(v) }) : "";
   });
   // Group totals, display only: recurring per month, one-offs separately.
   const totals = {}, once = {};
@@ -478,12 +492,12 @@ function renderItemNumbers() {
     totals[cat] = (totals[cat] || 0) + parseFloat(l.monthly_equivalent_base.amount);
     if (l.schedule.every === 0) once[cat] = (once[cat] || 0) + parseFloat(l.per_occurrence_base.amount);
   }
-  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: base, maximumFractionDigits: 0 });
+  const fmt = (v) => esc(money({ amount: v.toFixed(2), currency: base })); // display only
   document.querySelectorAll("[data-total]").forEach((el) => {
     const k = el.dataset.total, m = totals[k] || 0, o = once[k] || 0;
     const parts = [];
-    if (m || !o) parts.push(`${esc(fmt.format(m))}<small>/mo</small>`);
-    if (o) parts.push(`${esc(fmt.format(o))}<small> once</small>`);
+    if (m || !o) parts.push(`${fmt(m)}<small>${esc(t("unit.per_month"))}</small>`);
+    if (o) parts.push(`${fmt(o)}<small>${esc(t("unit.once"))}</small>`);
     el.innerHTML = parts.join(" + ");
   });
   // Schedule texts come from the report too; add where a routed item goes.
@@ -492,7 +506,7 @@ function renderItemNumbers() {
     const meta = row.querySelector(".meta");
     if (!l || !meta) return;
     const pot = l.pot && S.budget.pots.find((p) => p.id === l.pot);
-    const route = pot ? (byId[l.id]?.income ? ` · straight into ${pot.name}` : ` · paid from ${pot.name}`) : "";
+    const route = pot ? " · " + t(byId[l.id]?.income ? "items.into_pot" : "items.from_pot", { pot: pot.name }) : "";
     meta.textContent = (byId[l.id]?.schedule_text || "") + route;
   });
   if ($("#sheet").open && S.sheet?.kind === "items") {
@@ -500,7 +514,7 @@ function renderItemNumbers() {
     const r = l && byId[l.id];
     const el = $("#sheetBase");
     if (el) el.textContent = r && r.amount.currency !== base
-      ? `Each ${r.income ? "payment you receive" : "payment"} ≈ ${r.per_occurrence_base.display} in ${base}, ${r.income ? "after cash-out loss" : "transfer loss included"}.`
+      ? t(r.income ? "sheet.base_income" : "sheet.base_cost", { amount: money(r.per_occurrence_base), base })
       : "";
   }
 }
@@ -509,123 +523,125 @@ function categorySelect(path) {
   const v = getPath(S.budget, path);
   const group = (kind, label) => {
     const cs = S.budget.categories.filter((c) => (kind === "income") === (c.kind === "income"));
-    return cs.length ? `<optgroup label="${label}">${opts(cs.map((c) => [c.id, c.label]), v)}</optgroup>` : "";
+    return cs.length ? `<optgroup label="${esc(label)}">${opts(cs.map((c) => [c.id, c.label]), v)}</optgroup>` : "";
   };
-  return `<label class="f">Category<select data-path="${esc(path)}" data-kind="text" data-structural>${group("income", "Income")}${group("expense", "Costs")}</select></label>`;
+  return `<label class="f">${esc(t("field.category"))}<select data-path="${esc(path)}" data-kind="text" data-structural>${group("income", t("kind.income"))}${group("expense", t("cat.costs"))}</select></label>`;
 }
 
 // potRouteSelect lets an item skip the month's budget: income goes straight
 // into a pot, a cost is paid from one.
 function potRouteSelect(l, i) {
   const income = S.budget.categories.find((c) => c.id === l.category)?.kind === "income";
-  const opts2 = [["", "This month's budget"], ...S.budget.pots.map((p) => [p.id, p.name])];
-  return `<label class="f wide">${income ? "Goes into" : "Paid from"}<select data-path="items.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
-    <p class="base">${income
-      ? "Pick a pot to save all of it straight away, for example a sale or a bonus. It then isn't spendable that month and no share of it goes to debts."
-      : "Pick a pot to pay this from savings you set aside for it. If the pot holds less, the rest comes out of that month."}</p>`;
+  const opts2 = [["", t("route.month_budget")], ...S.budget.pots.map((p) => [p.id, p.name])];
+  return `<label class="f wide">${esc(t(income ? "route.into" : "route.from"))}<select data-path="items.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
+    <p class="base">${esc(t(income ? "route.income_help" : "route.cost_help"))}</p>`;
 }
 
 // SHEETS describes the editor for each kind of item: its title, fields and
 // the delete action. Fields use the same data-path inputs as everywhere else.
+// noun is the catalog key for what one of them is called.
 const SHEETS = {
   items: {
-    noun: "item", title: (l) => l.name,
+    noun: "noun.item", title: (l) => l.name,
     body(l, i) {
       const sch = l.schedule;
-      return `${field("Name", `items.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${field("Amount", `items.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
-        ${select("Currency", `items.${i}.currency`, currencyOptions(), { structural: true })}
+      return `${field(t("field.name"), `items.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field(t("field.amount"), `items.${i}.amount`, { type: "decimal", value: fmtAmount(l.amount, l.currency) })}
+        ${select(t("field.currency"), `items.${i}.currency`, currencyOptions(), { structural: true })}
         ${categorySelect(`items.${i}.category`)}
-        ${select("Repeats", `items.${i}.schedule.every`, EVERY, { structural: true })}
-        <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="items.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
-        ${sch.every === 0 ? "<span></span>" :
-          `<label class="f">Until (optional)<input type="month" data-path="items.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
+        ${select(t("field.repeats"), `items.${i}.schedule.every`, everyOptions(), { structural: true })}
+        ${scheduleFields("items", i, sch)}
         ${potRouteSelect(l, i)}
         <p class="base" id="sheetBase"></p>`;
     },
   },
   debts: {
-    noun: "debt", title: (d) => d.name,
+    noun: "noun.debt", title: (d) => d.name,
     body(d, i) {
-      return `${field("Name", `debts.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${field("Balance", `debts.${i}.balance`, { type: "decimal" })}
-        ${select("Currency", `debts.${i}.currency`, currencyOptions(), { structural: true })}
-        ${field("APR %", `debts.${i}.apr_pct`, { type: "decimal" })}
-        ${field("Minimum / month", `debts.${i}.min_payment`, { type: "decimal" })}
-        <p class="base">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>
-        <label class="f">Pay off in full (optional)<input type="month" data-path="debts.${i}.payoff_month" data-kind="monthidx-opt" data-structural value="${d.payoff_month == null ? "" : monthKey(d.payoff_month)}"></label>
-        ${d.payoff_month == null ? "" : `<label class="f">Paid from<select data-path="debts.${i}.payoff_from" data-kind="text" data-structural>${opts([["", "That month's money"], ...S.budget.pots.map((p) => [p.id, p.name])], d.payoff_from || "")}</select></label>`}
-        <p class="base">Pays the whole balance in that month, interest included, in place of the minimum. Income sent to the same pot that month, such as a sale, arrives first. If the pot holds less, it pays what it can and the rest stays owed.</p>`;
+      const from = [["", t("debt.month_money_option")], ...S.budget.pots.map((p) => [p.id, p.name])];
+      return `${field(t("field.name"), `debts.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${field(t("field.balance"), `debts.${i}.balance`, { type: "decimal" })}
+        ${select(t("field.currency"), `debts.${i}.currency`, currencyOptions(), { structural: true })}
+        ${field(t("field.apr"), `debts.${i}.apr_pct`, { type: "decimal" })}
+        ${field(t("field.min_payment"), `debts.${i}.min_payment`, { type: "decimal" })}
+        <p class="base">${esc(t("debt.help_interest"))}</p>
+        <label class="f">${esc(t("field.payoff"))}<input type="month" data-path="debts.${i}.payoff_month" data-kind="monthidx-opt" data-structural value="${d.payoff_month == null ? "" : monthKey(d.payoff_month)}"></label>
+        ${d.payoff_month == null ? "" : `<label class="f">${esc(t("field.paid_from"))}<select data-path="debts.${i}.payoff_from" data-kind="text" data-structural>${opts(from, d.payoff_from || "")}</select></label>`}
+        <p class="base">${esc(t("debt.help_payoff"))}</p>`;
     },
   },
   pots: {
-    noun: "pot", title: (p) => p.name,
+    noun: "noun.pot", title: (p) => p.name,
     body(p, i) {
-      const base = S.budget.base_currency;
-      return `${field("Name", `pots.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${select("Kind", `pots.${i}.kind`, Object.entries(POT_KINDS), { structural: true })}
-        ${field(`Holds now (${base})`, `pots.${i}.balance`, { type: "decimal" })}
-        ${field(`Target (${base}, optional)`, `pots.${i}.target`, { type: "decimal", opt: true, attrs: 'placeholder="none"' })}
-        ${field(`Put in each month (${base}, optional)`, `pots.${i}.monthly`, { type: "decimal", opt: true, attrs: 'placeholder="none"' })}
+      const currency = S.budget.base_currency;
+      const none = `placeholder="${esc(t("field.none"))}"`;
+      const kindHelp = POT_KINDS.includes(p.kind) ? t(`pot.help.${p.kind}`) : "";
+      return `${field(t("field.name"), `pots.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${select(t("field.kind"), `pots.${i}.kind`, POT_KINDS.map((k) => [k, potKind(k)]), { structural: true })}
+        ${field(t("field.holds_now", { currency }), `pots.${i}.balance`, { type: "decimal" })}
+        ${field(t("field.target_optional", { currency }), `pots.${i}.target`, { type: "decimal", opt: true, attrs: none })}
+        ${field(t("field.monthly_optional", { currency }), `pots.${i}.monthly`, { type: "decimal", opt: true, attrs: none })}
         <div class="wide row-actions" style="margin-top:0">
-          <button type="button" data-action="move-pot" data-i="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""}>Move up</button>
-          <button type="button" data-action="move-pot" data-i="${i}" data-dir="1" ${i === S.budget.pots.length - 1 ? "disabled" : ""}>Move down</button>
+          <button type="button" data-action="move-pot" data-i="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""}>${esc(t("pot.move_up"))}</button>
+          <button type="button" data-action="move-pot" data-i="${i}" data-dir="1" ${i === S.budget.pots.length - 1 ? "disabled" : ""}>${esc(t("pot.move_down"))}</button>
         </div>
-        <p class="base">Order matters: targets fill top to bottom, and the first general pot gets the rest. ${{
-          general: "General savings is offered first when a month falls short.",
-          sinking: "Money saved ahead for a known cost. If a short month uses it, that cost is delayed.",
-          emergency: "For emergencies. Offered only as a last resort when a month falls short.",
-        }[p.kind] || ""} A pot with a target stops filling once it's reached.</p>`;
+        <p class="base">${esc([t("pot.help.order"), kindHelp, t("pot.help.target")].filter(Boolean).join(" "))}</p>`;
     },
   },
   withdrawals: {
-    noun: "withdrawal", title: (w) => w.name,
+    noun: "noun.withdrawal", title: (w) => w.name,
     body(w, i) {
       const sch = w.schedule || { start: 0, every: 0 };
-      return `${field("Name", `withdrawals.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${select("From pot", `withdrawals.${i}.pot`, S.budget.pots.map((p) => [p.id, p.name]), { structural: true })}
-        ${field(`Amount (${S.budget.base_currency})`, `withdrawals.${i}.amount`, { type: "decimal" })}
-        ${select("Repeats", `withdrawals.${i}.schedule.every`, EVERY, { structural: true })}
-        <label class="f">${sch.every === 0 ? "In" : "From"}<input type="month" data-path="withdrawals.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>
-        ${sch.every === 0 ? "<span></span>" :
-          `<label class="f">Until (optional)<input type="month" data-path="withdrawals.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`}
-        <p class="base">Never takes more than the pot holds at the time; the plan warns if it falls short.</p>`;
+      return `${field(t("field.name"), `withdrawals.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${select(t("field.from_pot"), `withdrawals.${i}.pot`, S.budget.pots.map((p) => [p.id, p.name]), { structural: true })}
+        ${field(t("field.amount_in", { currency: S.budget.base_currency }), `withdrawals.${i}.amount`, { type: "decimal" })}
+        ${select(t("field.repeats"), `withdrawals.${i}.schedule.every`, everyOptions(), { structural: true })}
+        ${scheduleFields("withdrawals", i, sch)}
+        <p class="base">${esc(t("wd.help"))}</p>`;
     },
   },
   currencies: {
-    noun: "currency", title: (c) => c.code,
+    noun: "noun.currency", title: (c) => c.code,
     body(c, i) {
       const crypto = new Set(S.meta?.crypto || []);
-      const codes = (S.meta?.currencies || []).filter((x) => x !== S.budget.base_currency).map((x) => [x, crypto.has(x) ? `${x} (crypto)` : x]);
-      return `${select("Code", `currencies.${i}.code`, codes, { structural: true })}
-        ${select("Rate from", `currencies.${i}.source`, RATE_SOURCES, { structural: true })}
-        ${field(`Units per 1 ${S.budget.base_currency}`, `currencies.${i}.per_base`, { type: "decimal" })}
-        ${field("Payment loss %", `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
-        ${field("Cash-out loss %", `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
+      const codes = (S.meta?.currencies || []).filter((x) => x !== S.budget.base_currency).map((x) => [x, crypto.has(x) ? t("cur.crypto_option", { code: x }) : x]);
+      return `${select(t("field.code"), `currencies.${i}.code`, codes, { structural: true })}
+        ${select(t("field.rate_from"), `currencies.${i}.source`, rateSourceOptions(), { structural: true })}
+        ${field(t("field.per_base", { currency: S.budget.base_currency }), `currencies.${i}.per_base`, { type: "decimal" })}
+        ${field(t("field.payment_loss"), `currencies.${i}.transfer_fee_pct`, { type: "decimal" })}
+        ${field(t("field.cashout_loss"), `currencies.${i}.cash_out_fee_pct`, { type: "decimal", attrs: 'placeholder="0"' })}
         <p class="base" data-rate="${esc(c.code)}"></p>
-        <p class="base">Payment loss is added to every payment in this currency. Cash-out loss is taken off income in it, such as fees for selling crypto. Typing a rate makes it manual.</p>`;
+        <p class="base">${esc(t("cur.help"))}</p>`;
     },
   },
   categories: {
-    noun: "category", title: (c) => c.label,
+    noun: "noun.category", title: (c) => c.label,
     body(c, i) {
-      return `${field("Label", `categories.${i}.label`, { cls: "wide", attrs: 'autocomplete="off"' })}
-        ${select("Kind", `categories.${i}.kind`, [["expense", "Cost"], ["income", "Income"]], { structural: true })}
-        <label class="f">Colour<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>`;
+      return `${field(t("field.label"), `categories.${i}.label`, { cls: "wide", attrs: 'autocomplete="off"' })}
+        ${select(t("field.kind"), `categories.${i}.kind`, [["expense", t("kind.expense")], ["income", t("kind.income")]], { structural: true })}
+        <label class="f">${esc(t("field.colour"))}<input type="color" data-path="categories.${i}.color" data-kind="text" value="${esc(c.color || "#888888")}"></label>`;
     },
   },
 };
+
+// scheduleFields are the month inputs under "Repeats": the month of a
+// one-off, or the first and (optional) last month of a repeating one.
+function scheduleFields(list, i, sch) {
+  const start = `<label class="f">${esc(t(sch.every === 0 ? "field.in" : "field.from"))}<input type="month" data-path="${list}.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>`;
+  if (sch.every === 0) return start + "<span></span>";
+  return start + `<label class="f">${esc(t("field.until_optional"))}<input type="month" data-path="${list}.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`;
+}
 
 function renderSheet() {
   const { kind, i } = S.sheet;
   const item = S.budget[kind]?.[i];
   const def = SHEETS[kind];
   if (!item || !def) { closeSheet(); return; }
-  $("#sheetTitle").textContent = def.title(item) || def.noun;
+  $("#sheetTitle").textContent = def.title(item) || t(def.noun);
   $("#sheetBody").innerHTML = `<div class="sheet-body">${def.body(item, i)}</div>
     <div class="sheet-foot">
-      <button type="button" class="danger" data-action="delete-item" data-kind="${kind}" data-i="${i}">Delete ${def.noun}</button>
-      <button type="button" class="primary" data-action="close-sheet">Done</button>
+      <button type="button" class="danger" data-action="delete-item" data-kind="${kind}" data-i="${i}">${esc(t("sheet.delete", { what: t(def.noun) }))}</button>
+      <button type="button" class="primary" data-action="close-sheet">${esc(t("sheet.done"))}</button>
     </div>`;
   renderItemNumbers();
   renderRateNotes();
@@ -656,12 +672,14 @@ function onEditorInput(e) {
   if (!path || !S.budget) return;
   let v = el.value;
   switch (el.dataset.kind) {
-    case "decimal":
-      v = v.trim().replace(/,/g, "");
-      if (v === "" && el.hasAttribute("data-optional")) { v = undefined; el.classList.remove("invalid"); break; }
-      el.classList.toggle("invalid", !DEC_RE.test(v));
-      if (!DEC_RE.test(v)) return; // keep editing; never send a malformed amount
+    case "decimal": {
+      if (v.trim() === "" && el.hasAttribute("data-optional")) { v = undefined; el.classList.remove("invalid"); break; }
+      const d = parseDecimal(v); // "12,50" in a decimal-comma locale
+      el.classList.toggle("invalid", d === null);
+      if (d === null) return; // keep editing; never send a malformed amount
+      v = d;
       break;
+    }
     case "int":
       v = parseInt(v, 10);
       if (!Number.isFinite(v)) return;
@@ -719,10 +737,10 @@ function onEditorInput(e) {
   // The same item can be edited in its list and in the sheet: keep both in step.
   const item = path.match(/^(\w+)\.(\d+)\.(amount|name|label)$/);
   if (item) {
-    document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((o) => { if (o !== el) o.value = v; });
+    document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((o) => { if (o !== el) o.value = item[3] === "amount" ? toInput(v) : v; });
     if (item[3] !== "amount") {
       document.querySelectorAll(`[data-row="${item[1]}.${item[2]}"] .name`).forEach((n) => { n.textContent = v; });
-      if (S.sheet?.kind === item[1] && S.sheet.i === +item[2]) $("#sheetTitle").textContent = v || SHEETS[item[1]]?.noun || "";
+      if (S.sheet?.kind === item[1] && S.sheet.i === +item[2]) $("#sheetTitle").textContent = v || (SHEETS[item[1]] ? t(SHEETS[item[1]].noun) : "");
     }
   }
   edited({ structural: el.hasAttribute("data-structural") && e.type === "change" });
@@ -735,7 +753,7 @@ function onEditorInput(e) {
 async function fetchRate(i, undo) {
   const c = S.budget.currencies[i];
   const src = isManual(c) ? "auto" : c.source;
-  status(`Fetching the ${c.code} rate…`);
+  status(t("rate.fetching", { code: c.code }));
   S.fetching++;
   try {
     const [q] = await api("GET", `/api/rates?base=${encodeURIComponent(S.budget.base_currency)}&codes=${encodeURIComponent(c.code)}&source=${encodeURIComponent(src)}`);
@@ -749,7 +767,7 @@ async function fetchRate(i, undo) {
   } catch (e) {
     const code = c.code;
     undo();
-    S.notice = `Couldn't get the ${code} rate (${e.message}), so nothing changed. To use ${code} anyway, set “Rate from” to “Typed by hand” and type its rate.`;
+    S.notice = t("rate.fetch_failed", { code, error: e.message });
     edited({ structural: true });
     status(S.notice, true);
   } finally {
@@ -760,11 +778,11 @@ async function fetchRate(i, undo) {
 // refreshAll fetches every non-manual rate on the server and saves them.
 async function refreshAll() {
   if (!S.prefs.fetch_rates) {
-    status("Fetching rates is turned off in Settings.", true);
+    status(t("rates.off"), true);
     return;
   }
   if (!S.budget.currencies.some((c) => !isManual(c))) {
-    status("Every rate is typed by hand. Pick a “Rate from” source for the ones to keep current.", true);
+    status(t("rates.all_manual"), true);
     return;
   }
   let res;
@@ -777,22 +795,23 @@ async function refreshAll() {
     }
   });
   const ups = res?.rate_updates || [];
-  const changed = ups.filter((u) => !u.error).map((u) => (u.old === u.new ? `${u.code} unchanged` : `${u.code} ${u.old} → ${u.new}`));
+  const changed = ups.filter((u) => !u.error).map((u) => (u.old === u.new ? t("rates.unchanged", { code: u.code }) : t("rates.changed", { code: u.code, old: number(u.old), new: number(u.new) })));
   const failed = ups.filter((u) => u.error).map((u) => u.code);
-  if (changed.length) status(`Rates updated: ${changed.join(", ")}${failed.length ? ` · failed: ${failed.join(", ")}` : ""}`, failed.length > 0);
+  let text = t("rates.updated", { list: changed.join(", ") });
+  if (failed.length) text += " · " + t("rates.failed", { list: failed.join(", ") });
+  if (changed.length) status(text, failed.length > 0);
 }
 
 function renderRateNotes() {
   if (!S.report || !S.budget) return;
   const unit = Object.fromEntries((S.report.currencies || []).map((c) => [c.code, c]));
-  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: S.report.base_currency, maximumFractionDigits: 2 });
   document.querySelectorAll("[data-rate]").forEach((el) => {
     const c = S.budget.currencies.find((x) => x.code === el.dataset.rate);
     const u = unit[el.dataset.rate];
     if (!c) return;
-    const n = u ? new Intl.NumberFormat("en-GB").format(Number(u.units)) : "";
-    const worth = u ? `${n} ${c.code} = ${fmt.format(Number(u.base_value.amount))}` : ""; // display only
-    const from = isManual(c) ? "typed by hand" : c.rate_date ? `${({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from} rate of ${c.rate_date}` : "not fetched yet";
+    const worth = u ? t("rate.worth", { units: number(u.units), code: c.code, value: money(u.base_value, { exact: true }) }) : "";
+    const provider = ({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from;
+    const from = isManual(c) ? t("rate.typed") : c.rate_date ? t("rate.of", { source: provider, date: date(c.rate_date) }) : t("rate.not_fetched");
     el.textContent = [worth, from].filter(Boolean).join(" · ");
   });
 }
@@ -801,8 +820,9 @@ const ACTIONS = {
   "add-item"() {
     const b = S.budget;
     const cat = b.categories.find((c) => c.kind === "expense") || b.categories[0];
-    if (!cat) { setView("setup"); status("Add a category first.", true); return; }
-    b.items.push({ id: newId("New item", b.items), name: "New item", amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
+    if (!cat) { setView("setup"); status(t("status.need_category"), true); return; }
+    const name = t("items.new");
+    b.items.push({ id: newId(name, b.items), name, amount: "0", currency: b.base_currency, category: cat.id, schedule: { start: 0, every: 1 } });
     edited({ structural: true });
     openSheet("items", b.items.length - 1, { focusFirst: true });
   },
@@ -813,22 +833,22 @@ const ACTIONS = {
     const item = S.budget[kind][i];
     if (kind === "currencies") {
       const user = [...S.budget.items, ...S.budget.debts].find((x) => x.currency === item.code);
-      if (user) { status(`${item.code} is still used by “${user.name}”.`, true); return; }
+      if (user) { status(t("cur.in_use", { code: item.code, name: user.name }), true); return; }
     }
     if (kind === "pots") {
       const w = S.budget.withdrawals.find((x) => x.pot === item.id);
-      if (w) { status(`“${item.name}” is used by the transfer “${w.name}”.`, true); return; }
+      if (w) { status(t("pot.in_use.transfer", { name: item.name, other: w.name }), true); return; }
       const l = S.budget.items.find((x) => x.pot === item.id);
-      if (l) { status(`“${item.name}” is used by the item “${l.name}”. Route that item elsewhere first.`, true); return; }
+      if (l) { status(t("pot.in_use.item", { name: item.name, other: l.name }), true); return; }
       const d = S.budget.debts.find((x) => x.payoff_from === item.id);
-      if (d) { status(`“${item.name}” pays off the debt “${d.name}”. Change that first.`, true); return; }
-      if (S.budget.pots.length === 1) { status("Keep at least one pot: money left over each month goes there.", true); return; }
+      if (d) { status(t("pot.in_use.debt", { name: item.name, other: d.name }), true); return; }
+      if (S.budget.pots.length === 1) { status(t("pot.keep_one"), true); return; }
     }
     if (kind === "categories" && S.budget.items.some((l) => l.category === item.id)) {
-      status(`“${item.label}” is still used by an item.`, true);
+      status(t("categories.in_use", { label: item.label }), true);
       return;
     }
-    removeWithUndo(kind, i, kind === "currencies" ? item.code : `“${item.name || item.label}”`);
+    removeWithUndo(kind, i, kind === "currencies" ? item.code : t("quoted", { name: item.name || item.label }));
   },
   "add-currency"() {
     const b = S.budget;
@@ -855,20 +875,23 @@ const ACTIONS = {
   "refresh-rates"() { refreshAll(); },
   "add-debt"() {
     const b = S.budget;
-    b.debts.push({ id: newId("Debt", b.debts), name: "Debt", currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
+    const name = t("debts.new");
+    b.debts.push({ id: newId(name, b.debts), name, currency: b.base_currency, balance: "0", apr_pct: "0", min_payment: "0" });
     edited({ structural: true });
     openSheet("debts", b.debts.length - 1, { focusFirst: true });
   },
   "add-pot"() {
     const b = S.budget;
-    b.pots.push({ id: newId("Pot", b.pots), name: "New pot", kind: "sinking", balance: "0" });
+    const name = t("pots.new");
+    b.pots.push({ id: newId(name, b.pots), name, kind: "sinking", balance: "0" });
     edited({ structural: true });
     openSheet("pots", b.pots.length - 1, { focusFirst: true });
   },
   "add-withdrawal"() {
     const b = S.budget;
-    if (!b.pots.length) { status("Add a savings pot first.", true); return; }
-    b.withdrawals.push({ id: newId("Withdrawal", b.withdrawals), name: "From savings", pot: b.pots[0].id, amount: "100", schedule: { start: 0, every: 0 } });
+    if (!b.pots.length) { status(t("status.need_pot"), true); return; }
+    const name = t("wd.new");
+    b.withdrawals.push({ id: newId(name, b.withdrawals), name, pot: b.pots[0].id, amount: "100", schedule: { start: 0, every: 0 } });
     edited({ structural: true });
     openSheet("withdrawals", b.withdrawals.length - 1, { focusFirst: true });
   },
@@ -885,17 +908,18 @@ const ACTIONS = {
     const month = +el.dataset.month, pot = b.pots.find((p) => p.id === el.dataset.pot);
     if (!pot) return;
     const label = S.report.months[month]?.label || monthKey(month);
-    const w = { id: newId(`cover-${label}`, b.withdrawals), name: `Cover ${label}`, pot: pot.id, amount: el.dataset.amount, schedule: { start: month, every: 0 } };
+    const w = { id: newId(`cover-${monthKey(month)}`, b.withdrawals), name: t("cover.name", { month: label }), pot: pot.id, amount: el.dataset.amount, schedule: { start: month, every: 0 } };
     b.withdrawals.push(w);
     edited({ structural: true });
-    toast(`Planned ${el.dataset.display} from ${pot.name} for ${label}`, () => {
+    toast(t("cover.toast", { amount: money({ amount: w.amount, currency: b.base_currency }), pot: pot.name, month: label }), () => {
       const at = S.budget.withdrawals.indexOf(w);
       if (at >= 0) { S.budget.withdrawals.splice(at, 1); edited({ structural: true }); }
     });
   },
   "add-category"() {
     const b = S.budget;
-    b.categories.push({ id: newId("Category", b.categories), label: "Category", kind: "expense", color: "#7a6ff0" });
+    const label = t("categories.new");
+    b.categories.push({ id: newId(label, b.categories), label, kind: "expense", color: "#7a6ff0" });
     edited({ structural: true });
     openSheet("categories", b.categories.length - 1, { focusFirst: true });
   },
@@ -908,11 +932,11 @@ const ACTIONS = {
   "save-wi"() { saveWhatIf(); },
   undo(i, el) { undoChange(i, el); },
   async "adopt-scenario"(i, el) {
-    if (!confirm(`Apply “${el.dataset.name}” to the real budget?`)) return;
+    if (!confirm(t("scenarios.adopt_confirm", { name: el.dataset.name }))) return;
     await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}/adopt`, {}));
   },
   async "del-scenario"(i, el) {
-    if (!confirm(`Delete the scenario “${el.dataset.name}”?`)) return;
+    if (!confirm(t("scenarios.delete_confirm", { name: el.dataset.name }))) return;
     await serverChange(() => api("DELETE", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}`));
   },
 };
@@ -957,37 +981,42 @@ function renderSummary() {
   const short = parseFloat(p.m0.short.amount) > 0;
   const neg = short;
   const from = parseFloat(p.m0.from_savings.amount) > 0;
-  const head = short ? p.m0.short.display : p.m0.left.display.replace("−", "");
-  const month = p.m0.label.split(" ")[0];
-  const goalTxt = p.goal ? (p.goal.already_met ? "Already met" : p.goal.reached_label || `Not in ${p.n} months`) : "";
-  const debtTxt = p.debtFree === null ? "" : p.debtFree < 0 ? `Not in ${p.n} months` : r.months[p.debtFree].label;
-  const html = `<h2>${neg ? "Short" : "Left"} in ${esc(month)}</h2>
+  const head = short ? money(p.m0.short) : money({ ...p.m0.left, amount: p.m0.left.amount.replace(/^-/, "") });
+  const month = monthName(p.m0.month);
+  const state = t(neg ? "summary.short_in" : "summary.left_in", { month });
+  const notIn = t("summary.not_in", { count: p.n });
+  const goalTxt = p.goal ? (p.goal.already_met ? t("summary.already_met") : p.goal.reached_label || notIn) : "";
+  const debtTxt = p.debtFree === null ? "" : p.debtFree < 0 ? notIn : r.months[p.debtFree].label;
+  const fromSavings = money(p.m0.from_savings);
+  const sub = short
+    ? (from ? t("summary.after_savings", { amount: fromSavings }) + " · " : "") + t("summary.nothing_else")
+    : from ? t("summary.after_planned", { amount: fromSavings })
+    : t("summary.of_income", { income: money(p.m0.income), saved: money(p.m0.to_savings) });
+  const savingsIn = t("summary.savings_in", { count: p.n });
+  const html = `<h2>${esc(state)}</h2>
     <div class="big ${neg ? "neg" : ""}">${esc(head)}</div>
-    <div class="sub">${short
-      ? `${from ? `after ${esc(p.m0.from_savings.display)} from savings · ` : ""}nothing else is taken from savings`
-      : from ? `after ${esc(p.m0.from_savings.display)} from savings you planned`
-      : `of ${esc(p.m0.income.display)} income · ${esc(p.m0.to_savings.display)} into savings`}</div>
+    <div class="sub">${esc(sub)}</div>
     <dl>
-      <dt>Savings in ${p.n} months</dt><dd>${esc(p.last.savings.display)}</dd>
+      <dt>${esc(savingsIn)}</dt><dd>${esc(money(p.last.savings))}</dd>
       ${p.goal ? `<dt>${esc(p.goal.name)}</dt><dd>${esc(goalTxt)}</dd>` : ""}
-      ${p.debtFree !== null ? `<dt>Debt-free</dt><dd>${esc(debtTxt)}</dd>` : ""}
-      ${p.debts.length ? `<dt>Interest, ${p.n} months</dt><dd>${esc(r.totals.total_interest_base.display)}</dd>` : ""}
-      ${parseFloat(p.last.overdraft.amount) > 0 ? `<dt>Still owed after ${p.n} months</dt><dd class="neg">${esc(p.last.overdraft.display)}</dd>` : ""}
+      ${p.debtFree !== null ? `<dt>${esc(t("summary.debt_free"))}</dt><dd>${esc(debtTxt)}</dd>` : ""}
+      ${p.debts.length ? `<dt>${esc(t("summary.interest", { count: p.n }))}</dt><dd>${esc(money(r.totals.total_interest_base))}</dd>` : ""}
+      ${parseFloat(p.last.overdraft.amount) > 0 ? `<dt>${esc(t("summary.still_owed", { count: p.n }))}</dt><dd class="neg">${esc(money(p.last.overdraft))}</dd>` : ""}
     </dl>
     ${p.warn?.id === "shortfall"
-      ? `<div class="callout">Pots that could cover it are on Overview. <button type="button" class="linkbtn" data-view-link="overview">See options</button></div>`
+      ? `<div class="callout">${esc(t("summary.pots_callout"))} <button type="button" class="linkbtn" data-view-link="overview">${esc(t("summary.see_options"))}</button></div>`
       : p.warn ? `<div class="callout">${bold(p.warn.text)}</div>` : ""}`;
   // Flash the summary when an edit changed it, so the effect is noticed.
   const changed = S.lastSummary && S.lastSummary !== html;
   S.lastSummary = html;
-  if (changed) announce(`${neg ? "Short" : "Left"} in ${month}: ${head}. Savings in ${p.n} months: ${p.last.savings.display}.`);
+  if (changed) announce(t("summary.announce", { state, amount: head, savings_label: savingsIn, savings: money(p.last.savings) }));
   for (const el of [$("#railSummary"), $("#mobileSummary")]) {
     el.innerHTML = html;
     if (changed) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
   }
   const mb = $("#minibar");
-  mb.innerHTML = `<span>${neg ? "Short" : "Left"} in ${esc(month)} <b class="${neg ? "neg" : ""}">${esc(head)}</b></span>
-    <span>In ${p.n} months <b>${esc(p.last.savings.display)}</b></span>`;
+  mb.innerHTML = `<span>${esc(state)} <b class="${neg ? "neg" : ""}">${esc(head)}</b></span>
+    <span>${esc(t("summary.in_months", { count: p.n }))} <b>${esc(money(p.last.savings))}</b></span>`;
   mb.hidden = S.view === "overview";
 }
 
@@ -1022,11 +1051,11 @@ function renderInsights() {
   items.sort((a, b) => relevance(a) - relevance(b));
   const shown = S.allInsights ? items : items.slice(0, 3);
   const card = (x) => x.group
-    ? `<details class="ins ${esc(x.tone)}"><summary><span><b>Currency exposure</b> · ${x.group.length} note${x.group.length === 1 ? "" : "s"} on rates and fees</span></summary>
+    ? `<details class="ins ${esc(x.tone)}"><summary data-show="${esc(t("ins.show"))}" data-hide="${esc(t("ins.hide"))}"><span><b>${esc(t("ins.fx_title"))}</b> · ${esc(t("ins.fx_count", { count: x.group.length }))}</span></summary>
         <div class="ins-group">${x.group.map((g) => `<p>${bold(g.text)}</p>`).join("")}</div></details>`
     : `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`;
-  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">Add income and costs to see insights.</p>`) +
-    (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${S.allInsights ? "Show fewer" : `Show all ${items.length}`}</button>` : "");
+  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">${esc(t("insights.empty"))}</p>`) +
+    (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(S.allInsights ? t("ins.fewer") : t("ins.all", { count: items.length }))}</button>` : "");
 }
 
 function renderOutputs() {
@@ -1036,22 +1065,22 @@ function renderOutputs() {
   renderRateNotes();
   const m0 = r.months[0];
   const cats = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
-  $("#monthName").textContent = m0.label.split(" ")[0];
-  $("#incomeBig").textContent = m0.income.display;
-  $("#monthsOut").textContent = r.months.length;
+  $("#h-month").textContent = t("month.heading", { month: monthName(m0.month) });
+  $("#incomeBig").textContent = money(m0.income);
+  $("#h-proj").textContent = t("projection.heading", { count: r.months.length });
 
   const num = (m) => Math.max(parseFloat(m.amount), 0); // pixels only
   const segs = Object.entries(m0.by_category)
     .filter(([, v]) => parseFloat(v.amount) > 0)
     .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)", ""]);
-  if (num(m0.debt_payments) > 0) segs.push(["Debt payments", m0.debt_payments, "var(--debt)", "hatch"]);
-  const left = { amount: String(num(m0.to_savings) - num(m0.income_to_pots)) };
-  if (num(m0.income_to_pots) > 0) segs.push(["Straight to savings", m0.income_to_pots, "var(--save)", "hatch-save"]);
-  if (num(left) > 0) segs.push(["Into savings", { amount: left.amount, display: new Intl.NumberFormat("en-GB", { style: "currency", currency: r.base_currency, maximumFractionDigits: 0 }).format(num(left)) }, "var(--save)", ""]);
+  if (num(m0.debt_payments) > 0) segs.push([t("split.debt"), m0.debt_payments, "var(--debt)", "hatch"]);
+  const left = { amount: (num(m0.to_savings) - num(m0.income_to_pots)).toFixed(2), currency: r.base_currency }; // display only
+  if (num(m0.income_to_pots) > 0) segs.push([t("split.straight"), m0.income_to_pots, "var(--save)", "hatch-save"]);
+  if (num(left) > 0) segs.push([t("split.savings"), left, "var(--save)", ""]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
-  $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(s[1].display)}"></div>`).join("");
-  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(s[1].display)}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
+  $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");
+  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(money(s[1]))}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
 
   renderInsights();
   renderShortfall();
@@ -1065,11 +1094,12 @@ function renderOutputs() {
   const hasDebt = r.debts.length > 0;
   const hasFrom = r.months.some((m) => parseFloat(m.from_savings.amount) > 0);
   const hasOwed = r.months.some((m) => parseFloat(m.overdraft.amount) > 0);
-  let h = `<thead><tr><th scope="col">Month</th><th scope="col">Income</th><th scope="col">Spent</th><th scope="col">To debts</th><th scope="col">Left</th>${hasFrom ? '<th scope="col">From savings</th>' : ""}${hasOwed ? '<th scope="col">Owed</th>' : ""}<th scope="col">Saved</th><th scope="col">Savings</th>${hasDebt ? '<th scope="col">Debt</th>' : ""}</tr></thead><tbody>`;
+  const cols = ["month", "income", "spent", "to_debts", "left", hasFrom && "from_savings", hasOwed && "owed", "saved", "savings", hasDebt && "debt"];
+  let h = `<thead><tr>${cols.filter(Boolean).map((c) => `<th scope="col">${esc(t(`table.${c}`))}</th>`).join("")}</tr></thead><tbody>`;
   for (const m of r.months) {
     const neg = (x) => (parseFloat(x.amount) < 0 ? "neg" : "");
     const owed = parseFloat(m.overdraft.amount) > 0;
-    h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(m.income.display)}</td><td>${esc(m.expenses.display)}</td><td>${esc(m.debt_payments.display)}</td><td class="${neg(m.left)}">${esc(m.left.display)}</td>${hasFrom ? `<td>${esc(m.from_savings.display)}</td>` : ""}${hasOwed ? `<td class="${owed ? "neg" : ""}">${esc(m.overdraft.display)}</td>` : ""}<td class="${neg(m.saved)}">${esc(m.saved.display)}</td><td>${esc(m.savings.display)}</td>${hasDebt ? `<td>${esc(m.debt_balance_base.display)}</td>` : ""}</tr>`;
+    h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td>${hasFrom ? `<td>${esc(money(m.from_savings))}</td>` : ""}${hasOwed ? `<td class="${owed ? "neg" : ""}">${esc(money(m.overdraft))}</td>` : ""}<td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td>${esc(money(m.savings))}</td>${hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : ""}</tr>`;
   }
   $("#table").innerHTML = h + "</tbody>";
   renderItemNumbers();
@@ -1085,16 +1115,17 @@ function renderShortfall() {
   if (!sfs.length) { card.innerHTML = ""; return; }
   const sf = sfs[0];
   const more = sfs.length - 1;
-  const note = { sinking: "delays what it's saved for", emergency: "last resort: it's for emergencies" };
-  card.innerHTML = `<h2 id="h-short">${esc(sf.label)} is ${esc(sf.amount.display)} short</h2>
-    <p class="muted">Nothing is taken from your savings automatically.${more ? ` ${more === 1 ? "One more month falls" : `${more} more months fall`} short later.` : ""}</p>
-    ${sf.options.length ? `<p style="margin-top:10px">You could cover it from:</p>
+  const note = (o) => ["sinking", "emergency"].includes(o.kind) ? t(`short.note.${o.kind}`)
+    : o.covers.amount === sf.amount.amount ? t("short.covers_all") : t("short.covers_part", { amount: money(o.covers) });
+  card.innerHTML = `<h2 id="h-short">${esc(t("short.title", { month: sf.label, amount: money(sf.amount) }))}</h2>
+    <p class="muted">${esc(t("short.untouched"))}${more ? " " + esc(t("short.more", { count: more })) : ""}</p>
+    ${sf.options.length ? `<p style="margin-top:10px">${esc(t("short.cover_from"))}</p>
     <div class="opts">${sf.options.map((o) => `<button type="button" class="opt ${o.kind === "emergency" ? "last" : ""}" data-action="cover"
-        data-pot="${esc(o.pot)}" data-month="${sf.month}" data-amount="${esc(o.covers.amount)}" data-display="${esc(o.covers.display)}">
-        <span>${esc(o.name)} <small>· ${esc(o.available.display)} there</small></span>
-        <small>${note[o.kind] ? esc(note[o.kind]) : o.covers.amount === sf.amount.amount ? "covers all of it" : `covers ${esc(o.covers.display)} of it`}</small>
-        <b>Use ${esc(o.covers.display)}</b></button>`).join("")}</div>` : `<p style="margin-top:10px">None of your pots holds money then.</p>`}
-    <p class="muted foot">If you leave it, it's owed on your current account and repaid from the next month with money to spare. That usually costs interest or fees.</p>`;
+        data-pot="${esc(o.pot)}" data-month="${sf.month}" data-amount="${esc(o.covers.amount)}">
+        <span>${esc(o.name)} <small>· ${esc(t("short.there", { amount: money(o.available) }))}</small></span>
+        <small>${esc(note(o))}</small>
+        <b>${esc(t("short.use", { amount: money(o.covers) }))}</b></button>`).join("")}</div>` : `<p style="margin-top:10px">${esc(t("short.no_pots"))}</p>`}
+    <p class="muted foot">${esc(t("short.owed_note"))}</p>`;
 }
 
 // niceTicks returns round axis values covering [lo, hi]: 0, 5k, 10k, ...
@@ -1122,12 +1153,13 @@ function drawChart() {
   const debt = r.months.map((m) => parseFloat(m.debt_balance_base.amount) + parseFloat(m.overdraft.amount));
   const hasDebt = debt.some((v) => v > 0);
   const all = sav.concat(hasDebt ? debt : []);
-  $("#debtLegend").textContent = r.months.some((m) => parseFloat(m.overdraft.amount) > 0) ? "Debt and money owed" : "Debt (in base currency)";
+  $("#debtLegend").textContent = t(r.months.some((m) => parseFloat(m.overdraft.amount) > 0) ? "projection.debt_owed" : "projection.debt");
   const ticks = niceTicks(Math.min(0, ...all), Math.max(100, ...all), compact ? 3 : 4);
   const lo = ticks[0], hi = ticks[ticks.length - 1];
   const cur = r.base_currency;
-  const fmt = new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, maximumFractionDigits: 0, notation: compact ? "compact" : "standard" });
-  const L = compact ? 48 : 70;
+  const fmt = { format: (v) => moneyAxis(v, cur, compact) };
+  // Room for the longest axis label: "6 тыс. €" is longer than "€6K".
+  const L = Math.max(compact ? 48 : 70, 14 + 7 * Math.max(...ticks.map((v) => fmt.format(v).length)));
   const n = Math.max(r.months.length - 1, 1);
   const x = (i) => L + (i * (W - L - R)) / n;
   const y = (v) => T + ((hi - v) / (hi - lo)) * (H - T - B);
@@ -1155,7 +1187,8 @@ function drawChart() {
     const i = Math.max(0, Math.min(r.months.length - 1, Math.round(((ev.clientX - box.left) * (W / box.width) - L) / ((W - L - R) / n))));
     const m = r.months[i];
     guide.setAttribute("x1", x(i)); guide.setAttribute("x2", x(i)); guide.setAttribute("visibility", "visible");
-    tip.innerHTML = `<b>${esc(m.label)}</b><span>Savings <strong>${esc(m.savings.display)}</strong></span>${parseFloat(m.debt_balance_base.amount) > 0 ? `<span>Debt <strong>${esc(m.debt_balance_base.display)}</strong></span>` : ""}${parseFloat(m.overdraft.amount) > 0 ? `<span>Owed <strong>${esc(m.overdraft.display)}</strong></span>` : ""}<span>Left <strong>${esc(m.left.display)}</strong></span>`;
+    const row = (key, v) => `<span>${esc(t(key))} <strong>${esc(money(v))}</strong></span>`;
+    tip.innerHTML = `<b>${esc(m.label)}</b>${row("table.savings", m.savings)}${parseFloat(m.debt_balance_base.amount) > 0 ? row("table.debt", m.debt_balance_base) : ""}${parseFloat(m.overdraft.amount) > 0 ? row("table.owed", m.overdraft) : ""}${row("table.left", m.left)}`;
     tip.hidden = false;
     const px = (x(i) / W) * box.width;
     tip.style.left = `${Math.min(Math.max(px - tip.offsetWidth / 2, 0), box.width - tip.offsetWidth)}px`;
@@ -1168,26 +1201,27 @@ function drawChart() {
 
 // ---------- scenarios ----------
 
-const WI_KINDS = [["item", "Change an item's amount"], ["rate", "Change an exchange rate"], ["extra", "Change share to debts (%)"], ["remove", "Remove an item"]];
+const WI_KINDS = ["item", "rate", "extra", "remove"];
 
 function renderWhatIf() {
   const b = S.budget;
   const itemOpts = b.items.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
-  const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} (now ${esc(c.per_base)})</option>`).join("");
+  const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(t("scenarios.now", { code: c.code, rate: number(c.per_base) }))}</option>`).join("");
+  const kinds = (o) => WI_KINDS.map((k) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${esc(t(`scenarios.kind.${k}`))}</option>`).join("");
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
-      <label class="f">Change<select data-wi="${i}" data-k="kind">${WI_KINDS.map(([k, t]) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${o.kind === "rate" ? "Currency" : "Item"}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
-      ${o.kind === "remove" ? "<span></span>" : `<label class="f">New value<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
-      ${del("del-wi", i, "change")}
-    </div>`).join("") || `<p class="muted">Add a change, for example rent down to 1,000 or a different exchange rate, then preview it.</p>`;
+      <label class="f">${esc(t("scenarios.change"))}<select data-wi="${i}" data-k="kind">${kinds(o)}</select></label>
+      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${esc(t(o.kind === "rate" ? "field.currency" : "noun.item_title"))}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
+      ${o.kind === "remove" ? "<span></span>" : `<label class="f">${esc(t("scenarios.new_value"))}<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
+      ${del("del-wi", i, t("scenarios.a_change"))}
+    </div>`).join("") || `<p class="muted">${esc(t("scenarios.empty"))}</p>`;
   $("#previewBtn").disabled = !S.wi.length;
   S.wi.forEach((o, i) => { const t = document.querySelector(`[data-wi="${i}"][data-k="target"]`); if (t) { if (o.target) t.value = o.target; o.target = t.value; } });
 }
 
 function wiOps() {
   return S.wi.map((o) => {
-    if (o.kind !== "remove" && !DEC_RE.test(String(o.value).trim())) throw new Error("Each new value must be a plain number like 800 or 92.5");
-    const value = String(o.value).trim();
+    const value = parseDecimal(o.value ?? "");
+    if (o.kind !== "remove" && value === null) throw new Error(t("scenarios.bad_value"));
     switch (o.kind) {
       case "item": return { op: "set_item", target: o.target, value: { amount: value } };
       case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
@@ -1205,9 +1239,13 @@ async function previewWhatIf() {
     const res = await api("POST", `/api/budgets/${encodeURIComponent(S.id)}/what-if`, { ops });
     const before = S.report, after = res.report;
     const endB = parseFloat(before.totals.end_savings.amount), endA = parseFloat(after.totals.end_savings.amount);
-    const goalTxt = after.goals.map((g) => `${esc(g.name)}: ${g.already_met ? "already met" : g.reached_label ? esc(g.reached_label) : "not reached"}`).join(" · ");
-    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}" style="margin-top:12px">After ${after.months.length} months: <b>${esc(after.totals.end_savings.display)}</b> instead of ${esc(before.totals.end_savings.display)}. This month saves ${esc(after.months[0].saved.display)}.${goalTxt ? "<br>" + goalTxt : ""}</div>
-      <div class="row-actions"><input id="wiName" placeholder="Scenario name" aria-label="Scenario name" style="flex:1;min-width:160px"><button type="button" data-action="save-wi">Save as scenario</button></div>`;
+    const goalTxt = after.goals.map((g) => `${g.name}: ${g.already_met ? t("scenarios.goal_met") : g.reached_label || t("scenarios.goal_not")}`).join(" · ");
+    const result = tHTML("scenarios.result", {
+      count: after.months.length, after: money(after.totals.end_savings), before: money(before.totals.end_savings), saved: money(after.months[0].saved),
+    });
+    const name = esc(t("scenarios.name"));
+    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}" style="margin-top:12px">${result}${goalTxt ? "<br>" + esc(goalTxt) : ""}</div>
+      <div class="row-actions"><input id="wiName" placeholder="${name}" aria-label="${name}" style="flex:1;min-width:160px"><button type="button" data-action="save-wi">${esc(t("scenarios.save"))}</button></div>`;
   } catch (e) {
     out.innerHTML = `<div class="ins warn" style="margin-top:12px">${esc(e.message)}</div>`;
   }
@@ -1226,20 +1264,15 @@ async function saveWhatIf() {
 // ---------- activity ----------
 
 // Who made a change, as the history records it (see store.Change).
-const SOURCES = {
-  web: "You (browser)",
-  mcp: "AI assistant",
-  cli: "Command line",
-  "auto-refresh": "Rate refresh",
-  earlier: "Earlier",
-};
+const SOURCES = ["web", "mcp", "cli", "auto-refresh", "earlier"];
+const sourceLabel = (s) => t(SOURCES.includes(s) ? `source.${s}` : "source.unknown");
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
+  if (s < 60) return t("activity.just_now");
+  if (s < 3600) return t("activity.min_ago", { count: Math.floor(s / 60) });
+  if (s < 86400) return t("activity.h_ago", { count: Math.floor(s / 3600) });
+  return date(iso);
 }
 
 async function loadActivity() {
@@ -1250,33 +1283,32 @@ async function loadActivity() {
   } catch {
     return; // keep what is shown; the next refresh retries
   }
-  box.innerHTML = S.history.map(activityRow).join("") || `<li class="muted">No changes yet.</li>`;
+  box.innerHTML = S.history.map(activityRow).join("") || `<li class="muted">${esc(t("activity.empty"))}</li>`;
 }
 
 // activityRow is one change in the Recent changes list: who, what, when, and
 // an Undo button when there is an earlier version to go back to. i is its
 // place in S.history, newest first.
 function activityRow(e, i) {
-  const who = SOURCES[e.source] || e.source || "Unknown";
+  const who = sourceLabel(e.source);
   const when = `r${e.revision} · ${ago(e.at)}`;
   const undo = e.undoable ? undoButton(e.revision, i) : "<span></span>";
   return `<li class="act ${esc(e.source)}">
       <span class="who">${esc(who)}</span>
       <span class="what">${esc(e.summary)}</span>
-      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">${esc(when)}</span>
+      <span class="when muted" title="${esc(dateTime(e.at))}">${esc(when)}</span>
       ${undo}
     </li>`;
 }
 
 function undoButton(revision, i) {
   const data = `data-action="undo" data-rev="${revision}" data-i="${i}"`;
-  return `<button type="button" class="linkish" ${data}>Undo</button>`;
+  return `<button type="button" class="linkish" ${data}>${esc(t("activity.undo"))}</button>`;
 }
 
 function confirmUndoingLater(later) {
   const changes = later.map((e) => `• ${e.summary}`).join("\n");
-  const count = later.length === 1 ? "1 later change" : `${later.length} later changes`;
-  return confirm(`This also undoes ${count}:\n\n${changes}\n\nUndo them all?`);
+  return confirm(t("activity.undo_confirm", { count: later.length, list: changes }));
 }
 
 async function undoChange(i, el) {
@@ -1297,17 +1329,18 @@ async function loadCompare() {
     const rows = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}/compare`);
     $("#compareEmpty").hidden = rows.length >= 2;
     if (rows.length < 2) { table.innerHTML = ""; return; }
-    let h = `<thead><tr><th scope="col">Scenario</th><th scope="col">This month</th><th scope="col">End savings</th><th scope="col">Δ</th><th scope="col">Interest</th><th scope="col">Goals</th><th scope="col"><span class="sr">Actions</span></th></tr></thead><tbody>`;
+    const head = ["scenario", "this_month", "end_savings", "delta", "interest", "goals"].map((c) => `<th scope="col">${esc(t(`compare.${c}`))}</th>`).join("");
+    let h = `<thead><tr>${head}<th scope="col"><span class="sr">${esc(t("compare.actions"))}</span></th></tr></thead><tbody>`;
     for (const o of rows) {
       if (o.error) { h += `<tr><th scope="row">${esc(o.name)}</th><td colspan="5" class="neg">${esc(o.error)}</td><td>${scenarioButtons(o)}</td></tr>`; continue; }
       const d = o.delta_end_savings;
-      const goals = (o.goals || []).map((g) => g.already_met ? "met" : g.reached_label || "—").join(", ");
-      h += `<tr><th scope="row">${esc(o.name)}</th><td>${esc(o.first_month_saved.display)}</td><td>${esc(o.end_savings.display)}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(d.display) : ""}</td><td>${esc(o.total_interest_base.display)}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
+      const goals = (o.goals || []).map((g) => g.already_met ? t("compare.met") : g.reached_label || "—").join(", ");
+      h += `<tr><th scope="row">${esc(o.name)}</th><td>${esc(money(o.first_month_saved))}</td><td>${esc(money(o.end_savings))}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(money(d)) : ""}</td><td>${esc(money(o.total_interest_base))}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
     }
     table.innerHTML = h + "</tbody>";
   } catch { table.innerHTML = ""; }
 }
-const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">Adopt</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}" aria-label="Delete ${esc(o.name)}">✕</button>`;
+const scenarioButtons = (o) => `<button type="button" class="linkish" data-action="adopt-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}">${esc(t("scenarios.adopt"))}</button> <button type="button" class="linkish" data-action="del-scenario" data-sid="${esc(o.id)}" data-name="${esc(o.name)}" aria-label="${esc(t("scenarios.delete", { name: o.name }))}">✕</button>`;
 
 // ---------- new / import / export / delete ----------
 
@@ -1340,25 +1373,26 @@ function exportJSON() {
 async function importJSON(file) {
   try {
     const budget = JSON.parse(await file.text());
-    const id = prompt("Id for the imported budget:", slug(budget.name || file.name.replace(/\.json$/, "")));
+    const id = prompt(t("import.id"), slug(budget.name || file.name.replace(/\.json$/, "")));
     if (!id) return;
     await api("POST", "/api/budgets", { id, budget });
     await loadList();
     await open(id, "overview");
   } catch (e) {
-    status(`Import failed: ${e.data?.issues ? e.data.issues.map((i) => `${i.path}: ${i.message}`).join("; ") : e.message}`, true);
+    const error = e.data?.issues ? e.data.issues.map((i) => `${i.path}: ${i.message}`).join("; ") : e.message;
+    status(t("import.failed", { error }), true);
   }
 }
 
 async function deleteBudget() {
   $("details.menu")?.removeAttribute("open");
-  if (!S.id || !confirm(`Delete “${S.budget.name}” permanently? This can't be undone.`)) return;
+  if (!S.id || !confirm(t("delete.confirm", { name: S.budget.name }))) return;
   try {
     await api("DELETE", `/api/budgets/${encodeURIComponent(S.id)}`);
     S.id = null;
     await loadList();
     if (S.list.length) await open(S.list[0].id, "overview");
-    else status("No budgets.");
+    else status(t("status.no_budgets"));
   } catch (e) { status(e.message, true); }
 }
 
@@ -1380,7 +1414,8 @@ document.addEventListener("change", (e) => {
 document.addEventListener("focusout", (e) => {
   const el = e.target;
   const m = el.dataset?.path?.match(/^items\.(\d+)\.amount$/);
-  if (m && DEC_RE.test(el.value.trim())) el.value = fmtAmount(el.value.trim(), S.budget.items[+m[1]]?.currency);
+  const d = m && parseDecimal(el.value);
+  if (d) el.value = toInput(fmtAmount(d, S.budget.items[+m[1]]?.currency));
 });
 document.addEventListener("click", (e) => {
   const link = e.target.closest("[data-view-link]");
@@ -1439,16 +1474,17 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
 (async function init() {
   try {
     S.meta = await api("GET", "/api/meta");
+    await loadLocale(S.meta.locale, S.meta.crypto);
     S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
     await loadList();
-    if (!S.list.length) { status("No budgets yet."); return; }
+    if (!S.list.length) { status(t("status.no_budgets_yet")); return; }
     let [want, view] = decodeURIComponent(location.hash.slice(1)).split("/");
     if (!want) try { want = localStorage.getItem("bbbudget.last") || ""; } catch {}
     await open(S.list.some((b) => b.id === want) ? want : S.list[0].id, VIEWS.includes(view) ? view : "overview");
   } catch (e) {
     // A failed fetch is a TypeError with no status; anything else is a bug in this page.
     const offline = e instanceof TypeError && /fetch|network/i.test(e.message);
-    status(offline ? `Could not reach the server: ${e.message}` : `Something went wrong loading this page: ${e.message}`, true);
+    status(t(offline ? "status.unreachable" : "status.load_failed", { error: e.message }), true);
     if (!offline) console.error(e);
   }
   setInterval(poll, POLL_MS);

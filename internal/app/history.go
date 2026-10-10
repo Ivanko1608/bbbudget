@@ -7,13 +7,39 @@ import (
 	"slices"
 	"strings"
 
+	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/store"
 )
 
 // History returns a budget's recent changes, newest first: at most limit of
-// them, or store.AllEntries.
+// them, or store.AllEntries. Summaries are in English; see LocalizeHistory.
 func (a *App) History(ctx context.Context, id string, limit int) ([]store.Entry, error) {
 	return a.Store.History(ctx, id, limit)
+}
+
+// LocalizeHistory renders every summary in history with l.
+func LocalizeHistory(history []store.Entry, l *i18n.Localizer) {
+	for i, entry := range history {
+		history[i].Summary = l.Render(summaryMsg(entry))
+	}
+}
+
+// summaryMsg says what an entry changed, from what the store recorded about it.
+func summaryMsg(entry store.Entry) i18n.Msg {
+	changes := budget.DifferencesMsg(entry.Changes)
+	switch {
+	case entry.Source == store.SourceEarlier:
+		return i18n.Msg{Key: "change.baseline"}
+	case entry.Revision == 1:
+		return i18n.Msg{Key: "change.created"}
+	case entry.Undoes != 0:
+		undone := i18n.Text(fmt.Sprintf("r%d", entry.Undoes))
+		args := map[string]i18n.Arg{"what": undone, "change": i18n.Nested(changes)}
+		return i18n.Msg{Key: "change.undid", Args: args}
+	default:
+		return changes
+	}
 }
 
 // UndoConflictError means undoing a change would also undo the changes made

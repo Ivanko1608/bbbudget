@@ -1,12 +1,16 @@
-// App-wide settings: rate fetching, the default rate source, automatic
-// refresh and the CoinGecko key. The key is write-only: the server only says
-// whether one is set.
+// App-wide settings: language, rate fetching, the default rate source,
+// automatic refresh and the CoinGecko key. The key is write-only: the server
+// only says whether one is set.
+
+import { t, loadLocale, dateTime } from "./i18n.js";
 
 const $ = (sel) => document.querySelector(sel);
 const form = $("#form");
 
-async function api(method, body) {
-  const res = await fetch("/api/settings", {
+let META = { locales: [] };
+
+async function api(method, body, path = "/api/settings") {
+  const res = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json", "X-Requested-With": "bbbudget" } : {},
     body: body ? JSON.stringify(body) : undefined,
@@ -21,22 +25,24 @@ function status(text, isErr = false) {
   $("#status").classList.toggle("err", isErr);
 }
 
-const LABELS = { data: "Budgets", templates: "Your templates", settings: "This settings file" };
 
 function render(s) {
+  form.locale.innerHTML = [["auto", t("prefs.language.auto")], ...META.locales.map((l) => [l.code, l.name])]
+    .map(([v, n]) => `<option value="${v}">${n.replace(/[&<>"]/g, "")}</option>`).join("");
+  form.locale.value = s.locale || "auto";
   form.fetch_rates.checked = s.fetch_rates;
   form.default_rate_source.value = s.default_rate_source;
   form.auto_refresh.value = s.auto_refresh;
   form.coingecko_api_key.value = "";
-  $("#keyState").textContent = s.coingecko_api_key_set ? "(a key is set)" : "(none)";
+  $("#keyState").textContent = t(s.coingecko_api_key_set ? "prefs.cg.set" : "prefs.cg.none");
   $("#clearKey").hidden = !s.coingecko_api_key_set;
   syncDisabled();
 
   const st = s.auto_refresh_status;
-  let text = "Automatic updates run while “bbbudget serve” is running.";
+  let text = t("prefs.auto_status");
   if (st?.last_run) {
-    text += ` Last run ${new Date(st.last_run).toLocaleString()}: ${st.updated} rate${st.updated === 1 ? "" : "s"} in ${st.budgets} budget${st.budgets === 1 ? "" : "s"}`;
-    text += st.failures?.length ? `; problems: ${st.failures.join("; ")}` : ".";
+    text += " " + t("prefs.last_run", { when: dateTime(st.last_run), rates: t("prefs.rates_count", { count: st.updated }), budgets: t("prefs.budgets_count", { count: st.budgets }) });
+    text += st.failures?.length ? t("prefs.problems", { list: st.failures.join("; ") }) : ".";
   }
   $("#autoStatus").textContent = text;
 
@@ -44,7 +50,8 @@ function render(s) {
   dl.replaceChildren();
   for (const [k, v] of Object.entries(s.paths || {})) {
     const dt = document.createElement("dt");
-    dt.textContent = LABELS[k] || k;
+    const label = t(`prefs.files.${k}`);
+    dt.textContent = label === `prefs.files.${k}` ? k : label;
     const dd = document.createElement("dd");
     dd.textContent = v || "—";
     dl.append(dt, dd);
@@ -58,12 +65,15 @@ function syncDisabled() {
   for (const name of ["default_rate_source", "auto_refresh", "coingecko_api_key"]) form[name].disabled = off;
 }
 
+// save reports whether the settings were saved.
 async function save(patch, done) {
   try {
     render(await api("PUT", patch));
     status(done);
+    return true;
   } catch (e) {
-    status(`Not saved: ${e.message}`, true);
+    status(t("prefs.not_saved", { error: e.message }), true);
+    return false;
   }
 }
 
@@ -71,22 +81,30 @@ form.fetch_rates.addEventListener("change", syncDisabled);
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   const patch = {
+    locale: form.locale.value,
     fetch_rates: form.fetch_rates.checked,
     default_rate_source: form.default_rate_source.value,
     auto_refresh: form.auto_refresh.value,
   };
   const key = form.coingecko_api_key.value.trim();
   if (key) patch.coingecko_api_key = key; // empty means "keep the current key"
-  save(patch, "Saved.");
+  const relang = patch.locale !== CURRENT;
+  save(patch, t("prefs.saved")).then((ok) => { if (ok && relang) location.reload(); }); // show the page in the new language
 });
-$("#clearKey").addEventListener("click", () => save({ coingecko_api_key: "" }, "Key removed."));
+$("#clearKey").addEventListener("click", () => save({ coingecko_api_key: "" }, t("prefs.key_removed")));
+
+let CURRENT = "auto";
 
 (async function init() {
   try {
-    render(await api("GET"));
+    META = await api("GET", undefined, "/api/meta");
+    await loadLocale(META.locale);
+    const s = await api("GET");
+    CURRENT = s.locale || "auto";
+    render(s);
     form.hidden = false;
-    status("Changes apply to every budget.");
+    status(t("prefs.apply_all"));
   } catch (e) {
-    status(`Could not load settings: ${e.message}`, true);
+    status(t("prefs.load_failed", { error: e.message }), true);
   }
 })();

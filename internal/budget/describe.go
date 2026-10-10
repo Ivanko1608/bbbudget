@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
@@ -255,22 +256,25 @@ func opsValue(ops []Op) string {
 const maxDescribed = 6
 
 // Describe summarises differences in one line of English, for the change
-// history: "Rent: amount 1150 → 1200; added item Gym". It is "no changes"
-// when there are none.
-func Describe(diffs []Difference) string {
+// history: "Rent: amount 1150 → 1200; added item Gym".
+func Describe(diffs []Difference) string { return english().Render(DifferencesMsg(diffs)) }
+
+// DifferencesMsg is the same summary as a message, for rendering in the
+// reader's language. It is "no changes" when there are none.
+func DifferencesMsg(diffs []Difference) i18n.Msg {
 	subjects := groupBySubject(diffs)
 	if len(subjects) == 0 {
-		return "no changes"
+		return msg("change.none", nil)
 	}
 	shown := subjects[:min(len(subjects), maxDescribed)]
-	parts := make([]string, len(shown))
+	parts := make([]i18n.Msg, len(shown))
 	for i, s := range shown {
-		parts[i] = s.describe()
+		parts[i] = s.message()
 	}
 	if hidden := len(subjects) - len(shown); hidden > 0 {
-		parts = append(parts, moreChanges(hidden))
+		parts = append(parts, msg("change.more", args{"count": i18n.Int(int64(hidden))}))
 	}
-	return strings.Join(parts, "; ")
+	return msg("change.list", args{"items": i18n.JoinedList(parts, "; ")})
 }
 
 // subject is one thing that differs, with all of its changed fields.
@@ -304,31 +308,33 @@ func (s subject) takes(d Difference) bool {
 	return bothChanged && s.part == d.Part && s.name == d.Name
 }
 
-func (s subject) describe() string {
+func (s subject) message() i18n.Msg {
 	if s.action != Changed {
-		return fmt.Sprintf("%s %s %s", s.action, s.part, s.name)
+		part := i18n.Nested(msg("part."+string(s.part), nil))
+		return msg("change."+string(s.action), args{"part": part, "name": i18n.Text(s.name)})
 	}
-	fields := make([]string, len(s.fields))
+	fields := make([]i18n.Msg, len(s.fields))
 	for i, d := range s.fields {
-		fields[i] = fmt.Sprintf("%s %s → %s", d.Field, orNone(d.Old), orNone(d.New))
+		fields[i] = fieldMsg(d)
 	}
-	changes := strings.Join(fields, ", ")
+	changes := i18n.JoinedList(fields, ", ")
 	if s.part == PartSettings {
-		return changes
+		return msg("change.settings", args{"fields": changes})
 	}
-	return s.name + ": " + changes
+	return msg("change.fields", args{"name": i18n.Text(s.name), "fields": changes})
 }
 
-func orNone(value string) string {
+func fieldMsg(d Difference) i18n.Msg {
+	field := i18n.Text(d.Field)
+	if key := "field." + d.Field; english().Has(key) {
+		field = i18n.Nested(msg(key, nil))
+	}
+	return msg("change.field", args{"field": field, "old": orNone(d.Old), "new": orNone(d.New)})
+}
+
+func orNone(value string) i18n.Arg {
 	if value == "" {
-		return "(none)"
+		return i18n.Nested(msg("change.empty", nil))
 	}
-	return value
-}
-
-func moreChanges(n int) string {
-	if n == 1 {
-		return "and 1 more change"
-	}
-	return fmt.Sprintf("and %d more changes", n)
+	return i18n.Text(value)
 }

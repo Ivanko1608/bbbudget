@@ -1,11 +1,11 @@
 package budget
 
 import (
-	"fmt"
 	"math/big"
 	"sort"
 	"strings"
 
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 )
 
@@ -16,11 +16,29 @@ const (
 	ToneGood = "good"
 )
 
-// Insight is one plain-language observation. Text may contain **bold** spans.
+// Insight is one plain-language observation. The rule sets the message (a
+// catalog key and typed arguments); Text is that message rendered in the
+// reader's language (see Report.Localize) and may contain **bold** spans.
 type Insight struct {
 	ID   string `json:"id"`
 	Tone string `json:"tone"`
+	i18n.Msg
 	Text string `json:"text"`
+}
+
+// args is shorthand for message arguments.
+type args = map[string]i18n.Arg
+
+func msg(key string, a args) i18n.Msg { return i18n.Msg{Key: key, Args: a} }
+
+// joinWith joins messages with a conjunction message ("list.or" is
+// "{a} or {b}"), so each language words its own "or" and "and".
+func joinWith(key string, ms []i18n.Msg) i18n.Msg {
+	out := ms[len(ms)-1]
+	for i := len(ms) - 2; i >= 0; i-- {
+		out = msg(key, args{"a": i18n.Nested(ms[i]), "b": i18n.Nested(out)})
+	}
+	return out
 }
 
 // Rule produces zero or more insights from a projection. Rules must be pure.
@@ -61,11 +79,12 @@ func Insights(pr *Projection, rules []Rule) []Insight {
 	return out
 }
 
-func w(m money.Money) string { return m.Display() }
+// fxRate is an exchange rate to 4 significant digits, so that a crypto rate
+// (0.00001352 BTC per €) doesn't print as 0.00.
+func fxRate(r *big.Rat) i18n.Arg { return i18n.Num(money.RoundSignificant(r, 4).String()) }
 
-// fxRate renders an exchange rate with 4 significant digits, so that a crypto
-// rate (0.00001352 BTC per €) doesn't print as 0.00.
-func fxRate(r *big.Rat) string { return money.RoundSignificant(r, 4).String() }
+// pctArg is pct as a message argument.
+func pctArg(a, b money.Money) i18n.Arg { return i18n.Int(pct(a, b)) }
 
 // pct returns round(100*a/b) as an int, or 0 when b is not positive.
 func pct(a, b money.Money) int64 {
@@ -89,16 +108,17 @@ func ruleCategoryShare(pr *Projection) []Insight {
 			totals[l.Category] = t.Add(p.MonthlyEquivalent(l))
 		}
 	}
-	var parts []string
+	var parts []i18n.Msg
 	for _, c := range p.Doc.Categories {
 		if t, ok := totals[c.ID]; ok && t.IsPositive() {
-			parts = append(parts, fmt.Sprintf("%s **%s** (%d%%)", c.Label, w(t), pct(t, inc)))
+			a := args{"label": i18n.Text(c.Label), "amount": i18n.Money(t), "pct": pctArg(t, inc)}
+			parts = append(parts, msg("insight.category_share.item", a))
 		}
 	}
 	if len(parts) == 0 {
 		return nil
 	}
-	return []Insight{{Tone: ToneInfo, Text: "Recurring costs per month: " + strings.Join(parts, ", ") + "."}}
+	return []Insight{{Tone: ToneInfo, Msg: msg("insight.category_share", args{"items": i18n.List(parts)})}}
 }
 
 // foreignRecurring sums recurring outgoing amounts per foreign currency, in that currency.
@@ -154,9 +174,13 @@ func ruleTransferLoss(pr *Projection) []Insight {
 		if fee.Cmp(big.NewRat(4, 1)) > 0 {
 			tone = ToneWarn
 		}
-		out = append(out, Insight{ID: "transfer_loss_" + strings.ToLower(code), Tone: tone, Text: fmt.Sprintf(
-			"Sending %s a month loses about **%s** to fees and rates, **%s** a year. Each percentage point shaved off the transfer route saves %s a month.",
-			w(amt), w(loss), w(loss.Mul(big.NewRat(12, 1), money.HalfEven)), w(perPoint))})
+		a := args{
+			"amount":    i18n.Money(amt),
+			"loss":      i18n.Money(loss),
+			"loss_year": i18n.Money(loss.Mul(big.NewRat(12, 1), money.HalfEven)),
+			"per_point": i18n.Money(perPoint),
+		}
+		out = append(out, Insight{ID: "transfer_loss_" + strings.ToLower(code), Tone: tone, Msg: msg("insight.transfer_loss", a)})
 	}
 	return out
 }
@@ -176,9 +200,16 @@ func ruleFXRisk(pr *Projection) []Insight {
 		now := p.PayCost(amt, money.HalfEven)
 		atStrong := p.WithRate(code, strong).PayCost(amt, money.HalfEven)
 		atWeak := p.WithRate(code, weak).PayCost(amt, money.HalfEven)
-		out = append(out, Insight{ID: "fx_risk_" + strings.ToLower(code), Tone: ToneInfo, Text: fmt.Sprintf(
-			"%s risk: if it strengthens 10%% (%s per %s), the %s side costs %s (**+%s**/month); if it weakens 10%% (%s), it drops to %s.",
-			code, fxRate(strong), p.Base.Code, code, w(atStrong), w(atStrong.Sub(now)), fxRate(weak), w(atWeak))})
+		a := args{
+			"code":      i18n.Text(code),
+			"base":      i18n.Text(p.Base.Code),
+			"strong":    fxRate(strong),
+			"at_strong": i18n.Money(atStrong),
+			"delta":     i18n.Money(atStrong.Sub(now)),
+			"weak":      fxRate(weak),
+			"at_weak":   i18n.Money(atWeak),
+		}
+		out = append(out, Insight{ID: "fx_risk_" + strings.ToLower(code), Tone: ToneInfo, Msg: msg("insight.fx_risk", a)})
 	}
 	return out
 }
@@ -218,13 +249,20 @@ func ruleCryptoIncome(pr *Projection) []Insight {
 	}
 	drop := total.Mul(big.NewRat(3, 10), money.Ceil)
 	m := pr.Months[0]
-	text := fmt.Sprintf("**%d%%** of recurring income (%s a month) arrives in %s. If crypto falls 30%%, that is **%s** a month less",
-		pct(total, p.RecurringIncome()), w(total), strings.Join(codes, ", "), w(drop))
+	a := args{
+		"pct":   pctArg(total, p.RecurringIncome()),
+		"total": i18n.Money(total),
+		"codes": i18n.Text(strings.Join(codes, ", ")),
+		"drop":  i18n.Money(drop),
+		"month": i18n.Month(m.Key),
+	}
 	after := m.Left.Sub(drop)
 	if after.IsNegative() {
-		return []Insight{{Tone: ToneWarn, Text: text + fmt.Sprintf(", and %s would end **%s short**. Consider converting part of it as it arrives.", m.Label, w(after.Neg()))}}
+		a["short"] = i18n.Money(after.Neg())
+		return []Insight{{Tone: ToneWarn, Msg: msg("insight.crypto_income.short", a)}}
 	}
-	return []Insight{{Tone: ToneInfo, Text: text + fmt.Sprintf("; %s would still end %s ahead.", m.Label, w(after))}}
+	a["left"] = i18n.Money(after)
+	return []Insight{{Tone: ToneInfo, Msg: msg("insight.crypto_income.ok", a)}}
 }
 
 func ruleCashOutLoss(pr *Projection) []Insight {
@@ -237,9 +275,13 @@ func ruleCashOutLoss(pr *Projection) []Insight {
 			continue
 		}
 		loss := p.ToBase(amt, money.HalfEven).Sub(p.IncomeValue(amt, money.HalfEven))
-		out = append(out, Insight{ID: "cash_out_loss_" + strings.ToLower(code), Tone: ToneInfo, Text: fmt.Sprintf(
-			"Converting your %s income (%s a month) loses about **%s** a month to exchange fees and spread, %s a year.",
-			code, w(amt), w(loss), w(loss.Mul(big.NewRat(12, 1), money.HalfEven)))})
+		a := args{
+			"code":      i18n.Text(code),
+			"amount":    i18n.Money(amt),
+			"loss":      i18n.Money(loss),
+			"loss_year": i18n.Money(loss.Mul(big.NewRat(12, 1), money.HalfEven)),
+		}
+		out = append(out, Insight{ID: "cash_out_loss_" + strings.ToLower(code), Tone: ToneInfo, Msg: msg("insight.cash_out_loss", a)})
 	}
 	return out
 }
@@ -251,13 +293,14 @@ func ruleOneOffs(pr *Projection) []Insight {
 		if l.Schedule.Every != 0 || l.Schedule.Start >= p.Months {
 			continue
 		}
-		verb := "costs"
+		key := "insight.one_off.cost"
 		amt := p.PayCost(l.Amt, roundPay)
 		if l.Income {
-			verb, amt = "brings in", p.IncomeValue(l.Amt, roundReceive)
+			key = "insight.one_off.income"
+			amt = p.IncomeValue(l.Amt, roundReceive)
 		}
-		out = append(out, Insight{ID: "one_off_" + l.ID, Tone: ToneInfo, Text: fmt.Sprintf(
-			"One-off: **%s** %s %s in %s.", l.Name, verb, w(amt), p.MonthLabel(l.Schedule.Start))})
+		a := args{"name": i18n.Text(l.Name), "amount": i18n.Money(amt), "month": i18n.Month(p.MonthKey(l.Schedule.Start))}
+		out = append(out, Insight{ID: "one_off_" + l.ID, Tone: ToneInfo, Msg: msg(key, a)})
 	}
 	return out
 }
@@ -270,11 +313,11 @@ func ruleFirstMonth(pr *Projection) []Insight {
 	inc := m.Income
 	thin := !inc.IsPositive() || pct(m.Left, inc) < 5
 	day := m.Left.Mul(big.NewRat(1, 30), money.Floor)
-	text := fmt.Sprintf("%s leaves **%s** after spending and minimum debt payments: about %s a day of slack.", m.Label, w(m.Left), w(day))
+	a := args{"month": i18n.Month(m.Key), "left": i18n.Money(m.Left), "per_day": i18n.Money(day)}
 	if thin {
-		return []Insight{{Tone: ToneWarn, Text: text + " That's thin: one surprise bill wipes it out."}}
+		return []Insight{{Tone: ToneWarn, Msg: msg("insight.first_month.thin", a)}}
 	}
-	return []Insight{{Tone: ToneGood, Text: text}}
+	return []Insight{{Tone: ToneGood, Msg: msg("insight.first_month.left", a)}}
 }
 
 func ruleBiggestItem(pr *Projection) []Insight {
@@ -292,8 +335,8 @@ func ruleBiggestItem(pr *Projection) []Insight {
 	if best == nil {
 		return nil
 	}
-	return []Insight{{Tone: ToneInfo, Text: fmt.Sprintf("Biggest recurring item: **%s** at %s a month (%d%% of income).",
-		best.Name, w(bestAmt), pct(bestAmt, p.RecurringIncome()))}}
+	a := args{"name": i18n.Text(best.Name), "amount": i18n.Money(bestAmt), "pct": pctArg(bestAmt, p.RecurringIncome())}
+	return []Insight{{Tone: ToneInfo, Msg: msg("insight.biggest_item", a)}}
 }
 
 func ruleDebt(pr *Projection) []Insight {
@@ -305,23 +348,25 @@ func ruleDebt(pr *Projection) []Insight {
 			continue
 		}
 		interest := d.Bal.Mul(d.MonthlyRate, roundPay)
+		minArgs := args{"name": i18n.Text(d.Name), "min": i18n.Money(d.Min), "interest": i18n.Money(interest)}
 		if d.Min.Cmp(interest) <= 0 {
-			out = append(out, Insight{ID: "debt_min_" + d.ID, Tone: ToneWarn, Text: fmt.Sprintf(
-				"%s: the minimum payment (%s) doesn't cover the interest (%s a month). Without extra payments the balance grows.",
-				d.Name, w(d.Min), w(interest))})
+			out = append(out, Insight{ID: "debt_min_" + d.ID, Tone: ToneWarn, Msg: msg("insight.debt.min_short", minArgs)})
 		} else {
-			out = append(out, Insight{ID: "debt_min_" + d.ID, Tone: ToneInfo, Text: fmt.Sprintf(
-				"%s: of the %s minimum, **%s** is interest this month; only %s reduces the balance.",
-				d.Name, w(d.Min), w(interest), w(d.Min.Sub(interest)))})
+			minArgs["principal"] = i18n.Money(d.Min.Sub(interest))
+			out = append(out, Insight{ID: "debt_min_" + d.ID, Tone: ToneInfo, Msg: msg("insight.debt.min_split", minArgs)})
 		}
-		when := "is **not paid off** in this window"
-		tone := ToneWarn
+		totalArgs := args{
+			"name":          i18n.Text(d.Name),
+			"interest":      i18n.Money(s.TotalInterest),
+			"interest_base": i18n.Money(p.ToBase(s.TotalInterest, money.HalfEven)),
+			"count":         i18n.Int(int64(p.Months)),
+		}
+		key, tone := "insight.debt.not_paid", ToneWarn
 		if s.PaidOffMonth != nil {
-			when, tone = "is paid off in **"+s.PaidOffLabel+"**", ToneGood
+			key, tone = "insight.debt.paid_off", ToneGood
+			totalArgs["month"] = i18n.Month(p.MonthKey(*s.PaidOffMonth))
 		}
-		out = append(out, Insight{ID: "debt_total_" + d.ID, Tone: tone, Text: fmt.Sprintf(
-			"%s %s and costs %s (%s) in interest over %d months.",
-			d.Name, when, w(s.TotalInterest), w(p.ToBase(s.TotalInterest, money.HalfEven)), p.Months)})
+		out = append(out, Insight{ID: "debt_total_" + d.ID, Tone: tone, Msg: msg(key, totalArgs)})
 	}
 	return out
 }
@@ -345,26 +390,29 @@ func ruleDebtPayoff(pr *Projection) []Insight {
 			continue // already paid off by then
 		}
 		cost := p.PayCost(dm.Payoff, roundPay)
-		from := "that month's money"
+		from := i18n.Nested(msg("insight.debt_payoff.month_money", nil))
 		if d.PotIdx >= 0 {
-			from = p.Pots[d.PotIdx].Name
+			from = i18n.Text(p.Pots[d.PotIdx].Name)
 		}
-		amount := w(dm.Payoff)
+		amount := i18n.Money(dm.Payoff)
 		if dm.Payoff.Currency() != p.Base {
-			amount += " (" + w(cost) + ")"
+			amount = i18n.Nested(msg("insight.amount_in_base", args{"amount": amount, "base": i18n.Money(cost)}))
 		}
+		a := args{"name": i18n.Text(d.Name), "from": from, "month": i18n.Month(mo.Key)}
 		if rest := owing.Sub(dm.Payoff); rest.IsPositive() {
-			text := fmt.Sprintf("%s: %s only holds %s in %s, so it pays off %s and **%s stays owed**, with its minimum payment.",
-				d.Name, from, w(cost), mo.Label, w(dm.Payoff), w(rest))
-			if !dm.Payoff.IsPositive() {
-				text = fmt.Sprintf("%s: %s holds nothing in %s, so the payoff can't happen and **%s stays owed**, with its minimum payment.",
-					d.Name, from, mo.Label, w(rest))
+			a["rest"] = i18n.Money(rest)
+			key := "insight.debt_payoff.partial"
+			if dm.Payoff.IsPositive() {
+				a["held"] = i18n.Money(cost)
+				a["paid"] = i18n.Money(dm.Payoff)
+			} else {
+				key = "insight.debt_payoff.none"
 			}
-			out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneWarn, Text: text})
+			out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneWarn, Msg: msg(key, a)})
 			continue
 		}
-		out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneGood, Text: fmt.Sprintf(
-			"%s is paid off in full in **%s**: %s from %s, interest up to then included.", d.Name, mo.Label, amount, from)})
+		a["amount"] = amount
+		out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneGood, Msg: msg("insight.debt_payoff.full", a)})
 	}
 	return out
 }
@@ -372,15 +420,17 @@ func ruleDebtPayoff(pr *Projection) []Insight {
 func ruleGoals(pr *Projection) []Insight {
 	var out []Insight
 	for _, g := range pr.GoalStatuses() {
+		a := args{"name": i18n.Text(g.Name), "target": i18n.Money(g.Target)}
 		switch {
 		case g.AlreadyMet:
-			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("%s already holds its target (%s).", g.Name, w(g.Target))})
+			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Msg: msg("insight.goal.met", a)})
 		case g.ReachedMonth != nil:
-			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("At this pace %s reaches %s in **%s**.", g.Name, w(g.Target), g.ReachedLabel)})
+			a["month"] = i18n.Month(pr.Plan.MonthKey(*g.ReachedMonth))
+			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Msg: msg("insight.goal.reached", a)})
 		default:
-			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneWarn, Text: fmt.Sprintf(
-				"%s doesn't reach %s within %d months. Getting there needs about **%s** a month into it.",
-				g.Name, w(g.Target), pr.Plan.Months, w(*g.NeededPerMonth))})
+			a["count"] = i18n.Int(int64(pr.Plan.Months))
+			a["needed"] = i18n.Money(*g.NeededPerMonth)
+			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneWarn, Msg: msg("insight.goal.missed", a)})
 		}
 	}
 	return out
@@ -394,39 +444,36 @@ func ruleShortfall(pr *Projection) []Insight {
 		return nil
 	}
 	sf := sfs[0]
-	text := fmt.Sprintf("**%s is %s short.** Nothing is taken from your savings automatically.", sf.Label, w(sf.Amount))
-	switch more := len(sfs) - 1; {
-	case more == 1:
-		text += " One more month falls short later."
-	case more > 1:
-		text += fmt.Sprintf(" %d more months fall short later.", more)
+	sentences := []i18n.Msg{msg("insight.shortfall.short", args{"month": i18n.Month(pr.Plan.MonthKey(sf.Month)), "amount": i18n.Money(sf.Amount)})}
+	if more := len(sfs) - 1; more > 0 {
+		sentences = append(sentences, msg("insight.shortfall.more", args{"count": i18n.Int(int64(more))}))
 	}
-	var ok, last []string
+	var ok, last []i18n.Msg
 	for _, o := range sf.Options {
-		desc := fmt.Sprintf("%s (%s there)", o.Name, w(o.Available))
+		a := args{"name": i18n.Text(o.Name), "amount": i18n.Money(o.Available)}
 		switch o.Kind {
 		case PotEmergency:
-			last = append(last, desc)
+			last = append(last, msg("insight.shortfall.pot", a))
 		case PotSinking:
-			ok = append(ok, desc+", which delays what it's saved for")
+			ok = append(ok, msg("insight.shortfall.sinking_pot", a))
 		default:
-			ok = append(ok, desc)
+			ok = append(ok, msg("insight.shortfall.pot", a))
 		}
 	}
 	if len(ok) > 0 {
-		text += " You could cover it from " + strings.Join(ok, " or ") + "."
+		sentences = append(sentences, msg("insight.shortfall.cover", args{"pots": i18n.Nested(joinWith("list.or", ok))}))
 	}
 	if len(last) > 0 {
-		text += " " + strings.Join(last, " and ") + " is a last resort."
+		sentences = append(sentences, msg("insight.shortfall.last_resort", args{"pots": i18n.Nested(joinWith("list.and", last))}))
 	}
 	if len(sf.Options) == 0 {
-		text += " No savings pot holds money then."
+		sentences = append(sentences, msg("insight.shortfall.no_pots", nil))
 	}
-	text += " If you don't, it's owed on your current account and repaid from the next surplus, which usually costs interest or fees."
-	out := []Insight{{ID: "shortfall", Tone: ToneWarn, Text: text}}
+	sentences = append(sentences, msg("insight.shortfall.owed", nil))
+	out := []Insight{{ID: "shortfall", Tone: ToneWarn, Msg: msg("insight.sentences", args{"items": i18n.JoinedList(sentences, " ")})}}
 	if last := pr.Last(); last.Overdraft.IsPositive() {
-		out = append(out, Insight{ID: "overdraft_end", Tone: ToneWarn, Text: fmt.Sprintf(
-			"By %s you still owe **%s** on your current account. Something has to give before then.", last.Label, w(last.Overdraft))})
+		a := args{"month": i18n.Month(last.Key), "amount": i18n.Money(last.Overdraft)}
+		out = append(out, Insight{ID: "overdraft_end", Tone: ToneWarn, Msg: msg("insight.overdraft_end", a)})
 	}
 	return out
 }
@@ -446,16 +493,27 @@ func ruleWithdrawalCut(pr *Projection) []Insight {
 		for _, pc := range mo.PotCosts {
 			if pc.Paid.Cmp(pc.Cost) < 0 {
 				l := items[pc.ItemID]
-				return []Insight{{ID: "pot_cost_cut_" + l.ID, Tone: ToneWarn, Text: fmt.Sprintf(
-					"%s: %s only holds %s in %s, so the other %s comes out of that month's budget.",
-					l.Name, p.Pots[l.PotIdx].Name, w(pc.Paid), mo.Label, w(pc.Cost.Sub(pc.Paid)))}}
+				a := args{
+					"name":  i18n.Text(l.Name),
+					"pot":   i18n.Text(p.Pots[l.PotIdx].Name),
+					"held":  i18n.Money(pc.Paid),
+					"month": i18n.Month(mo.Key),
+					"rest":  i18n.Money(pc.Cost.Sub(pc.Paid)),
+				}
+				return []Insight{{ID: "pot_cost_cut_" + l.ID, Tone: ToneWarn, Msg: msg("insight.pot_cost_cut", a)}}
 			}
 		}
 		for _, wm := range mo.Withdrawals {
 			if wm.Taken.Cmp(wm.Planned) < 0 {
 				wd := names[wm.ID]
-				return []Insight{{ID: "withdrawal_cut_" + wm.ID, Tone: ToneWarn, Text: fmt.Sprintf(
-					"%s: %s only holds %s in %s, not the %s planned.", wd.Name, p.Pots[wd.PotIdx].Name, w(wm.Taken), mo.Label, w(wm.Planned))}}
+				a := args{
+					"name":    i18n.Text(wd.Name),
+					"pot":     i18n.Text(p.Pots[wd.PotIdx].Name),
+					"held":    i18n.Money(wm.Taken),
+					"month":   i18n.Month(mo.Key),
+					"planned": i18n.Money(wm.Planned),
+				}
+				return []Insight{{ID: "withdrawal_cut_" + wm.ID, Tone: ToneWarn, Msg: msg("insight.withdrawal_cut", a)}}
 			}
 		}
 	}
@@ -476,7 +534,6 @@ func ruleEmergencyFund(pr *Projection) []Insight {
 	if !spend.IsPositive() {
 		return nil
 	}
-	return []Insight{{Tone: ToneInfo, Text: fmt.Sprintf(
-		"There's no emergency fund. A common rule of thumb is three to six months of spending, about %s to %s here. You could add a pot of the emergency kind.",
-		w(spend.Mul(big.NewRat(3, 1), money.Ceil)), w(spend.Mul(big.NewRat(6, 1), money.Ceil)))}}
+	a := args{"low": i18n.Money(spend.Mul(big.NewRat(3, 1), money.Ceil)), "high": i18n.Money(spend.Mul(big.NewRat(6, 1), money.Ceil))}
+	return []Insight{{Tone: ToneInfo, Msg: msg("insight.emergency_fund", a)}}
 }

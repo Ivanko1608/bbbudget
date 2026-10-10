@@ -14,6 +14,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
@@ -147,6 +148,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// reader renders text in the language r asks for.
+func (s *server) reader(r *http.Request) *i18n.Localizer {
+	return s.app.Localizer(r.Header.Get("Accept-Language"))
+}
+
+// writeView writes v with its text in the language r asks for.
+func (s *server) writeView(w http.ResponseWriter, r *http.Request, status int, v *app.View) {
+	v.Localize(s.reader(r))
+	writeJSON(w, status, v)
+}
+
 func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Issue) {
 	writeJSON(w, status, errBody{msg, issues})
 }
@@ -167,8 +179,14 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &badOp): // checked first: a bad target inside an op is the caller's mistake
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	case errors.As(err, &invalid):
-		writeErr(w, http.StatusUnprocessableEntity, err.Error(), invalid.Issues)
+		reader := s.reader(r)
+		issues := make([]budget.Issue, len(invalid.Issues))
+		for i, is := range invalid.Issues {
+			issues[i] = is.Localized(reader)
+		}
+		writeErr(w, http.StatusUnprocessableEntity, err.Error(), issues)
 	case errors.As(err, &undoLater):
+		app.LocalizeHistory(undoLater.Later, s.reader(r))
 		body := map[string]any{"error": err.Error(), "later": undoLater.Later}
 		writeJSON(w, http.StatusConflict, body)
 	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
@@ -232,6 +250,19 @@ var (
 	editorSave  = store.Origin{Source: store.SourceWeb, Autosave: true}
 )
 
+type localeInfo struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+func locales() []localeInfo {
+	var out []localeInfo
+	for _, code := range i18n.Locales() {
+		out = append(out, localeInfo{Code: code, Name: i18n.Catalogs()[code].Meta.Name})
+	}
+	return out
+}
+
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	digits := map[string]int{}
 	for _, c := range money.Codes() {
@@ -241,6 +272,8 @@ func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
 		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
 		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
+		"locale":     s.reader(r).Locale(),
+		"locales":    locales(),
 	})
 }
 
@@ -274,13 +307,13 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	if in.Budget != nil {
 		v, err = s.app.Import(r.Context(), fromBrowser, in.ID, *in.Budget)
 	} else {
-		v, err = s.app.Create(r.Context(), fromBrowser, in.ID, in.Name, in.Template)
+		v, err = s.app.Create(r.Context(), fromBrowser, s.reader(r), in.ID, in.Name, in.Template)
 	}
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, v)
+	s.writeView(w, r, http.StatusCreated, v)
 }
 
 func (s *server) get(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +322,7 @@ func (s *server) get(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	s.writeView(w, r, http.StatusOK, v)
 }
 
 func (s *server) replace(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +343,7 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	s.writeView(w, r, http.StatusOK, v)
 }
 
 func (s *server) delete(w http.ResponseWriter, r *http.Request) {
@@ -339,6 +372,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	if h == nil {
 		h = []store.Entry{}
 	}
+	app.LocalizeHistory(h, s.reader(r))
 	writeJSON(w, http.StatusOK, h)
 }
 
@@ -358,7 +392,7 @@ func (s *server) undo(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	s.writeView(w, r, http.StatusOK, v)
 }
 
 func (s *server) ops(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +413,7 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	s.writeView(w, r, http.StatusOK, v)
 }
 
 func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +429,7 @@ func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	rep.Localize(s.reader(r))
 	writeJSON(w, http.StatusOK, map[string]any{"budget": b, "report": rep})
 }
 
@@ -405,6 +440,7 @@ type settingsView struct {
 	DefaultRateSource string                `json:"default_rate_source"`
 	AutoRefresh       string                `json:"auto_refresh"`
 	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
+	Locale            string                `json:"locale"`
 	Status            app.AutoRefreshStatus `json:"auto_refresh_status"`
 	Paths             map[string]string     `json:"paths"`
 }
@@ -414,7 +450,19 @@ func (s *server) settingsView(st settings.Settings) settingsView {
 	if paths == nil {
 		paths = map[string]string{}
 	}
-	return settingsView{st.FetchRates, st.DefaultRateSource, st.AutoRefresh, st.CoinGeckoAPIKey != "", s.app.AutoRefresh(), paths}
+	locale := st.Locale
+	if locale == "" {
+		locale = settings.LocaleAuto
+	}
+	return settingsView{
+		FetchRates:        st.FetchRates,
+		DefaultRateSource: st.DefaultRateSource,
+		AutoRefresh:       st.AutoRefresh,
+		CoinGeckoKeySet:   st.CoinGeckoAPIKey != "",
+		Locale:            locale,
+		Status:            s.app.AutoRefresh(),
+		Paths:             paths,
+	}
 }
 
 func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +524,7 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	v.Localize(s.reader(r))
 	writeJSON(w, http.StatusOK, struct {
 		*app.View
 		Updates []app.RateUpdate `json:"rate_updates"`
@@ -483,7 +532,7 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) compare(w http.ResponseWriter, r *http.Request) {
-	out, err := s.app.Compare(r.Context(), r.PathValue("id"), r.URL.Query()["scenario"])
+	out, err := s.app.Compare(r.Context(), s.reader(r), r.PathValue("id"), r.URL.Query()["scenario"])
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -517,6 +566,7 @@ func (s *server) scenarioReport(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	rep.Localize(s.reader(r))
 	writeJSON(w, http.StatusOK, rep)
 }
 
@@ -526,7 +576,7 @@ func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	s.writeView(w, r, http.StatusOK, v)
 }
 
 func (s *server) deleteScenario(w http.ResponseWriter, r *http.Request) {

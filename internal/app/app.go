@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
@@ -53,6 +54,7 @@ type View struct {
 	Report    *budget.Report `json:"report"`
 }
 
+// view analyzes a stored budget, with its text in English.
 func view(r store.Record) (*View, error) {
 	rep, err := budget.Analyze(r.Budget)
 	if err != nil {
@@ -63,9 +65,10 @@ func view(r store.Record) (*View, error) {
 
 func (a *App) List(ctx context.Context) ([]store.Meta, error) { return a.Store.List(ctx) }
 
-// Create makes a new budget from a template ("" means blank). Name defaults to the id.
+// Create makes a new budget from a template ("" means blank), with the
+// template's category and pot names in lang. Name defaults to the id.
 func (a *App) Create(
-	ctx context.Context, origin store.Origin, id, name, template string,
+	ctx context.Context, origin store.Origin, lang *i18n.Localizer, id, name, template string,
 ) (*View, error) {
 	if template == "" {
 		template = "blank"
@@ -77,11 +80,33 @@ func (a *App) Create(
 	if err != nil {
 		return nil, err
 	}
+	localizeTemplate(&b, lang)
 	r, err := a.Store.Create(ctx, origin, id, b)
 	if err != nil {
 		return nil, err
 	}
 	return view(r)
+}
+
+// localizeTemplate translates the category labels and pot names a template
+// left as they are in English ("Income" for category income, "General
+// savings" for pot savings) into the reader's language. A name anyone
+// changed is theirs and stays as it is.
+func localizeTemplate(b *budget.Budget, l *i18n.Localizer) {
+	en := i18n.For(i18n.Default)
+	translate := func(key, name string) string {
+		m := i18n.Msg{Key: key}
+		if en.Has(key) && en.Render(m) == name {
+			return l.Render(m)
+		}
+		return name
+	}
+	for i, c := range b.Categories {
+		b.Categories[i].Label = translate("category."+c.ID, c.Label)
+	}
+	for i, p := range b.Pots {
+		b.Pots[i].Name = translate("pot."+p.ID, p.Name)
+	}
 }
 
 // Import stores a full budget document as a new budget.
@@ -129,7 +154,7 @@ func (a *App) Apply(
 }
 
 // WhatIf previews ops without saving anything. It returns the hypothetical
-// budget and its report.
+// budget and its report, in English.
 func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Budget, *budget.Report, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
@@ -216,12 +241,15 @@ func (a *App) SaveScenario(
 	return saved, err
 }
 
-func (a *App) Compare(ctx context.Context, id string, scenarios []string) ([]budget.Outcome, error) {
+// Compare projects the baseline and scenarios side by side, with labels in lang.
+func (a *App) Compare(
+	ctx context.Context, lang *i18n.Localizer, id string, scenarios []string,
+) ([]budget.Outcome, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return budget.Compare(r.Budget, scenarios)
+	return budget.Compare(r.Budget, scenarios, lang)
 }
 
 func (a *App) AdoptScenario(

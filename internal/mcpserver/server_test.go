@@ -41,7 +41,7 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	fromCLI := store.Origin{Source: store.SourceCLI}
-	if _, err := a.Create(ctx, fromCLI, "home", "Home", "example"); err != nil {
+	if _, err := a.Create(ctx, fromCLI, a.Localizer(""), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, Options{DefaultBudget: "home", Version: "test"})
@@ -198,7 +198,7 @@ func TestDebtPayoff(t *testing.T) {
 	}
 	flagged := false
 	for _, in := range s["insights"].([]any) {
-		flagged = flagged || strings.Contains(in.(string), "Car loan: General savings holds nothing in Dec 2026")
+		flagged = flagged || strings.Contains(in.(map[string]any)["text"].(string), "Car loan: General savings holds nothing in Dec 2026")
 	}
 	if !flagged {
 		t.Errorf("an empty pot must be flagged: %v", s["insights"])
@@ -397,4 +397,16 @@ func TestApplyOpsTakesCalendarMonths(t *testing.T) {
 		map[string]any{"op": "add_item", "value": map[string]any{"name": "X", "amount": "1", "category": "home",
 			"schedule": map[string]any{"starts": "2027-03", "start": 2}}},
 	}}, true)
+}
+
+func TestInsightsAreStructured(t *testing.T) {
+	h := setup(t)
+	s := h.call("get_budget", map[string]any{}, false)
+	in := s["insights"].([]any)[0].(map[string]any)
+	if in["key"] == "" || in["text"] == "" || in["tone"] == "" || in["args"] == nil {
+		t.Fatalf("insight: %v", in)
+	}
+	if strings.Contains(in["text"].(string), "**") {
+		t.Errorf("markdown left in text: %q", in["text"])
+	}
 }

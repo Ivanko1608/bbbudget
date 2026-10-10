@@ -214,3 +214,28 @@ test("app settings save from their page", { skip }, async () => {
   await waitFor(async () => (await srv.api("GET", "/api/settings")).fetch_rates === true, "the setting to be saved");
   await srv.api("PUT", "/api/settings", { fetch_rates: false }); // keep the rest offline
 });
+
+test("in Russian the page, the insights and decimal commas all work", { skip }, async () => {
+  await srv.api("PUT", "/api/settings", { locale: "ru" });
+  try {
+    const id = await fresh("items");
+    await waitFor(() => page.eval(`document.documentElement.lang === "ru"`), "the page to switch language");
+    assert.equal(await page.text('.tabs [data-view="overview"] span'), "Обзор");
+    // A decimal comma is a decimal point here, never a thousands separator.
+    const i = await indexOf(id, "Rent");
+    await page.fill(`[data-path="items.${i}.amount"]`, "1000,50");
+    await waitFor(async () => (await srv.budget(id)).items[i].amount === "1000.5", "1000,50 to be saved as 1000.5");
+    for (const v of ["overview", "plan", "scenarios", "setup"]) {
+      await page.click(`.tabs [data-view="${v}"]`);
+      await waitFor(() => page.visible(`#view-${v}`), `${v} to show`);
+      const text = await page.text(`#view-${v}`);
+      // The example budget's own names (Rent, Salary) stay as typed; the UI's words must not.
+      for (const en of ["Savings", "Left in", "Add a", "What the numbers say", "Recent changes", "months"]) {
+        assert.ok(!text.includes(en), `${v} still says "${en}"`);
+      }
+    }
+    assert.match(await page.text("#insights"), /[а-я]{4}/, "insights are rendered in Russian too");
+  } finally {
+    await srv.api("PUT", "/api/settings", { locale: "auto" });
+  }
+});

@@ -15,6 +15,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/store"
 )
@@ -45,6 +46,11 @@ with payoff_month -1 removes it. Offer general savings first, then sinking funds
 planned cost it delays), and the emergency fund only as a last resort.
 
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
+
+Language: text fields (insights, schedules, month labels) are in the user's configured language
+(app setting "locale"). Always answer in the language the user writes in. Each insight also has a
+key and typed args with the exact amounts and months; quote numbers from args, not from re-reading
+the text.
 
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 
@@ -258,8 +264,8 @@ func (h *handlers) register(s *mcp.Server) {
 		return h.app.Templates.List(), nil
 	})
 	tool(s, "create_budget", "Create a budget from a template (see list_templates).", func(ctx context.Context, in CreateIn) (any, error) {
-		v, err := h.app.Create(ctx, fromAssistant, in.ID, in.Name, in.Template)
-		return sum(v, err)
+		v, err := h.app.Create(ctx, fromAssistant, h.reader(), in.ID, in.Name, in.Template)
+		return h.sum(v, err)
 	})
 	tool(s, "get_budget", "The full budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
 		func(ctx context.Context, in Ref) (any, error) {
@@ -267,7 +273,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Get(ctx, id))
+			return h.sum(h.app.Get(ctx, id))
 		})
 
 	tool(s, "add_item", "Add an income or cost item. Returns the updated budget.", func(ctx context.Context, in AddItemIn) (any, error) {
@@ -293,7 +299,7 @@ func (h *handlers) register(s *mcp.Server) {
 				TransferFeePct: in.TransferFeePct,
 				CashOutFeePct:  in.CashOutFeePct,
 			}
-			return sum(h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch))
+			return h.sum(h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch))
 		})
 	tool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
 		func(ctx context.Context, in RatesIn) (any, error) {
@@ -308,6 +314,7 @@ func (h *handlers) register(s *mcp.Server) {
 				}
 				return nil, err
 			}
+			v.Localize(h.reader())
 			return map[string]any{"rate_updates": updates, "budget": summarize(v)}, nil
 		})
 	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns the updated budget.",
@@ -328,7 +335,7 @@ func (h *handlers) register(s *mcp.Server) {
 				PayoffMonth: in.PayoffMonth,
 				PayoffFrom:  in.PayoffFrom,
 			}
-			return sum(h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch))
+			return h.sum(h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch))
 		})
 	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
@@ -348,6 +355,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
+			r.Localize(h.reader())
 			out := summarizeReport(nb, r)
 			out.ID = id + " (what-if, not saved)"
 			return out, nil
@@ -365,7 +373,7 @@ func (h *handlers) register(s *mcp.Server) {
 		if err != nil {
 			return nil, err
 		}
-		out, err := h.app.Compare(ctx, id, in.Scenarios)
+		out, err := h.app.Compare(ctx, h.reader(), id, in.Scenarios)
 		if err != nil {
 			return nil, err
 		}
@@ -376,7 +384,7 @@ func (h *handlers) register(s *mcp.Server) {
 		if err != nil {
 			return nil, err
 		}
-		return sum(h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario))
+		return h.sum(h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario))
 	})
 	tool(s, "delete_scenario", "Delete a saved scenario.", func(ctx context.Context, in ScenarioRef) (any, error) {
 		id, err := h.id(in.Budget)
@@ -398,7 +406,12 @@ func (h *handlers) register(s *mcp.Server) {
 			if in.Limit <= 0 {
 				in.Limit = store.DefaultHistoryPage
 			}
-			return h.app.History(ctx, id, in.Limit)
+			history, err := h.app.History(ctx, id, in.Limit)
+			if err != nil {
+				return nil, err
+			}
+			app.LocalizeHistory(history, h.reader())
+			return history, nil
 		})
 	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns the updated budget.",
 		func(ctx context.Context, in UndoIn) (any, error) {
@@ -407,7 +420,7 @@ func (h *handlers) register(s *mcp.Server) {
 				return nil, err
 			}
 			req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
-			return sum(h.app.Undo(ctx, fromAssistant, id, req))
+			return h.sum(h.app.Undo(ctx, fromAssistant, id, req))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -432,7 +445,7 @@ func (h *handlers) apply(ctx context.Context, ref string, rev int64, ops ...budg
 	if err != nil {
 		return nil, err
 	}
-	return sum(h.app.Apply(ctx, fromAssistant, id, rev, ops))
+	return h.sum(h.app.Apply(ctx, fromAssistant, id, rev, ops))
 }
 
 // spec turns the flat schedule fields of add_item/update_item into a
@@ -445,9 +458,14 @@ func (in ScheduleIn) spec() *budget.ScheduleSpec {
 	return &budget.ScheduleSpec{Every: in.Every, Starts: in.Starts, Ends: in.Ends}
 }
 
-func sum(v *app.View, err error) (any, error) {
+// sum summarizes a budget the tool call returns, in the user's language.
+func (h *handlers) sum(v *app.View, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	v.Localize(h.reader())
 	return summarize(v), nil
 }
+
+// reader renders text in the language the app settings choose.
+func (h *handlers) reader() *i18n.Localizer { return h.app.Localizer("") }

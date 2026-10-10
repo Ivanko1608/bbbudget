@@ -34,6 +34,7 @@ import (
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/httpapi"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/mcpserver"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
@@ -153,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, fromCLI, id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, a.Localizer(""), id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -248,7 +249,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		printReport(stdout, rep)
+		reader := a.Localizer("")
+		rep.Localize(reader)
+		printReport(stdout, rep, reader)
 		return nil
 
 	case "rates":
@@ -292,6 +295,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
 		for _, e := range h {
@@ -319,12 +323,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
 		return nil
 
 	case "settings":
 		var sets []string
-		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key", func(v string) error {
+		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale", func(v string) error {
 			sets = append(sets, v)
 			return nil
 		})
@@ -353,7 +358,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			key = "set"
 		}
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\n", s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key)
+		locale := s.Locale
+		if locale == "" {
+			locale = settings.LocaleAuto
+		}
+		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
+			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 
@@ -439,6 +449,8 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 			p.DefaultRateSource = &v
 		case "auto_refresh":
 			p.AutoRefresh = &v
+		case "locale":
+			p.Locale = &v
 		case "coingecko_api_key":
 			p.CoinGeckoAPIKey = &v
 		default:
@@ -464,12 +476,13 @@ func printRates(w io.Writer, updates []app.RateUpdate) {
 	tw.Flush()
 }
 
-func printReport(w io.Writer, r *budget.Report) {
+func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	fmt.Fprintf(w, "%s (%s)\n\n", r.Name, r.BaseCurrency)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, "MONTH\tINCOME\tSPENT\tTO DEBTS\tLEFT\tSAVED\tSAVINGS\t")
+	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.report.header"}))
+	f := l.MoneyExact
 	for _, m := range r.Months {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n", m.Label, m.Income.Format(), m.Expenses.Format(), m.DebtPayments.Format(), m.Left.Format(), m.Saved.Format(), m.Savings.Format())
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n", m.Label, f(m.Income), f(m.Expenses), f(m.DebtPayments), f(m.Left), f(m.Saved), f(m.Savings))
 	}
 	tw.Flush()
 	fmt.Fprintln(w)
