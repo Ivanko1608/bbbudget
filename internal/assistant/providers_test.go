@@ -32,12 +32,12 @@ func TestAnthropicRequestsAndToolRoundTrip(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if len(reqs) == 1 {
 			io.WriteString(w, `{"id":"m1","type":"message","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use",
-				"content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"text","text":"Checking."},{"type":"tool_use","id":"tu_1","name":"get_budget","input":{"view":"lines"}}],
+				"content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"text","text":"Checking."},{"type":"tool_use","id":"tu_1","name":"get_budget","input":{"view":"items"}}],
 				"usage":{"input_tokens":10,"output_tokens":5}}`)
 			return
 		}
 		io.WriteString(w, `{"id":"m2","type":"message","role":"assistant","model":"claude-opus-5-5","stop_reason":"end_turn",
-			"content":[{"type":"text","text":"Rent is your biggest line."}],"usage":{"input_tokens":10,"output_tokens":5}}`)
+			"content":[{"type":"text","text":"Rent is your biggest item."}],"usage":{"input_tokens":10,"output_tokens":5}}`)
 	}))
 	defer srv.Close()
 
@@ -47,7 +47,7 @@ func TestAnthropicRequestsAndToolRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if turn.Text != "Checking." || len(turn.Calls) != 1 || turn.Calls[0].ID != "tu_1" || string(turn.Calls[0].Input) != `{"view":"lines"}` {
+	if turn.Text != "Checking." || len(turn.Calls) != 1 || turn.Calls[0].ID != "tu_1" || string(turn.Calls[0].Input) != `{"view":"items"}` {
 		t.Fatalf("turn 1: %+v", turn)
 	}
 	first := reqs[0]
@@ -65,8 +65,8 @@ func TestAnthropicRequestsAndToolRoundTrip(t *testing.T) {
 		t.Errorf("tool: %v", tool)
 	}
 
-	turn, err = conv.Send(context.Background(), "", []ToolResult{{ID: "tu_1", Content: `{"lines":[]}`}})
-	if err != nil || turn.Text != "Rent is your biggest line." || len(turn.Calls) != 0 {
+	turn, err = conv.Send(context.Background(), "", []ToolResult{{ID: "tu_1", Content: `{"items":[]}`}})
+	if err != nil || turn.Text != "Rent is your biggest item." || len(turn.Calls) != 0 {
 		t.Fatalf("turn 2: %+v %v", turn, err)
 	}
 	msgs := reqs[1]["messages"].([]any)
@@ -124,7 +124,7 @@ func TestLocalToolRoundTrip(t *testing.T) {
 		json.Unmarshal(raw, &body)
 		bodies = append(bodies, body)
 		if len(bodies) == 1 {
-			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"get_budget","arguments":"{\"view\":\"lines\"}"}}]}}]}`)
+			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"get_budget","arguments":"{\"view\":\"items\"}"}}]}}]}`)
 			return
 		}
 		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Rent."}}]}`)
@@ -136,7 +136,7 @@ func TestLocalToolRoundTrip(t *testing.T) {
 	}
 	conv := p.Start("be brief", testTools)
 	turn, err := conv.Send(context.Background(), "biggest cost?", nil)
-	if err != nil || len(turn.Calls) != 1 || turn.Calls[0].ID == "" || string(turn.Calls[0].Input) != `{"view":"lines"}` {
+	if err != nil || len(turn.Calls) != 1 || turn.Calls[0].ID == "" || string(turn.Calls[0].Input) != `{"view":"items"}` {
 		t.Fatalf("turn 1: %+v %v", turn, err)
 	}
 	turn, err = conv.Send(context.Background(), "", []ToolResult{{ID: turn.Calls[0].ID, Content: "{}"}})

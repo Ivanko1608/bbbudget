@@ -723,8 +723,8 @@ async function sendChat(text) {
       while ((i = buf.indexOf("\n\n")) >= 0) {
         const line = buf.slice(0, i).replace(/^data: /, "");
         buf = buf.slice(i + 2);
-        if (!line.trim()) continue;
-        const e = JSON.parse(line);
+        if (!item.trim()) continue;
+        const e = JSON.parse(item);
         if (e.type === "text") chatLine("bot", bold(e.text), true);
         else if (e.type === "tool") chatLine("tool", e.detail ? `${e.tool}: ${e.detail}` : e.tool);
         else if (e.type === "changed") changed = true;

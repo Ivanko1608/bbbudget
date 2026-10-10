@@ -401,7 +401,7 @@ func TestAssistantChat(t *testing.T) {
 	a.Rates = offlineRates()
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
 	model := &fakeModel{turns: []assistant.Turn{
-		{Calls: []assistant.ToolCall{{ID: "1", Name: "update_line", Input: json.RawMessage(`{"line":"rent","amount":"1200"}`)}}},
+		{Calls: []assistant.ToolCall{{ID: "1", Name: "update_item", Input: json.RawMessage(`{"item":"rent","amount":"1200"}`)}}},
 		{Text: "Rent is 1200 now."},
 	}}
 	as := &assistant.Assistant{App: a, Provider: func() (assistant.Provider, error) { return model, nil }}
@@ -433,13 +433,13 @@ func TestAssistantChat(t *testing.T) {
 		t.Fatalf("chat: %d %s", w.Code, w.Header())
 	}
 	var kinds []string
-	for _, line := range strings.Split(w.Body.String(), "\n\n") {
-		if line = strings.TrimPrefix(strings.TrimSpace(line), "data: "); line == "" {
+	for _, item := range strings.Split(w.Body.String(), "\n\n") {
+		if item = strings.TrimPrefix(strings.TrimSpace(item), "data: "); item == "" {
 			continue
 		}
 		var e assistant.Event
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			t.Fatalf("bad event %q: %v", line, err)
+		if err := json.Unmarshal([]byte(item), &e); err != nil {
+			t.Fatalf("bad event %q: %v", item, err)
 		}
 		kinds = append(kinds, e.Type)
 	}
