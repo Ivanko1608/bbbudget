@@ -11,23 +11,69 @@ import (
 	"bbbudget/internal/money"
 )
 
-// maxChangeParts caps how many changes DescribeChange spells out.
+// maxChangeParts caps how many changes Describe spells out.
 const maxChangeParts = 6
 
-// DescribeChange summarises the difference between two versions of a budget
-// in one line, for the change history: "Rent: amount 1150 → 1200; added
-// item Gym". Things are matched by id (currencies by code), so a rename reads
-// as a change, not a removal plus an addition. It is "no changes" when the
-// documents are equal.
-func DescribeChange(before, after Budget) string {
-	parts := diffJSONFields("", settingsOf(before), settingsOf(after))
-	parts = append(parts, diffList("currency", before.Currencies, after.Currencies, currencyKey, "rate_date", "rate_from")...)
-	parts = append(parts, diffList("category", before.Categories, after.Categories, categoryKey)...)
-	parts = append(parts, diffList("item", before.Items, after.Items, itemKey)...)
-	parts = append(parts, diffList("debt", before.Debts, after.Debts, debtKey)...)
-	parts = append(parts, diffList("pot", before.Pots, after.Pots, potKey)...)
-	parts = append(parts, diffList("withdrawal", before.Withdrawals, after.Withdrawals, withdrawalKey)...)
-	parts = append(parts, diffList("scenario", before.Scenarios, after.Scenarios, scenarioKey)...)
+// Difference kinds.
+const (
+	Added   = "added"
+	Removed = "removed"
+	Changed = "changed" // one field of a thing, or a budget setting
+)
+
+// Difference is one way two versions of a budget differ: a thing added or
+// removed, or one field changed. The history stores these, and each reader
+// turns them into text (Describe for English).
+type Difference struct {
+	Kind string `json:"kind"`
+	// Thing is what kind of thing it is ("item", "pot", ...); empty for a
+	// budget setting.
+	Thing string `json:"thing,omitempty"`
+	// Name is the thing's name, as it was before a rename.
+	Name string `json:"name,omitempty"`
+	// Field, Old and New say what changed, as JSON names and values; an
+	// empty value means unset.
+	Field string `json:"field,omitempty"`
+	Old   string `json:"old,omitempty"`
+	New   string `json:"new,omitempty"`
+}
+
+// Differences lists what changed between two versions of a budget. Things
+// are matched by id (currencies by code), so a rename is a changed name,
+// not a removal plus an addition.
+func Differences(before, after Budget) []Difference {
+	diffs := diffJSONFields("", "", settingsOf(before), settingsOf(after))
+	diffs = append(diffs, diffList("currency", before.Currencies, after.Currencies, currencyKey, "rate_date", "rate_from")...)
+	diffs = append(diffs, diffList("category", before.Categories, after.Categories, categoryKey)...)
+	diffs = append(diffs, diffList("item", before.Items, after.Items, itemKey)...)
+	diffs = append(diffs, diffList("debt", before.Debts, after.Debts, debtKey)...)
+	diffs = append(diffs, diffList("pot", before.Pots, after.Pots, potKey)...)
+	diffs = append(diffs, diffList("withdrawal", before.Withdrawals, after.Withdrawals, withdrawalKey)...)
+	diffs = append(diffs, diffList("scenario", before.Scenarios, after.Scenarios, scenarioKey)...)
+	return diffs
+}
+
+// Describe summarises differences in one line of English, for the change
+// history: "Rent: amount 1150 → 1200; added item Gym". Changed fields of
+// one thing share its name. It is "no changes" when there are none.
+func Describe(diffs []Difference) string {
+	var parts []string
+	for i := 0; i < len(diffs); i++ {
+		d := diffs[i]
+		switch {
+		case d.Kind != Changed:
+			parts = append(parts, fmt.Sprintf("%s %s %s", d.Kind, d.Thing, d.Name))
+		case d.Thing == "":
+			parts = append(parts, describeField(d))
+		default:
+			fields := []string{describeField(d)}
+			for i+1 < len(diffs) && sameThing(diffs[i+1], d) {
+				i++
+				fields = append(fields, describeField(diffs[i]))
+			}
+			parts = append(parts, d.Name+": "+strings.Join(fields, ", "))
+		}
+	}
 	if len(parts) == 0 {
 		return "no changes"
 	}
@@ -36,6 +82,21 @@ func DescribeChange(before, after Budget) string {
 		parts = append(parts[:maxChangeParts], fmt.Sprintf("and %d more change%s", n, plural(n)))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func sameThing(a, b Difference) bool {
+	return a.Kind == Changed && a.Thing == b.Thing && a.Name == b.Name
+}
+
+func describeField(d Difference) string {
+	return fmt.Sprintf("%s %s → %s", d.Field, orNone(d.Old), orNone(d.New))
+}
+
+func orNone(v string) string {
+	if v == "" {
+		return "(none)"
+	}
+	return v
 }
 
 func plural(n int) string {
@@ -77,42 +138,41 @@ func settingsOf(b Budget) budgetSettings {
 // diffList reports what was added to, removed from and changed in a list.
 // key gives each element's id (how versions are matched) and the name to
 // show; ignore lists fields that aren't worth reporting.
-func diffList[T any](kind string, before, after []T, key func(T) (id, name string), ignore ...string) []string {
+func diffList[T any](kind string, before, after []T, key func(T) (id, name string), ignore ...string) []Difference {
 	old := map[string]T{}
 	for _, el := range before {
 		id, _ := key(el)
 		old[id] = el
 	}
 	kept := map[string]bool{}
-	var out []string
+	var out []Difference
 	for _, el := range after {
 		id, name := key(el)
 		kept[id] = true
 		prev, ok := old[id]
 		if !ok {
-			out = append(out, fmt.Sprintf("added %s %s", kind, name))
+			out = append(out, Difference{Kind: Added, Thing: kind, Name: name})
 			continue
 		}
 		_, prevName := key(prev) // a rename is described under the old name
-		out = append(out, diffJSONFields(prevName+": ", prev, el, ignore...)...)
+		out = append(out, diffJSONFields(kind, prevName, prev, el, ignore...)...)
 	}
 	for _, el := range before {
 		if id, name := key(el); !kept[id] {
-			out = append(out, fmt.Sprintf("removed %s %s", kind, name))
+			out = append(out, Difference{Kind: Removed, Thing: kind, Name: name})
 		}
 	}
 	return out
 }
 
-// diffJSONFields compares two values field by field through their JSON
-// form, so a field added to a type is covered without changing this code.
-// Each change reads "field old → new", and all changes to one thing share
-// the prefix once.
-func diffJSONFields(prefix string, before, after any, ignore ...string) []string {
+// diffJSONFields compares two versions of a thing field by field through
+// their JSON form, so a field added to a type is covered without changing
+// this code. thing and name say which thing it is ("" for the settings).
+func diffJSONFields(thing, name string, before, after any, ignore ...string) []Difference {
 	a, errA := jsonFields(before)
 	b, errB := jsonFields(after)
-	if errA != nil || errB != nil {
-		return []string{prefix + "changed"} // can't happen for budget types
+	if errA != nil || errB != nil { // can't happen for budget types
+		return []Difference{{Kind: Changed, Thing: thing, Name: name}}
 	}
 	keys := make([]string, 0, len(a)+len(b))
 	for k := range a {
@@ -124,20 +184,14 @@ func diffJSONFields(prefix string, before, after any, ignore ...string) []string
 		}
 	}
 	sort.Strings(keys)
-	var changes []string
+	var diffs []Difference
 	for _, k := range keys {
 		if slices.Contains(ignore, k) || bytes.Equal(a[k], b[k]) {
 			continue
 		}
-		changes = append(changes, fmt.Sprintf("%s %s → %s", k, show(a[k]), show(b[k])))
+		diffs = append(diffs, Difference{Kind: Changed, Thing: thing, Name: name, Field: k, Old: show(a[k]), New: show(b[k])})
 	}
-	if len(changes) == 0 {
-		return nil
-	}
-	if prefix == "" {
-		return changes
-	}
-	return []string{prefix + strings.Join(changes, ", ")}
+	return diffs
 }
 
 // jsonFields is v's JSON object as field name → raw value. Empty values are
@@ -167,9 +221,10 @@ func isEmptyJSON(v json.RawMessage) bool {
 	return false
 }
 
+// show is a JSON value as text: strings without their quotes, "" when unset.
 func show(raw json.RawMessage) string {
 	if raw == nil {
-		return "(none)"
+		return ""
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {

@@ -56,8 +56,13 @@ type Entry struct {
 	Revision int64     `json:"revision"`
 	At       time.Time `json:"at"`
 	Source   string    `json:"source"`
-	Summary  string    `json:"summary"`
-	Autosave bool      `json:"autosave,omitempty"`
+	// Summary is what changed, in English.
+	Summary string `json:"summary"`
+	// Changes is what changed, one difference at a time, for readers that
+	// render it themselves (another language, an assistant). It is empty for
+	// the entry that created the budget.
+	Changes  []budget.Difference `json:"changes,omitempty"`
+	Autosave bool                `json:"autosave,omitempty"`
 	// Undoable is false for the oldest entry kept: there is no earlier
 	// version to go back to.
 	Undoable bool `json:"undoable"`
@@ -67,11 +72,12 @@ type Entry struct {
 // its revision. The budget stays raw JSON until a snapshot actually needs it,
 // so listing and recording never decode hundreds of documents.
 type line struct {
-	Revision int64     `json:"revision"`
-	At       time.Time `json:"at"`
-	Source   string    `json:"source"`
-	Summary  string    `json:"summary"`
-	Autosave bool      `json:"autosave,omitempty"`
+	Revision int64               `json:"revision"`
+	At       time.Time           `json:"at"`
+	Source   string              `json:"source"`
+	Summary  string              `json:"summary"`
+	Changes  []budget.Difference `json:"changes,omitempty"`
+	Autosave bool                `json:"autosave,omitempty"`
 	// Replaces is set when consecutive autosaves merge: this line takes the
 	// place of the entry for that revision.
 	Replaces int64           `json:"replaces,omitempty"`
@@ -79,7 +85,7 @@ type line struct {
 }
 
 func (l line) entry() Entry {
-	return Entry{Revision: l.Revision, At: l.At, Source: l.Source, Summary: l.Summary, Autosave: l.Autosave}
+	return Entry{Revision: l.Revision, At: l.At, Source: l.Source, Summary: l.Summary, Changes: l.Changes, Autosave: l.Autosave}
 }
 
 func (l line) budget() (budget.Budget, error) {
@@ -228,20 +234,26 @@ func continuesAutosave(last line, prev, next Record, c Change) bool {
 		next.UpdatedAt.Sub(last.At) < coalesceWindow
 }
 
-// newLine is the history line for next. Its summary is the one the change
-// gives, else summary, else a description of what changed since before.
+// newLine is the history line for next. A given summary (only "created")
+// stands alone; otherwise the line lists what changed since before, and its
+// summary is the one the change gives (an undo's) or a description of that.
 func newLine(next Record, c Change, before budget.Budget, summary string) (line, error) {
 	raw, err := json.Marshal(next.Budget)
 	if err != nil {
 		return line{}, err
 	}
+	var diffs []budget.Difference
+	if summary == "" {
+		diffs = budget.Differences(before, next.Budget)
+	}
 	if c.Summary != "" {
 		summary = c.Summary
 	}
 	if summary == "" {
-		summary = budget.DescribeChange(before, next.Budget)
+		summary = budget.Describe(diffs)
 	}
-	return line{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: summary, Autosave: c.Autosave, Budget: raw}, nil
+	l := line{Revision: next.Revision, At: next.UpdatedAt, Source: c.Source, Summary: summary, Changes: diffs, Autosave: c.Autosave, Budget: raw}
+	return l, nil
 }
 
 // keepNewest drops the oldest entries beyond limit.

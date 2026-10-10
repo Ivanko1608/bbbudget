@@ -246,7 +246,7 @@ Ids are derived from names when omitted. YAML numbers keep their exact text: `45
 
 ## History and undo
 
-Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it.
+Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it. Each entry also lists its `changes` one by one (`{kind, thing, name, field, old, new}`), so an assistant or another language can describe them its own way.
 
 Undo puts back the version from before a change, saved as a new change, so an undo can itself be undone and nothing is ever rewritten. Undoing a change that has later changes on top of it is refused unless you confirm (`-force`, `"force": true`), and the refusal lists what else would be undone. That stops an assistant's "undo that" from quietly throwing away an edit you made in the meantime.
 
