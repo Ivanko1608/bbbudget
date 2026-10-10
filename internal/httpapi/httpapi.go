@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"bbbudget/internal/app"
@@ -61,6 +62,8 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("PUT /api/budgets/{id}", s.replace)
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
+	mux.HandleFunc("GET /api/budgets/{id}/history", s.history)
+	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
 	mux.HandleFunc("GET /api/budgets/{id}/compare", s.compare)
@@ -152,34 +155,38 @@ func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Iss
 // and is logged, with a generic message to the client.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var (
-		ve *budget.ValidationError
-		ce *store.ConflictError
-		oe *budget.OpError
-		nm *budget.NoMatchError
-		ae *money.ArithmeticError
-		me *http.MaxBytesError
-		se *json.SyntaxError
-		te *json.UnmarshalTypeError
-		re *app.RateError
+		invalid    *budget.ValidationError
+		conflict   *store.ConflictError
+		badOp      *budget.OpError
+		noMatch    *budget.NoMatchError
+		tooLarge   *http.MaxBytesError
+		rateFailed *app.RateError
+		undoLater  *app.UndoConflictError
 	)
 	switch {
-	case errors.As(err, &oe): // checked first: a bad target inside an op is the caller's mistake
+	case errors.As(err, &badOp): // checked first: a bad target inside an op is the caller's mistake
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
-	case errors.As(err, &ve):
-		writeErr(w, http.StatusUnprocessableEntity, err.Error(), ve.Issues)
-	case errors.As(err, &ce):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": ce.Actual})
-	case errors.Is(err, store.ErrNotFound), errors.As(err, &nm):
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusUnprocessableEntity, err.Error(), invalid.Issues)
+	case errors.As(err, &undoLater):
+		body := map[string]any{"error": err.Error(), "later": undoLater.Later}
+		writeJSON(w, http.StatusConflict, body)
+	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
+		writeErr(w, http.StatusConflict, err.Error(), nil)
+	case errors.As(err, &conflict):
+		body := map[string]any{"error": err.Error(), "revision": conflict.Actual}
+		writeJSON(w, http.StatusConflict, body)
+	case errors.Is(err, store.ErrNotFound), errors.As(err, &noMatch):
 		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrExists):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.Is(err, app.ErrRatesOff):
 		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
-	case errors.As(err, &re): // the rate provider failed, not us
+	case errors.As(err, &rateFailed): // the rate provider failed, not us
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
-	case errors.As(err, &me):
+	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
-	case errors.Is(err, store.ErrBadID), errors.As(err, &ae), errors.As(err, &se), errors.As(err, &te), errors.Is(err, errBadRequest), errors.Is(err, app.ErrBadInput):
+	case isBadRequest(err):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
@@ -188,6 +195,20 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 var errBadRequest = errors.New("bad request")
+
+func isBadRequest(err error) bool {
+	var (
+		overflow  *money.ArithmeticError
+		badJSON   *json.SyntaxError
+		wrongType *json.UnmarshalTypeError
+	)
+	return errors.Is(err, store.ErrBadID) ||
+		errors.Is(err, errBadRequest) ||
+		errors.Is(err, app.ErrBadInput) ||
+		errors.As(err, &overflow) ||
+		errors.As(err, &badJSON) ||
+		errors.As(err, &wrongType)
+}
 
 func decode(r *http.Request, v any) error {
 	d := json.NewDecoder(r.Body)
@@ -203,6 +224,13 @@ func decode(r *http.Request, v any) error {
 }
 
 // --- handlers ---
+
+// Writes through the API are made in the browser. The editor saves as you
+// type, and those saves merge into one history entry.
+var (
+	fromBrowser = store.Origin{Source: store.SourceWeb}
+	editorSave  = store.Origin{Source: store.SourceWeb, Autosave: true}
+)
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	digits := map[string]int{}
@@ -244,9 +272,9 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		err error
 	)
 	if in.Budget != nil {
-		v, err = s.app.Import(r.Context(), in.ID, *in.Budget)
+		v, err = s.app.Import(r.Context(), fromBrowser, in.ID, *in.Budget)
 	} else {
-		v, err = s.app.Create(r.Context(), in.ID, in.Name, in.Template)
+		v, err = s.app.Create(r.Context(), fromBrowser, in.ID, in.Name, in.Template)
 	}
 	if err != nil {
 		s.fail(w, r, err)
@@ -277,7 +305,7 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "revision is required (the revision you loaded)", nil)
 		return
 	}
-	v, err := s.app.Replace(r.Context(), r.PathValue("id"), *in.Revision, in.Budget)
+	v, err := s.app.Replace(r.Context(), editorSave, r.PathValue("id"), *in.Revision, in.Budget)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -293,6 +321,46 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) history(w http.ResponseWriter, r *http.Request) {
+	limit := store.DefaultHistoryPage
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 0 {
+			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
+			return
+		}
+		limit = n
+	}
+	h, err := s.app.History(r.Context(), r.PathValue("id"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if h == nil {
+		h = []store.Entry{}
+	}
+	writeJSON(w, http.StatusOK, h)
+}
+
+func (s *server) undo(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Revision int64 `json:"revision"`
+		Force    bool  `json:"force"`
+		Seen     int64 `json:"seen"`
+	}
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
+	v, err := s.app.Undo(r.Context(), fromBrowser, r.PathValue("id"), req)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
 func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Revision *int64      `json:"revision"`
@@ -306,7 +374,7 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 	if in.Revision != nil {
 		rev = *in.Revision
 	}
-	v, err := s.app.Apply(r.Context(), r.PathValue("id"), rev, in.Ops)
+	v, err := s.app.Apply(r.Context(), fromBrowser, r.PathValue("id"), rev, in.Ops)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -398,7 +466,7 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	v, updates, err := s.app.RefreshRates(r.Context(), r.PathValue("id"), in.Codes)
+	v, updates, err := s.app.RefreshRates(r.Context(), fromBrowser, r.PathValue("id"), in.Codes)
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
@@ -433,7 +501,9 @@ func (s *server) saveScenario(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	sc, err := s.app.SaveScenario(r.Context(), r.PathValue("id"), in.Name, in.Description, in.Ops)
+	sc, err := s.app.SaveScenario(
+		r.Context(), fromBrowser, r.PathValue("id"), in.Name, in.Description, in.Ops,
+	)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -451,7 +521,7 @@ func (s *server) scenarioReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
-	v, err := s.app.AdoptScenario(r.Context(), r.PathValue("id"), r.PathValue("sid"))
+	v, err := s.app.AdoptScenario(r.Context(), fromBrowser, r.PathValue("id"), r.PathValue("sid"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -460,7 +530,8 @@ func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteScenario(w http.ResponseWriter, r *http.Request) {
-	if err := s.app.DeleteScenario(r.Context(), r.PathValue("id"), r.PathValue("sid")); err != nil {
+	err := s.app.DeleteScenario(r.Context(), fromBrowser, r.PathValue("id"), r.PathValue("sid"))
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}

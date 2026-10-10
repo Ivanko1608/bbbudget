@@ -114,7 +114,7 @@ A budget is about as personal as data gets, so bbbudget is built to keep it on y
 - **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
 - **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
 - **Offline by default.** Fetching exchange rates is off until you turn it on in [Settings](#settings) (`fetch_rates`). Until then you type rates by hand and nothing goes online. Once it's on, the app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default too. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up.
-- **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file.
+- **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file. Each budget's change history sits next to it (`home.jsonl`), holding copies of its last 200 versions (the file is trimmed in batches, so it can briefly hold up to 400), so something you remove from a budget stays in its history until it ages out. Deleting the budget deletes its history too.
 - **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
 
 One honest caveat: when you use the MCP server with a hosted AI assistant, the MCP server itself still runs locally, but whatever budget data the assistant reads is sent to that assistant's provider as part of the conversation. If that matters to you, use a local MCP client or stick to the web UI and CLI.
@@ -244,6 +244,20 @@ bbbudget import home ./budget.yaml         # or create a budget straight from a 
 
 Ids are derived from names when omitted. YAML numbers keep their exact text: `450.50` is never a float. Unknown fields, exponents and sub-cent amounts are rejected, and a broken template file is reported by file name. The format is the same document the API and **Download JSON** in the UI produce, so you can export a budget and save it as a template.
 
+## History and undo
+
+Every change is recorded with who made it (you in the browser, an AI assistant over MCP, the command line, or a scheduled rate refresh) and what changed: `Rent: amount 1150 → 1200; added item Gym`. The **Recent changes** panel in the UI, `bbbudget history home` and the `history` tool all show it. Each entry also lists its `changes` one by one (`{action, part, name, field, old, new}`), so an assistant or another language can describe them its own way.
+
+Undo puts back the version from before a change, saved as a new change, so an undo can itself be undone and nothing is ever rewritten. Undoing a change that has later changes on top of it is refused unless you confirm (`-force`, `"force": true`), and the refusal lists what else would be undone. That stops an assistant's "undo that" from quietly throwing away an edit you made in the meantime.
+
+```
+bbbudget history home            # REV  WHEN  BY  CHANGE
+bbbudget undo home               # the latest change
+bbbudget undo home -revision 12  # a specific one (refused if later changes exist, unless -force)
+```
+
+The editor saves as you type, so its saves within two minutes of each other merge into one entry. Each budget keeps its last 200 changes, each with a full copy of the budget as it was, so any of them can be restored.
+
 ## Using it with Claude
 
 **Claude Code** (from this directory), add to `.mcp.json`:
@@ -256,7 +270,7 @@ Ids are derived from names when omitted. YAML numbers keep their exact text: `45
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`. There is also a resource, `budget://{id}`, with the raw document.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`. There is also a resource, `budget://{id}`, with the raw document.
 
 `-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Schedules in every tool and op take calendar months, `{"starts": "2026-03", "ends": "2026-12", "every": 3}`. Months are resolved against the budget's start month inside the same write, so a saved scenario keeps pointing at the same months even if the start month moves later. Editing an item's schedule changes only the fields you give (`"ends": ""` removes the end). The stored document uses 0-based month indexes (`{"start": 2, "every": 0}`), which ops still accept, but a schedule can't mix the two forms. Items are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
@@ -265,14 +279,14 @@ The web UI and the MCP server can run as separate processes on the same data dir
 ## Layout
 
 ```
-cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings
+cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | history | undo
 internal/money/      Money, Decimal, Currency, rounding. No dependencies.
 internal/budget/     Document model, validation (Compile → Plan), projection engine,
                      insight rules, ops (edits), scenarios, YAML/JSON documents, report
 internal/rates/      Exchange-rate providers (ECB, currency-api, CoinGecko), chain + cache
 internal/settings/   App-wide settings file (load, validate, atomic 0600 save)
 internal/templates/  Built-in templates (embedded YAML) + the user template directory
-internal/store/      Store interface + FileStore (atomic writes, flock, revisions)
+internal/store/      Store interface + FileStore (atomic writes, flock, revisions, change history)
 internal/app/        Use cases shared by every transport
 internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards
 internal/mcpserver/  MCP tools and resources
@@ -290,6 +304,7 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `GET /api/budgets/{id}` → `{id, revision, budget, report}` | read |
 | `PUT /api/budgets/{id}` `{revision, budget}` | replace; `409` if the revision is stale, `422` with `issues` if invalid |
 | `POST /api/budgets/{id}/ops` `{ops, revision?}` | apply edits atomically |
+| `GET /api/budgets/{id}/history?limit=20` · `POST …/undo` `{revision?, force?, seen?}` | recent changes, newest first, each marked `undoable` / undo one; `409` with `later` when later changes exist and `force` is off, or when changes newer than `seen` (the newest one the caller was shown) have landed |
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |
@@ -310,7 +325,7 @@ The server binds to 127.0.0.1 and accepts only these requests:
 - **An insight.** Write `func(*budget.Projection) []budget.Insight` and append it to `DefaultRules` in `insights.go`. Rules are pure functions of the projection.
 - **An edit type.** Add a case to `applyOne` in `ops.go` and document it in `OpKinds`. It then works in `apply_ops`, `what_if`, scenarios and the HTTP API.
 - **A template.** Drop a YAML or JSON file in your template directory. Only add a built-in (`internal/templates/builtin/`) if it is generic and fictional.
-- **A storage backend** (SQLite, a remote API, …). Implement the five-method `store.Store` interface. `Update(id, expectedRevision, fn)` must run `fn` and the write atomically.
+- **A storage backend** (SQLite, a remote API, …). Implement the `store.Store` interface. `Update(id, expectedRevision, fn)` must run `fn` and the write atomically, and every write must be recorded for `History` and `Snapshot` with the `store.Change` on its context.
 - **A new frontend.** Call `app.App`. Never re-implement calculations outside `internal/budget`.
 
 ## Development

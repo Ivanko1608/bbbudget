@@ -6,6 +6,8 @@
 //	bbbudget list             list budgets
 //	bbbudget report <id>      print a budget's projection and insights
 //	bbbudget rates <id>       fetch current exchange rates into a budget
+//	bbbudget history <id>     list recent changes and who made them
+//	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
 package main
 
@@ -62,12 +64,17 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
+  history  list recent changes and who made them:  bbbudget history home [-limit 20]
+  undo     undo a change:  bbbudget undo home [-revision REV] [-force]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
 Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates); -templates overrides.
 App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
 `
+
+// fromCLI is the origin of every write made by a command.
+var fromCLI = store.Origin{Source: store.SourceCLI}
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -138,7 +145,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "init":
 		template := fs.String("template", "blank", "template name (see: bbbudget templates)")
 		name := fs.String("name", "", "display name (default: the id)")
-		id, err := parseWithID(fs, args, "init <id> [-template name] [-name display-name]")
+		id, err := parseFlagsAndID(fs, args, "init <id> [-template name] [-name display-name]")
 		if err != nil {
 			return err
 		}
@@ -146,7 +153,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -193,7 +200,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if b.Name == "" {
 			b.Name = id
 		}
-		v, err := a.Import(ctx, id, b)
+		v, err := a.Import(ctx, fromCLI, id, b)
 		if err != nil {
 			return err
 		}
@@ -221,7 +228,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "report":
 		scenario := fs.String("scenario", "", "show a saved scenario instead of the budget")
-		id, err := parseWithID(fs, args, "report <id> [-scenario name]")
+		id, err := parseFlagsAndID(fs, args, "report <id> [-scenario name]")
 		if err != nil {
 			return err
 		}
@@ -247,7 +254,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "rates":
 		only := fs.String("only", "", "comma-separated currencies to refresh (default: all whose source isn't manual)")
 		dry := fs.Bool("dry-run", false, "show current rates without saving")
-		id, err := parseWithID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
+		id, err := parseFlagsAndID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
 		if err != nil {
 			return err
 		}
@@ -263,13 +270,57 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if *dry {
 			updates, err = a.PreviewRates(ctx, id, codes)
 		} else {
-			_, updates, err = a.RefreshRates(ctx, id, codes)
+			_, updates, err = a.RefreshRates(ctx, fromCLI, id, codes)
 		}
 		printRates(stdout, updates)
 		if err == nil && len(updates) == 0 {
 			fmt.Fprintln(stdout, "no currencies to refresh: every rate is manual (name some with -only to fetch them)")
 		}
 		return err
+
+	case "history":
+		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
+		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		h, err := a.History(ctx, id, *limit)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
+		for _, e := range h {
+			when := e.At.Local().Format("2006-01-02 15:04")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
+		}
+		return tw.Flush()
+
+	case "undo":
+		revision := fs.Int64("revision", 0, "revision of the change to undo (default: the latest)")
+		force := fs.Bool("force", false, "also undo every change made after it")
+		id, err := parseFlagsAndID(fs, args, "undo <id> [-revision REV] [-force]")
+		if err != nil {
+			return err
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		v, err := a.Undo(ctx, fromCLI, id, app.UndoRequest{Revision: *revision, Force: *force})
+		if err != nil {
+			return err
+		}
+		h, err := a.History(ctx, id, 1)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
+		return nil
 
 	case "settings":
 		var sets []string
@@ -339,7 +390,9 @@ func parseArgs(fs *flag.FlagSet, args []string, want int, usage string) ([]strin
 	return pos, nil
 }
 
-func parseWithID(fs *flag.FlagSet, args []string, usage string) (string, error) {
+// parseFlagsAndID parses a command's flags and its one positional argument,
+// the budget id ("home" in `bbbudget report home`).
+func parseFlagsAndID(fs *flag.FlagSet, args []string, usage string) (string, error) {
 	pos, err := parseArgs(fs, args, 1, usage)
 	if err != nil {
 		return "", err

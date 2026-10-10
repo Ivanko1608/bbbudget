@@ -13,6 +13,7 @@ import (
 	"bbbudget/internal/money"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/settings"
+	"bbbudget/internal/store"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -54,17 +55,20 @@ func TestRatesOffIsFullyOffline(t *testing.T) {
 	if _, err := a.Quote(ctx, "EUR", "", []string{"USD"}); !errors.Is(err, ErrRatesOff) {
 		t.Fatalf("Quote: %v", err)
 	}
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{}); !errors.Is(err, ErrRatesOff) {
+	_, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{})
+	if !errors.Is(err, ErrRatesOff) {
 		t.Fatalf("SetCurrency: %v", err)
 	}
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD"}); !errors.Is(err, ErrRatesOff) {
+	_, _, err = a.RefreshRates(ctx, byTest, "home", []string{"USD"})
+	if !errors.Is(err, ErrRatesOff) {
 		t.Fatalf("RefreshRates: %v", err)
 	}
 	if after, _ := a.Get(ctx, "home"); after.Revision != before.Revision {
 		t.Fatal("nothing may be written while offline")
 	}
 	// Typed rates still work.
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{PerBase: ptr(money.MustDecimal("0.00001"))}); err != nil {
+	typed := budget.CurrencyPatch{PerBase: ptr(money.MustDecimal("0.00001"))}
+	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", typed); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -72,14 +76,14 @@ func TestRatesOffIsFullyOffline(t *testing.T) {
 func TestDefaultSourceFromSettings(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("currency-api")})
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{}); err != nil {
+	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
 	if c := currency(t, a, "BTC"); c.Source != "currency-api" || c.RateFrom != "currency-api" {
 		t.Fatalf("new currency: %+v", c)
 	}
 	// Naming a manual currency in a refresh switches it to the default too.
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD"}); err != nil {
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"USD"}); err != nil {
 		t.Fatal(err)
 	}
 	if c := currency(t, a, "USD"); c.Source != "currency-api" || c.PerBase.String() != "1.12" {
@@ -87,8 +91,11 @@ func TestDefaultSourceFromSettings(t *testing.T) {
 	}
 	// A "manual" default still fetches when a fetch is asked for, via auto.
 	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("manual")})
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"CHF"}); err != nil || currency(t, a, "CHF").Source != "auto" {
-		t.Fatalf("CHF: %+v %v", currency(t, a, "CHF"), err)
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"CHF"}); err != nil {
+		t.Fatal(err)
+	}
+	if source := currency(t, a, "CHF").Source; source != "auto" {
+		t.Fatalf("CHF source = %q, want auto", source)
 	}
 }
 
@@ -96,14 +103,16 @@ func TestRefreshIfDue(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
-	if _, err := a.Create(ctx, "plain", "Plain", "example"); err != nil { // all-manual: untouched
+	allManual := "plain"
+	if _, err := a.Create(ctx, byTest, allManual, "Plain", "example"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{}); err != nil {
+	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
 	gecko := "coingecko"
-	if _, err := a.SetCurrency(ctx, "home", "USD", budget.CurrencyPatch{Source: &gecko}); err == nil {
+	toGecko := budget.CurrencyPatch{Source: &gecko}
+	if _, err := a.SetCurrency(ctx, byTest, "home", "USD", toGecko); err == nil {
 		t.Fatal("coingecko is down in the test app") // so USD stays manual
 	}
 
@@ -124,7 +133,8 @@ func TestRefreshIfDue(t *testing.T) {
 	}
 	now = now.Add(time.Minute)
 	// Make BTC fail on the next run: the failure is reported, not fatal.
-	if _, err := a.Apply(ctx, "home", -1, []budget.Op{budget.NewOp("set_currency", "BTC", budget.CurrencyPatch{Source: &gecko})}); err != nil {
+	btcToGecko := setCurrency("BTC", toGecko)
+	if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, btcToGecko); err != nil {
 		t.Fatal(err)
 	}
 	if ran, err := a.RefreshIfDue(ctx); !ran || err != nil {
@@ -167,7 +177,7 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD"}); err != nil {
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"USD"}); err != nil {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})

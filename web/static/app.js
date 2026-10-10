@@ -34,6 +34,7 @@ const S = {
   allInsights: false,
   lastSummary: "",
   wi: [], // what-if draft ops
+  history: [], // recent changes, newest first (Activity)
 };
 
 // ---------- API ----------
@@ -139,6 +140,7 @@ async function open(id, view = S.view) {
   setView(view);
   status("All changes saved");
   loadCompare();
+  loadActivity();
 }
 
 function adopt(view, rerenderEditors) {
@@ -177,6 +179,7 @@ async function save() {
     else status("All changes saved");
     S.notice = null;
     loadCompare();
+    loadActivity();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -206,6 +209,7 @@ async function poll() {
       adopt(v, true);
       status("Updated with changes made elsewhere");
       loadCompare();
+      loadActivity();
     }
   } catch {}
 }
@@ -902,6 +906,7 @@ const ACTIONS = {
   "del-wi"(i) { S.wi.splice(i, 1); renderWhatIf(); },
   "preview-wi"() { previewWhatIf(); },
   "save-wi"() { saveWhatIf(); },
+  undo(i, el) { undoChange(i, el); },
   async "adopt-scenario"(i, el) {
     if (!confirm(`Apply “${el.dataset.name}” to the real budget?`)) return;
     await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios/${encodeURIComponent(el.dataset.sid)}/adopt`, {}));
@@ -1216,6 +1221,73 @@ async function saveWhatIf() {
   S.wi = [];
   $("#wiResult").innerHTML = "";
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
+}
+
+// ---------- activity ----------
+
+// Who made a change, as the history records it (see store.Change).
+const SOURCES = {
+  web: "You (browser)",
+  mcp: "AI assistant",
+  cli: "Command line",
+  "auto-refresh": "Rate refresh",
+  earlier: "Earlier",
+};
+
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+async function loadActivity() {
+  if (!S.id) return;
+  const box = $("#activity");
+  try {
+    S.history = await api("GET", `/api/budgets/${encodeURIComponent(S.id)}/history?limit=15`);
+  } catch {
+    return; // keep what is shown; the next refresh retries
+  }
+  box.innerHTML = S.history.map(activityRow).join("") || `<li class="muted">No changes yet.</li>`;
+}
+
+// activityRow is one change in the Recent changes list: who, what, when, and
+// an Undo button when there is an earlier version to go back to. i is its
+// place in S.history, newest first.
+function activityRow(e, i) {
+  const who = SOURCES[e.source] || e.source || "Unknown";
+  const when = `r${e.revision} · ${ago(e.at)}`;
+  const undo = e.undoable ? undoButton(e.revision, i) : "<span></span>";
+  return `<li class="act ${esc(e.source)}">
+      <span class="who">${esc(who)}</span>
+      <span class="what">${esc(e.summary)}</span>
+      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">${esc(when)}</span>
+      ${undo}
+    </li>`;
+}
+
+function undoButton(revision, i) {
+  const data = `data-action="undo" data-rev="${revision}" data-i="${i}"`;
+  return `<button type="button" class="linkish" ${data}>Undo</button>`;
+}
+
+function confirmUndoingLater(later) {
+  const changes = later.map((e) => `• ${e.summary}`).join("\n");
+  const count = later.length === 1 ? "1 later change" : `${later.length} later changes`;
+  return confirm(`This also undoes ${count}:\n\n${changes}\n\nUndo them all?`);
+}
+
+async function undoChange(i, el) {
+  const rev = Number(el.dataset.rev);
+  const later = S.history.slice(0, i);
+  if (later.length && !confirmUndoingLater(later)) return;
+  // seen is the newest change the person was shown: if more came in since,
+  // the server refuses again instead of undoing something nobody saw.
+  const req = { revision: rev, force: later.length > 0, seen: S.history[0].revision };
+  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, req));
+  loadActivity(); // also after a refusal, so the list shows what came in
 }
 
 async function loadCompare() {

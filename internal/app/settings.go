@@ -10,6 +10,7 @@ import (
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/settings"
+	"bbbudget/internal/store"
 )
 
 // ErrRatesOff means fetching rates is turned off in the app settings.
@@ -73,6 +74,9 @@ func (a *App) AutoRefresh() AutoRefreshStatus {
 	return s
 }
 
+// autoRefresh is the origin of the rate updates RefreshIfDue makes.
+var autoRefresh = store.Origin{Source: store.SourceAutoRefresh}
+
 // RefreshIfDue refreshes the rates of every budget when the auto-refresh
 // interval has passed since the last run. It reports whether it ran.
 func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
@@ -96,7 +100,7 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 	}
 	st := AutoRefreshStatus{LastRun: a.Now(), Failures: []string{}}
 	for _, m := range list {
-		_, updates, err := a.RefreshRates(ctx, m.ID, nil)
+		_, updates, err := a.RefreshRates(ctx, autoRefresh, m.ID, nil)
 		if len(updates) > 0 {
 			st.Budgets++
 		}

@@ -16,6 +16,9 @@ import (
 	"bbbudget/internal/store"
 )
 
+// byTest is the origin of the writes tests make.
+var byTest = store.Origin{Source: store.SourceCLI}
+
 // testApp holds the example budget ("home": EUR base, CHF and USD typed by
 // hand) and offline rate providers: "ecb" knows USD and CHF, "currency-api"
 // also knows BTC, and "coingecko" is down.
@@ -34,11 +37,15 @@ func testApp(t *testing.T) *App {
 		rates.CoinGecko: rates.Fixed{ID: rates.CoinGecko, Err: errors.New("HTTP 429")},
 		rates.Auto:      rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, capi}},
 	}
-	if _, err := a.Create(context.Background(), "home", "Home", "example"); err != nil {
+	if _, err := a.Create(context.Background(), byTest, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{FetchRates: ptr(true)}) // off by default; these tests fetch
 	return a
+}
+
+func setCurrency(code string, patch budget.CurrencyPatch) []budget.Op {
+	return []budget.Op{budget.NewOp("set_currency", code, patch)}
 }
 
 func currency(t *testing.T, a *App, code string) budget.CurrencyRate {
@@ -67,13 +74,13 @@ func TestRegistryCoversEverySource(t *testing.T) {
 
 func TestRefreshSkipsManualUnlessNamed(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	v, updates, err := a.RefreshRates(ctx, "home", nil)
+	v, updates, err := a.RefreshRates(ctx, byTest, "home", nil)
 	if err != nil || len(updates) != 0 || currency(t, a, "USD").PerBase.String() != "1.08" {
 		t.Fatalf("manual rates must not change: %v %v", updates, err)
 	}
 	rev := v.Revision
 
-	v, updates, err = a.RefreshRates(ctx, "home", []string{"usd"})
+	v, updates, err = a.RefreshRates(ctx, byTest, "home", []string{"usd"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,17 +96,18 @@ func TestRefreshSkipsManualUnlessNamed(t *testing.T) {
 	}
 
 	// From now on a plain refresh includes USD.
-	if _, updates, _ = a.RefreshRates(ctx, "home", nil); len(updates) != 1 || updates[0].Code != "USD" {
+	_, updates, _ = a.RefreshRates(ctx, byTest, "home", nil)
+	if len(updates) != 1 || updates[0].Code != "USD" {
 		t.Fatalf("%+v", updates)
 	}
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"JPY"}); err == nil {
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"JPY"}); err == nil {
 		t.Fatal("refreshing a currency the budget doesn't have")
 	}
 }
 
 func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	if _, err := a.SetCurrency(ctx, "home", "btc", budget.CurrencyPatch{}); err != nil {
+	if _, err := a.SetCurrency(ctx, byTest, "home", "btc", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
 	btc := currency(t, a, "BTC")
@@ -109,30 +117,35 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	}
 
 	// No provider prices it: a clear error, nothing saved.
-	_, err := a.SetCurrency(ctx, "home", "ETH", budget.CurrencyPatch{})
+	_, err := a.SetCurrency(ctx, byTest, "home", "ETH", budget.CurrencyPatch{})
 	var re *RateError
 	if !errors.As(err, &re) {
 		t.Fatalf("want RateError, got %v", err)
 	}
 	// Unless the rate is given.
 	rate := money.MustDecimal("0.0004")
-	if _, err := a.SetCurrency(ctx, "home", "ETH", budget.CurrencyPatch{PerBase: &rate}); err != nil || currency(t, a, "ETH").Source != budget.SourceManual {
+	typed := budget.CurrencyPatch{PerBase: &rate}
+	if _, err := a.SetCurrency(ctx, byTest, "home", "ETH", typed); err != nil {
 		t.Fatal(err)
+	}
+	if source := currency(t, a, "ETH").Source; source != budget.SourceManual {
+		t.Fatalf("ETH source = %q, want %q", source, budget.SourceManual)
 	}
 }
 
 func TestPartialAndTotalFailure(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	gecko := rates.CoinGecko
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{}); err != nil {
+	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_currency", "BTC", budget.CurrencyPatch{Source: &gecko})}); err != nil {
+	toGecko := setCurrency("BTC", budget.CurrencyPatch{Source: &gecko})
+	if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, toGecko); err != nil {
 		t.Fatal(err)
 	}
 	before := currency(t, a, "BTC").PerBase.String()
 
-	_, updates, err := a.RefreshRates(ctx, "home", []string{"USD", "BTC"})
+	_, updates, err := a.RefreshRates(ctx, byTest, "home", []string{"USD", "BTC"})
 	if err != nil {
 		t.Fatalf("one currency failing must not fail the rest: %v", err)
 	}
@@ -142,7 +155,7 @@ func TestPartialAndTotalFailure(t *testing.T) {
 	}
 
 	v, _ := a.Get(ctx, "home")
-	_, _, err = a.RefreshRates(ctx, "home", []string{"BTC"})
+	_, _, err = a.RefreshRates(ctx, byTest, "home", []string{"BTC"})
 	var re *RateError
 	if !errors.As(err, &re) {
 		t.Fatalf("want RateError, got %v", err)
@@ -175,16 +188,18 @@ func (h hook) Quotes(ctx context.Context, base string, codes []string) (map[stri
 
 func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	if _, _, err := a.RefreshRates(ctx, "home", []string{"USD", "CHF"}); err != nil { // both auto now
+	bothAuto := []string{"USD", "CHF"}
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", bothAuto); err != nil {
 		t.Fatal(err)
 	}
 	typed := money.MustDecimal("1.05")
 	a.Rates[rates.Auto] = hook{a.Rates[rates.Auto], func() {
-		if _, err := a.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_currency", "USD", budget.CurrencyPatch{PerBase: &typed})}); err != nil {
+		typeRate := setCurrency("USD", budget.CurrencyPatch{PerBase: &typed})
+		if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, typeRate); err != nil {
 			t.Error(err)
 		}
 	}}
-	_, updates, err := a.RefreshRates(ctx, "home", nil)
+	_, updates, err := a.RefreshRates(ctx, byTest, "home", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +228,7 @@ func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 	if after, _ := a.Get(ctx, "home"); after.Revision != before.Revision {
 		t.Fatal("preview saved")
 	}
-	_, real, err := a.RefreshRates(ctx, "home", []string{"USD"})
+	_, real, err := a.RefreshRates(ctx, byTest, "home", []string{"USD"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +244,8 @@ func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 func TestEmptySourceMeansDefault(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	empty := ""
-	if _, err := a.SetCurrency(ctx, "home", "BTC", budget.CurrencyPatch{Source: &empty}); err != nil {
+	defaultSource := budget.CurrencyPatch{Source: &empty}
+	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", defaultSource); err != nil {
 		t.Fatal(err)
 	}
 	if c := currency(t, a, "BTC"); c.Source != budget.SourceAuto || c.IsManual() {

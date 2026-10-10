@@ -384,3 +384,73 @@ func TestDebtPayoffOverHTTP(t *testing.T) {
 	// The pot can't be removed while the payoff uses it.
 	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"bike","value":{"pot":""}},{"op":"remove_pot","target":"savings"}]}`, 400)
 }
+
+const setRentTo1200 = `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1200"}}]}`
+const setRentTo1300 = `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1300"}}]}`
+
+func TestHistoryListsBrowserChanges(t *testing.T) {
+	c := setup(t)
+	c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+
+	w := c.req("GET", "/api/budgets/home/history", "", nil)
+
+	var entries []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil || w.Code != 200 {
+		t.Fatalf("history: %d %s", w.Code, w.Body)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want the creation and one change, got %d entries", len(entries))
+	}
+	if entries[0]["source"] != "web" {
+		t.Errorf("source: %v", entries[0]["source"])
+	}
+	if entries[0]["summary"] != "Rent: amount 1150 → 1200" {
+		t.Errorf("summary: %v", entries[0]["summary"])
+	}
+	if _, listed := entries[0]["budget"]; listed {
+		t.Error("history listings must not carry whole budgets")
+	}
+}
+
+func TestHistoryLimitMustBeAWholeNumber(t *testing.T) {
+	c := setup(t)
+
+	c.do("GET", "/api/budgets/home/history?limit=x", "", 400)
+}
+
+// With r2 (rent 1200) and r3 (rent 1300) saved after the creation.
+func TestUndoAnswers(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"the latest change", `{}`, 200},
+		{"a change with a later one on top", `{"revision":2}`, 409},
+		{"forced, having seen everything", `{"revision":2,"force":true,"seen":3}`, 200},
+		{"forced, without having seen r3", `{"revision":2,"force":true,"seen":2}`, 409},
+		{"the creation", `{"revision":1}`, 409},
+		{"a revision never written", `{"revision":99}`, 400},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := setup(t)
+			c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+			c.do("POST", "/api/budgets/home/ops", setRentTo1300, 200)
+
+			c.do("POST", "/api/budgets/home/undo", tc.body, tc.want)
+		})
+	}
+}
+
+func TestUndoRefusalListsLaterChanges(t *testing.T) {
+	c := setup(t)
+	c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+	c.do("POST", "/api/budgets/home/ops", setRentTo1300, 200)
+
+	refusal := c.do("POST", "/api/budgets/home/undo", `{"revision":2}`, 409)
+
+	if later := refusal["later"].([]any); len(later) != 1 {
+		t.Errorf("later changes: %v", later)
+	}
+}

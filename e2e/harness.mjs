@@ -122,8 +122,10 @@ export async function startBrowser(chrome) {
     return r.result.value;
   };
   const q = (sel) => JSON.stringify(sel);
-  // goto loads a page and waits until `ready` matches (the budget workspace by default).
-  page.goto = async (url, ready = "#workspace:not([hidden]), #empty:not([hidden])") => {
+  // goto loads a page and waits until `ready` matches: by default a budget's
+  // summary, which renders only once the budget has loaded (the workspace
+  // itself shows earlier, while the budget is still being fetched).
+  page.goto = async (url, ready = "#railSummary h2, #empty:not([hidden])") => {
     page.errors.length = 0;
     page.requests.length = 0;
     // A new hash alone wouldn't reload the page: start each visit from scratch.
