@@ -20,15 +20,16 @@ items:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.SavingsStart.String() != "0.1" || b.Currencies[0].PerBase.String() != "1.0800000001" || b.Items[0].Amount.String() != "1234567890123.45" {
-		t.Fatalf("precision lost: %s %s %s", b.SavingsStart, b.Currencies[0].PerBase, b.Items[0].Amount)
+	// The old savings_start becomes the General savings pot, exactly.
+	if b.Pots[0].Balance.String() != "0.1" || b.Currencies[0].PerBase.String() != "1.0800000001" || b.Items[0].Amount.String() != "1234567890123.45" {
+		t.Fatalf("precision lost: %s %s %s", b.Pots[0].Balance, b.Currencies[0].PerBase, b.Items[0].Amount)
 	}
 	// Normalization: ids from names/labels, base currency, monthly default, kind, window.
 	if b.Categories[0].ID != "living" || b.Categories[0].Kind != KindExpense || b.Items[0].ID != "rent" ||
 		b.Items[0].Currency != "EUR" || b.Items[0].Schedule != Monthly() || b.Items[1].Schedule.Every != 3 || b.Months != 12 {
 		t.Fatalf("normalize: %+v %+v", b.Categories[0], b.Items)
 	}
-	if b.Debts == nil || b.Goals == nil || b.Scenarios == nil {
+	if b.Debts == nil || b.Pots == nil || b.Withdrawals == nil || b.Scenarios == nil {
 		t.Fatal("lists must be empty, not null")
 	}
 }

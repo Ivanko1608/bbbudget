@@ -40,8 +40,11 @@ var DefaultRules = []Rule{
 	{"first_month", ruleFirstMonth},
 	{"biggest_item", ruleBiggestItem},
 	{"debt", ruleDebt},
+	{"debt_payoff", ruleDebtPayoff},
 	{"goals", ruleGoals},
-	{"negative_savings", ruleNegativeSavings},
+	{"shortfall", ruleShortfall},
+	{"withdrawal_cut", ruleWithdrawalCut},
+	{"emergency_fund", ruleEmergencyFund},
 }
 
 // Insights runs rules in order.
@@ -262,12 +265,12 @@ func ruleOneOffs(pr *Projection) []Insight {
 func ruleFirstMonth(pr *Projection) []Insight {
 	m := pr.Months[0]
 	if m.Left.IsNegative() {
-		return []Insight{{Tone: ToneWarn, Text: fmt.Sprintf("%s is **%s short**. Savings take the hit unless an item comes down.", m.Label, w(m.Left.Neg()))}}
+		return nil // ruleShortfall says what to do about it
 	}
 	inc := m.Income
-	thin := !inc.IsPositive() || pct(m.Saved, inc) < 5
-	day := m.Saved.Mul(big.NewRat(1, 30), money.Floor)
-	text := fmt.Sprintf("After everything, **%s** goes to savings in %s: about %s a day of slack.", w(m.Saved), m.Label, w(day))
+	thin := !inc.IsPositive() || pct(m.Left, inc) < 5
+	day := m.Left.Mul(big.NewRat(1, 30), money.Floor)
+	text := fmt.Sprintf("%s leaves **%s** after spending and minimum debt payments: about %s a day of slack.", m.Label, w(m.Left), w(day))
 	if thin {
 		return []Insight{{Tone: ToneWarn, Text: text + " That's thin: one surprise bill wipes it out."}}
 	}
@@ -323,28 +326,157 @@ func ruleDebt(pr *Projection) []Insight {
 	return out
 }
 
+// ruleDebtPayoff says what paying a debt off in full costs, where the money
+// comes from, and what stays owed when the pot can't cover it.
+func ruleDebtPayoff(pr *Projection) []Insight {
+	p := pr.Plan
+	var out []Insight
+	for i, d := range p.Debts {
+		if d.PayoffMonth == nil || *d.PayoffMonth >= len(pr.Months) {
+			continue
+		}
+		m := *d.PayoffMonth
+		mo, dm := pr.Months[m], pr.Months[m].Debts[i]
+		owing := d.Bal
+		if m > 0 {
+			owing = pr.Months[m-1].Debts[i].Balance
+		}
+		if owing = owing.Add(dm.Interest); !owing.IsPositive() {
+			continue // already paid off by then
+		}
+		cost := p.PayCost(dm.Payoff, roundPay)
+		from := "that month's money"
+		if d.PotIdx >= 0 {
+			from = p.Pots[d.PotIdx].Name
+		}
+		amount := w(dm.Payoff)
+		if dm.Payoff.Currency() != p.Base {
+			amount += " (" + w(cost) + ")"
+		}
+		if rest := owing.Sub(dm.Payoff); rest.IsPositive() {
+			text := fmt.Sprintf("%s: %s only holds %s in %s, so it pays off %s and **%s stays owed**, with its minimum payment.",
+				d.Name, from, w(cost), mo.Label, w(dm.Payoff), w(rest))
+			if !dm.Payoff.IsPositive() {
+				text = fmt.Sprintf("%s: %s holds nothing in %s, so the payoff can't happen and **%s stays owed**, with its minimum payment.",
+					d.Name, from, mo.Label, w(rest))
+			}
+			out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneWarn, Text: text})
+			continue
+		}
+		out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneGood, Text: fmt.Sprintf(
+			"%s is paid off in full in **%s**: %s from %s, interest up to then included.", d.Name, mo.Label, amount, from)})
+	}
+	return out
+}
+
 func ruleGoals(pr *Projection) []Insight {
 	var out []Insight
 	for _, g := range pr.GoalStatuses() {
 		switch {
 		case g.AlreadyMet:
-			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("%s (%s) is already covered by current savings.", g.Name, w(g.Target))})
+			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("%s already holds its target (%s).", g.Name, w(g.Target))})
 		case g.ReachedMonth != nil:
-			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("At this pace %s (%s) is reached in **%s**.", g.Name, w(g.Target), g.ReachedLabel)})
+			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneGood, Text: fmt.Sprintf("At this pace %s reaches %s in **%s**.", g.Name, w(g.Target), g.ReachedLabel)})
 		default:
 			out = append(out, Insight{ID: "goal_" + g.ID, Tone: ToneWarn, Text: fmt.Sprintf(
-				"%s (%s) isn't reached within %d months. Getting there needs about **%s** saved per month.",
+				"%s doesn't reach %s within %d months. Getting there needs about **%s** a month into it.",
 				g.Name, w(g.Target), pr.Plan.Months, w(*g.NeededPerMonth))})
 		}
 	}
 	return out
 }
 
-func ruleNegativeSavings(pr *Projection) []Insight {
-	for _, m := range pr.Months {
-		if m.Savings.IsNegative() {
-			return []Insight{{Tone: ToneWarn, Text: fmt.Sprintf("Savings go negative in **%s**. Something has to give before then.", m.Label)}}
+// ruleShortfall reports short months without touching savings, and says
+// which pots could cover the first one.
+func ruleShortfall(pr *Projection) []Insight {
+	sfs := pr.Shortfalls()
+	if len(sfs) == 0 {
+		return nil
+	}
+	sf := sfs[0]
+	text := fmt.Sprintf("**%s is %s short.** Nothing is taken from your savings automatically.", sf.Label, w(sf.Amount))
+	switch more := len(sfs) - 1; {
+	case more == 1:
+		text += " One more month falls short later."
+	case more > 1:
+		text += fmt.Sprintf(" %d more months fall short later.", more)
+	}
+	var ok, last []string
+	for _, o := range sf.Options {
+		desc := fmt.Sprintf("%s (%s there)", o.Name, w(o.Available))
+		switch o.Kind {
+		case PotEmergency:
+			last = append(last, desc)
+		case PotSinking:
+			ok = append(ok, desc+", which delays what it's saved for")
+		default:
+			ok = append(ok, desc)
+		}
+	}
+	if len(ok) > 0 {
+		text += " You could cover it from " + strings.Join(ok, " or ") + "."
+	}
+	if len(last) > 0 {
+		text += " " + strings.Join(last, " and ") + " is a last resort."
+	}
+	if len(sf.Options) == 0 {
+		text += " No savings pot holds money then."
+	}
+	text += " If you don't, it's owed on your current account and repaid from the next surplus, which usually costs interest or fees."
+	out := []Insight{{ID: "shortfall", Tone: ToneWarn, Text: text}}
+	if last := pr.Last(); last.Overdraft.IsPositive() {
+		out = append(out, Insight{ID: "overdraft_end", Tone: ToneWarn, Text: fmt.Sprintf(
+			"By %s you still owe **%s** on your current account. Something has to give before then.", last.Label, w(last.Overdraft))})
+	}
+	return out
+}
+
+// ruleWithdrawalCut flags planned withdrawals the pot couldn't fully pay.
+func ruleWithdrawalCut(pr *Projection) []Insight {
+	p := pr.Plan
+	names := map[string]PlanWithdrawal{}
+	for _, wd := range p.Withdrawals {
+		names[wd.ID] = wd
+	}
+	items := map[string]PlanItem{}
+	for _, l := range p.Items {
+		items[l.ID] = l
+	}
+	for _, mo := range pr.Months {
+		for _, pc := range mo.PotCosts {
+			if pc.Paid.Cmp(pc.Cost) < 0 {
+				l := items[pc.ItemID]
+				return []Insight{{ID: "pot_cost_cut_" + l.ID, Tone: ToneWarn, Text: fmt.Sprintf(
+					"%s: %s only holds %s in %s, so the other %s comes out of that month's budget.",
+					l.Name, p.Pots[l.PotIdx].Name, w(pc.Paid), mo.Label, w(pc.Cost.Sub(pc.Paid)))}}
+			}
+		}
+		for _, wm := range mo.Withdrawals {
+			if wm.Taken.Cmp(wm.Planned) < 0 {
+				wd := names[wm.ID]
+				return []Insight{{ID: "withdrawal_cut_" + wm.ID, Tone: ToneWarn, Text: fmt.Sprintf(
+					"%s: %s only holds %s in %s, not the %s planned.", wd.Name, p.Pots[wd.PotIdx].Name, w(wm.Taken), mo.Label, w(wm.Planned))}}
+			}
 		}
 	}
 	return nil
+}
+
+// ruleEmergencyFund suggests a buffer of three to six months of spending
+// when there is no emergency pot.
+func ruleEmergencyFund(pr *Projection) []Insight {
+	p := pr.Plan
+	for _, pt := range p.Pots {
+		if pt.Kind == PotEmergency {
+			return nil
+		}
+	}
+	m := pr.Months[0]
+	spend := m.Expenses.Add(m.DebtMinCost)
+	if !spend.IsPositive() {
+		return nil
+	}
+	return []Insight{{Tone: ToneInfo, Text: fmt.Sprintf(
+		"There's no emergency fund. A common rule of thumb is three to six months of spending, about %s to %s here. You could add a pot of the emergency kind.",
+		w(spend.Mul(big.NewRat(3, 1), money.Ceil)), w(spend.Mul(big.NewRat(6, 1), money.Ceil)))}}
 }

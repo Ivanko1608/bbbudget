@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"bbbudget/internal/money"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -53,24 +54,7 @@ func Normalize(b *Budget) {
 	if b.DebtStrategy == "" {
 		b.DebtStrategy = StrategyAvalanche
 	}
-	if b.Currencies == nil {
-		b.Currencies = []CurrencyRate{}
-	}
-	if b.Categories == nil {
-		b.Categories = []Category{}
-	}
-	if b.Items == nil {
-		b.Items = []Item{}
-	}
-	if b.Debts == nil {
-		b.Debts = []Debt{}
-	}
-	if b.Goals == nil {
-		b.Goals = []Goal{}
-	}
-	if b.Scenarios == nil {
-		b.Scenarios = []Scenario{}
-	}
+	emptyLists(b)
 	for i := range b.Categories {
 		c := &b.Categories[i]
 		if c.ID == "" {
@@ -98,11 +82,105 @@ func Normalize(b *Budget) {
 			d.Currency = b.BaseCurrency
 		}
 	}
-	for i := range b.Goals {
-		if b.Goals[i].ID == "" {
-			b.Goals[i].ID = uniqueID(b.Goals[i].Name, ids(b.Goals, goalKey))
+	for i := range b.Pots {
+		p := &b.Pots[i]
+		if p.ID == "" {
+			p.ID = uniqueID(p.Name, ids(b.Pots, potKey))
+		}
+		if p.Kind == "" {
+			p.Kind = PotGeneral
 		}
 	}
+	for i := range b.Withdrawals {
+		w := &b.Withdrawals[i]
+		if w.ID == "" {
+			w.ID = uniqueID(w.Name, ids(b.Withdrawals, withdrawalKey))
+		}
+	}
+}
+
+// emptyLists makes every list field an empty list rather than nil, so a
+// budget always encodes as [] and never as null (clients iterate them).
+func emptyLists(b *Budget) {
+	if b.Currencies == nil {
+		b.Currencies = []CurrencyRate{}
+	}
+	if b.Categories == nil {
+		b.Categories = []Category{}
+	}
+	if b.Items == nil {
+		b.Items = []Item{}
+	}
+	if b.Debts == nil {
+		b.Debts = []Debt{}
+	}
+	if b.Pots == nil {
+		b.Pots = []Pot{}
+	}
+	if b.Withdrawals == nil {
+		b.Withdrawals = []Withdrawal{}
+	}
+	if b.Scenarios == nil {
+		b.Scenarios = []Scenario{}
+	}
+}
+
+// UnmarshalJSON reads a budget, converting the pre-pots form (savings_start
+// and goals) into pots, so every stored or sent document gets the same model.
+// Unknown fields are errors.
+func (b *Budget) UnmarshalJSON(data []byte) error {
+	type plain Budget // no methods: avoids recursion
+	var in struct {
+		plain
+		SavingsStart *money.Decimal `json:"savings_start"`
+		Goals        []Goal         `json:"goals"`
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&in); err != nil {
+		return err
+	}
+	*b = Budget(in.plain)
+	defer emptyLists(b) // stored files from before pots have no "withdrawals"
+	legacy := (in.SavingsStart != nil && in.SavingsStart.Sign() != 0) || len(in.Goals) > 0
+	if b.Pots != nil {
+		if legacy {
+			return fmt.Errorf("savings_start and goals are replaced by pots; put the savings and targets in pots")
+		}
+		return nil
+	}
+	b.Pots = MigrateSavings(in.SavingsStart, in.Goals, &b.OverdraftStart)
+	return nil
+}
+
+// MigrateSavings turns the old single savings balance and its goals into
+// pots: a "General savings" pot holding the balance, and one pot per goal
+// (an emergency fund if the name says so, otherwise a sinking fund). Old
+// goals all counted the same money; as pots each fills on its own. A
+// negative old balance becomes money owed (overdraft).
+func MigrateSavings(start *money.Decimal, goals []Goal, overdraft *money.Decimal) []Pot {
+	zero := money.MustDecimal("0")
+	general := Pot{ID: "savings", Name: "General savings", Kind: PotGeneral, Balance: zero}
+	if start != nil {
+		if start.Sign() >= 0 {
+			general.Balance = *start
+		} else if overdraft.Sign() == 0 {
+			*overdraft = money.MustDecimal(strings.TrimPrefix(start.String(), "-"))
+		}
+	}
+	pots := []Pot{general}
+	for _, g := range goals {
+		kind := PotSinking
+		if strings.Contains(strings.ToLower(g.Name), "emergency") {
+			kind = PotEmergency
+		}
+		id := g.ID
+		if id == "" || id == general.ID {
+			id = uniqueID(g.Name, ids(pots, potKey))
+		}
+		pots = append(pots, Pot{ID: id, Name: g.Name, Kind: kind, Balance: zero, Target: g.Target})
+	}
+	return pots
 }
 
 // UnmarshalJSON makes an omitted schedule mean "monthly" (the common case)

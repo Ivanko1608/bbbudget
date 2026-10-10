@@ -158,7 +158,11 @@ func (a *App) SetDebt(ctx context.Context, id, ref string, patch budget.DebtPatc
 		if patch.Currency != nil {
 			d.Currency = *patch.Currency
 		}
-		return budget.Apply(b, budget.NewOp("add_debt", "", d))
+		ops := []budget.Op{budget.NewOp("add_debt", "", d)}
+		if patch.PayoffMonth != nil || patch.PayoffFrom != nil {
+			ops = append(ops, budget.NewOp("set_debt", ref, budget.DebtPatch{PayoffMonth: patch.PayoffMonth, PayoffFrom: patch.PayoffFrom}))
+		}
+		return budget.Apply(b, ops...)
 	})
 	if err != nil {
 		return nil, err

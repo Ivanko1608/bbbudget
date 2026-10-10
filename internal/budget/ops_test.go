@@ -129,8 +129,9 @@ func TestDebtAndGoalOps(t *testing.T) {
 	if nb.Debts[0].ID != "credit-card" || nb.Debts[0].APRPct.String() != "19.9" {
 		t.Errorf("debt: %+v", nb.Debts[0])
 	}
-	if nb.Goals[1].ID != "new-laptop" || nb.Goals[0].Target.String() != "3000" {
-		t.Errorf("goals: %+v", nb.Goals)
+	// The old goal ops still work, on pots.
+	if nb.Pots[2].ID != "new-laptop" || nb.Pots[2].Kind != PotSinking || nb.Pots[1].Target.String() != "3000" {
+		t.Errorf("pots: %+v", nb.Pots)
 	}
 }
 
@@ -289,5 +290,26 @@ func TestScenarioMonthsSurviveStartMonthChange(t *testing.T) {
 	}
 	if got := itemByID(nb, "bonus").Schedule; got != Once(3) { // June is index 3 from March
 		t.Fatalf("bonus: %+v", got)
+	}
+}
+
+// add_item and set_item take a pot alongside a calendar-month schedule.
+func TestItemPotWithMonthSchedule(t *testing.T) {
+	b := fixture(t)
+	b.StartMonth = "2026-01"
+	nb, err := Apply(b, NewOp("add_item", "", map[string]any{"name": "Bonus", "amount": "500", "category": "income",
+		"schedule": map[string]any{"starts": "2026-06", "every": 0}, "pot": "emergency"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "bonus"); got.Pot != "emergency" || got.Schedule != (Schedule{Start: 5}) {
+		t.Fatalf("add_item: %+v", got)
+	}
+	nb, err = Apply(nb, NewOp("set_item", "bonus", ItemPatch{Schedule: &ScheduleSpec{Starts: "2026-07"}, Pot: strp("")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemByID(nb, "bonus"); got.Pot != "" || got.Schedule != (Schedule{Start: 6}) {
+		t.Fatalf("set_item: %+v", got)
 	}
 }
