@@ -17,7 +17,7 @@ import (
 
 var ctx = context.Background()
 
-func newStore(t *testing.T) (*FileStore, budget.Budget) {
+func newStore(t testing.TB) (*FileStore, budget.Budget) {
 	t.Helper()
 	s, err := NewFileStore(t.TempDir())
 	if err != nil {

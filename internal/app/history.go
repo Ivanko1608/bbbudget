@@ -34,9 +34,12 @@ func (e *UndoConflictError) Error() string {
 		e.Revision, len(e.Later), strings.Join(parts, "; "))
 }
 
-// ErrNothingToUndo means the change is the budget's first entry: there is no
-// earlier version to go back to.
-var ErrNothingToUndo = errors.New("nothing to undo: that is the oldest version in the history")
+// ErrNothingToUndo means the change created the budget: there is no earlier
+// version to go back to.
+var ErrNothingToUndo = errors.New("nothing to undo: that change created the budget")
+
+// ErrTooOld means the version before the change has aged out of the history.
+var ErrTooOld = errors.New("can't undo that far back: the history no longer keeps the version before that change")
 
 // Undo reverts the change that created a revision (0 means the latest) by
 // saving the version from just before it as a new revision. History is never
@@ -45,7 +48,12 @@ var ErrNothingToUndo = errors.New("nothing to undo: that is the oldest version i
 // If changes were made after the one being undone, it refuses unless force
 // is set, in which case those are undone too: going back to an old version
 // throws away everything after it.
-func (a *App) Undo(ctx context.Context, id string, revision int64, force bool) (*View, error) {
+//
+// seen is the newest revision the caller had in front of them when it chose
+// to force (0 to skip the check). If more changes have landed since, Undo
+// refuses again with the up-to-date list, so a forced undo never drops a
+// change nobody was shown.
+func (a *App) Undo(ctx context.Context, id string, revision int64, force bool, seen int64) (*View, error) {
 	latest, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -64,17 +72,20 @@ func (a *App) Undo(ctx context.Context, id string, revision int64, force bool) (
 	if i < 0 {
 		return nil, fmt.Errorf("%w: r%d is not a change in the history of %s", ErrBadInput, revision, id)
 	}
-	if i == len(history)-1 {
-		return nil, ErrNothingToUndo
+	if !history[i].Undoable {
+		if revision == 1 || history[i].Source == store.SourceEarlier {
+			return nil, ErrNothingToUndo
+		}
+		return nil, ErrTooOld
 	}
 	undone, later, previous := history[i], history[:i], history[i+1]
-	if len(later) > 0 && !force {
+	if len(later) > 0 && (!force || (seen != 0 && seen != latest.Revision)) {
 		return nil, &UndoConflictError{Revision: revision, Later: later}
 	}
 
 	old, err := a.Store.Snapshot(ctx, id, previous.Revision)
-	if errors.Is(err, store.ErrNoSnapshot) {
-		return nil, fmt.Errorf("%w: the history no longer holds r%d", ErrNothingToUndo, previous.Revision)
+	if errors.Is(err, store.ErrNoSnapshot) { // trimmed since the listing above
+		return nil, ErrTooOld
 	}
 	if err != nil {
 		return nil, err

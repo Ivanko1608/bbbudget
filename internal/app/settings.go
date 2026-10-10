@@ -124,7 +124,7 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 func (a *App) RunAutoRefresh(ctx context.Context, log *slog.Logger) {
 	// Rate updates made here show up in each budget's history as "auto-refresh",
 	// so they can be told apart from changes a person or an AI made.
-	ctx = store.WithChange(ctx, store.Change{Source: "auto-refresh"})
+	ctx = store.WithChange(ctx, store.Change{Source: store.SourceAutoRefresh})
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {

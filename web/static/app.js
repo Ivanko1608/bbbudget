@@ -1226,7 +1226,7 @@ async function saveWhatIf() {
 // ---------- activity ----------
 
 // Who made a change, as the history records it (see store.Change).
-const SOURCES = { web: "You (browser)", mcp: "AI assistant", assistant: "AI assistant", cli: "Command line", "auto-refresh": "Rate refresh", earlier: "Earlier" };
+const SOURCES = { web: "You (browser)", mcp: "AI assistant", cli: "Command line", "auto-refresh": "Rate refresh", earlier: "Earlier" };
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -1249,7 +1249,7 @@ async function loadActivity() {
       <span class="who">${esc(SOURCES[e.source] || e.source || "Unknown")}</span>
       <span class="what">${esc(e.summary)}</span>
       <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">r${e.revision} · ${esc(ago(e.at))}</span>
-      ${i < h.length - 1 ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>` : "<span></span>"}
+      ${e.undoable ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>` : "<span></span>"}
     </li>`).join("") || `<li class="muted">No changes yet.</li>`;
 }
 
@@ -1257,7 +1257,10 @@ async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
   if (later.length && !confirm(`This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${later.map((e) => `• ${e.summary}`).join("\n")}\n\nUndo them all?`)) return;
-  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { revision: rev, force: later.length > 0 }));
+  // latest is the newest change the person was shown: if more came in since,
+  // the server refuses again instead of undoing something nobody saw.
+  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { revision: rev, force: later.length > 0, latest: S.history[0].revision }));
+  loadActivity(); // also after a refusal, so the list shows what came in
 }
 
 async function loadCompare() {

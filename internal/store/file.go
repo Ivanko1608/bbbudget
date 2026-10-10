@@ -68,10 +68,9 @@ func (s *FileStore) read(id string) (Record, error) {
 	return r, nil
 }
 
+// write saves a record. Callers validate it first (budget.Compile), before
+// recording its history, so an invalid write leaves no trace.
 func (s *FileStore) write(r Record) error {
-	if _, err := budget.Compile(r.Budget); err != nil {
-		return err
-	}
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err

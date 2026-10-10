@@ -62,7 +62,7 @@ p{margin:0}
 .act{display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line);font-size:.9rem}
 .act:first-child{border-top:0}
 .act .who{font-weight:600;white-space:nowrap}
-.act.mcp .who,.act.assistant .who{color:var(--accent-ink)}
+.act.mcp .who{color:var(--accent-ink)}
 .act .what{overflow-wrap:anywhere}
 .act .when{white-space:nowrap;font-size:.8rem}
 .act .linkish{padding:2px 8px;font-size:.8rem}

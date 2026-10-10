@@ -113,7 +113,7 @@ func (s *server) guard(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		// Writes through the API are recorded as made in the browser; the
 		// MCP endpoint relabels its own as "mcp".
-		r = r.WithContext(store.WithChange(r.Context(), store.Change{Source: "web"}))
+		r = r.WithContext(store.WithChange(r.Context(), store.Change{Source: store.SourceWeb}))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
@@ -177,7 +177,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusUnprocessableEntity, err.Error(), invalid.Issues)
 	case errors.As(err, &undoLater):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": undoLater.Later})
-	case errors.Is(err, app.ErrNothingToUndo):
+	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.As(err, &conflict):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": conflict.Actual})
@@ -290,7 +290,7 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The editor saves as you type; its saves merge into one history entry.
-	ctx := store.WithChange(r.Context(), store.Change{Source: "web", Autosave: true})
+	ctx := store.WithChange(r.Context(), store.Change{Source: store.SourceWeb, Autosave: true})
 	v, err := s.app.Replace(ctx, r.PathValue("id"), *in.Revision, in.Budget)
 	if err != nil {
 		s.fail(w, r, err)
@@ -308,7 +308,7 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) history(w http.ResponseWriter, r *http.Request) {
-	limit := 50
+	limit := store.DefaultHistoryPage
 	if q := r.URL.Query().Get("limit"); q != "" {
 		n, err := strconv.Atoi(q)
 		if err != nil || n < 0 {
@@ -332,12 +332,13 @@ func (s *server) undo(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Revision int64 `json:"revision"`
 		Force    bool  `json:"force"`
+		Latest   int64 `json:"latest"` // the newest revision the caller saw
 	}
 	if err := decode(r, &in); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Revision, in.Force)
+	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Revision, in.Force, in.Latest)
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -10,12 +10,11 @@ func TestDescribeChange(t *testing.T) {
 	if got := DescribeChange(b, b); got != "no changes" {
 		t.Errorf("equal: %q", got)
 	}
-	months := 24 // not intp(): that helper arrives with another branch
 	nb, err := Apply(b,
 		NewOp("set_item", "rent", ItemPatch{Amount: decp("1200"), Name: strp("Flat rent")}),
 		NewOp("add_item", "", map[string]any{"name": "Gym", "amount": "35", "category": "home"}),
 		NewOp("remove_item", "school supplies", nil),
-		NewOp("set_settings", "", SettingsPatch{Months: &months}),
+		NewOp("set_settings", "", SettingsPatch{Months: intp(24)}),
 	)
 	if err != nil {
 		t.Fatal(err)

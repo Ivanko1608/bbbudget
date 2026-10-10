@@ -68,7 +68,7 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			out, err := fn(store.WithChange(ctx, store.Change{Source: "mcp"}), in)
+			out, err := fn(store.WithChange(ctx, store.Change{Source: store.SourceMCP}), in)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
@@ -183,13 +183,14 @@ type CompareIn struct {
 
 type HistoryIn struct {
 	Ref
-	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20"`
+	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20 (store.DefaultHistoryPage)"`
 }
 
 type UndoIn struct {
 	Ref
 	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
 	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
+	Latest   int64 `json:"latest,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
 }
 
 type ScenarioRef struct {
@@ -344,7 +345,7 @@ func (h *handlers) register(s *mcp.Server) {
 				return nil, err
 			}
 			if in.Limit <= 0 {
-				in.Limit = 20
+				in.Limit = store.DefaultHistoryPage
 			}
 			return h.app.History(ctx, id, in.Limit)
 		})
@@ -354,7 +355,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Undo(ctx, id, in.Revision, in.Force))
+			return sum(h.app.Undo(ctx, id, in.Revision, in.Force, in.Latest))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{

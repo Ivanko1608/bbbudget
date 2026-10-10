@@ -82,7 +82,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// Every write is recorded in the budget's history with who made it.
 	// Commands typed in a terminal are "cli"; serve and mcp replace this with
 	// their own label for the writes they make.
-	ctx = store.WithChange(ctx, store.Change{Source: "cli"})
+	ctx = store.WithChange(ctx, store.Change{Source: store.SourceCLI})
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
@@ -280,7 +280,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 
 	case "history":
-		limit := fs.Int("limit", 20, "how many changes to show (0 for all kept)")
+		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all kept)")
 		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
 		if err != nil {
 			return err
@@ -311,7 +311,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Undo(ctx, id, *revision, *force)
+		v, err := a.Undo(ctx, id, *revision, *force, 0)
 		if err != nil {
 			return err
 		}
