@@ -1244,22 +1244,38 @@ async function loadActivity() {
   } catch {
     return; // keep what is shown; the next refresh retries
   }
-  const h = S.history;
-  box.innerHTML = h.map((e, i) => `<li class="act ${esc(e.source)}">
-      <span class="who">${esc(SOURCES[e.source] || e.source || "Unknown")}</span>
+  box.innerHTML = S.history.map(activityRow).join("") || `<li class="muted">No changes yet.</li>`;
+}
+
+// activityRow is one change in the Recent changes list: who, what, when, and
+// an Undo button when there is an earlier version to go back to. i is its
+// place in S.history, newest first.
+function activityRow(e, i) {
+  const who = SOURCES[e.source] || e.source || "Unknown";
+  const when = `r${e.revision} · ${ago(e.at)}`;
+  const undo = e.undoable
+    ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>`
+    : "<span></span>";
+  return `<li class="act ${esc(e.source)}">
+      <span class="who">${esc(who)}</span>
       <span class="what">${esc(e.summary)}</span>
-      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">r${e.revision} · ${esc(ago(e.at))}</span>
-      ${e.undoable ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>` : "<span></span>"}
-    </li>`).join("") || `<li class="muted">No changes yet.</li>`;
+      <span class="when muted" title="${esc(new Date(e.at).toLocaleString())}">${esc(when)}</span>
+      ${undo}
+    </li>`;
 }
 
 async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
-  if (later.length && !confirm(`This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${later.map((e) => `• ${e.summary}`).join("\n")}\n\nUndo them all?`)) return;
+  if (later.length) {
+    const changes = later.map((e) => `• ${e.summary}`).join("\n");
+    const question = `This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${changes}\n\nUndo them all?`;
+    if (!confirm(question)) return;
+  }
   // latest is the newest change the person was shown: if more came in since,
   // the server refuses again instead of undoing something nobody saw.
-  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, { revision: rev, force: later.length > 0, latest: S.history[0].revision }));
+  const req = { revision: rev, force: later.length > 0, latest: S.history[0].revision };
+  await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, req));
   loadActivity(); // also after a refusal, so the list shows what came in
 }
 

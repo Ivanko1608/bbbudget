@@ -41,45 +41,52 @@ var ErrNothingToUndo = errors.New("nothing to undo: that change created the budg
 // ErrTooOld means the version before the change has aged out of the history.
 var ErrTooOld = errors.New("can't undo that far back: the history no longer keeps the version before that change")
 
-// Undo reverts the change that created a revision (0 means the latest) by
-// saving the version from just before it as a new revision. History is never
-// rewritten, so an undo can itself be undone.
-//
-// If changes were made after the one being undone, it refuses unless force
-// is set, in which case those are undone too: going back to an old version
-// throws away everything after it.
-//
-// seen is the newest revision the caller had in front of them when it chose
-// to force (0 to skip the check). If more changes have landed since, Undo
-// refuses again with the up-to-date list, so a forced undo never drops a
-// change nobody was shown.
-func (a *App) Undo(ctx context.Context, id string, revision int64, force bool, seen int64) (*View, error) {
+// LatestRevision in an UndoRequest means the most recent change.
+const LatestRevision = 0
+
+// UndoRequest says which change to undo and how far the caller agreed to go.
+type UndoRequest struct {
+	// Revision is the change to undo, or LatestRevision.
+	Revision int64
+	// Force also undoes every change made after it. Without it, Undo refuses
+	// when there are any, and lists them.
+	Force bool
+	// Seen is the newest revision the caller was shown when it chose to
+	// force (0 to skip the check). If more changes have landed since, Undo
+	// refuses again with the up-to-date list, so a forced undo never drops a
+	// change nobody was shown.
+	Seen int64
+}
+
+// Undo reverts a change by saving the version from just before it as a new
+// revision. History is never rewritten, so an undo can itself be undone.
+// Going back to an old version throws away everything after it, so later
+// changes are only undone with Force (see UndoRequest).
+func (a *App) Undo(ctx context.Context, id string, req UndoRequest) (*View, error) {
 	latest, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if revision == 0 {
+	revision := req.Revision
+	if revision == LatestRevision {
 		revision = latest.Revision
 	}
-	history, err := a.Store.History(ctx, id, 0) // newest first
+	history, err := a.Store.History(ctx, id, store.AllEntries)
 	if err != nil {
 		return nil, err
 	}
-
-	// Find the change to undo. Entries before it in the list are later
-	// changes; the entry after it is the version to go back to.
-	i := slices.IndexFunc(history, func(e store.Entry) bool { return e.Revision == revision })
-	if i < 0 {
+	target, later, previous, err := splitAt(history, revision)
+	if err != nil {
 		return nil, fmt.Errorf("%w: r%d is not a change in the history of %s", ErrBadInput, revision, id)
 	}
-	if !history[i].Undoable {
-		if revision == 1 || history[i].Source == store.SourceEarlier {
+	if !target.Undoable {
+		if revision == 1 || target.Source == store.SourceEarlier {
 			return nil, ErrNothingToUndo
 		}
 		return nil, ErrTooOld
 	}
-	undone, later, previous := history[i], history[:i], history[i+1]
-	if len(later) > 0 && (!force || (seen != 0 && seen != latest.Revision)) {
+	unseen := req.Seen != 0 && req.Seen != latest.Revision
+	if len(later) > 0 && (!req.Force || unseen) {
 		return nil, &UndoConflictError{Revision: revision, Later: later}
 	}
 
@@ -97,7 +104,7 @@ func (a *App) Undo(ctx context.Context, id string, revision int64, force bool, s
 		what = fmt.Sprintf("r%d–r%d", revision, latest.Revision)
 	}
 	c := store.ChangeFrom(ctx)
-	c.Summary = fmt.Sprintf("undid %s (%s)", what, undone.Summary)
+	c.Summary = fmt.Sprintf("undid %s (%s)", what, target.Summary)
 	// Guarded by the revision read above, so a write in between is a
 	// conflict instead of being lost.
 	r, err := a.Store.Update(store.WithChange(ctx, c), id, latest.Revision, func(budget.Budget) (budget.Budget, error) { return old, nil })
@@ -105,6 +112,23 @@ func (a *App) Undo(ctx context.Context, id string, revision int64, force bool, s
 		return nil, err
 	}
 	return view(r)
+}
+
+var errNotInHistory = errors.New("not in the history")
+
+// splitAt finds revision in a newest-first history and returns that entry,
+// the changes made after it (newest first) and the entry before it, which
+// is the version an undo goes back to. previous is the zero Entry when
+// target is the oldest entry kept.
+func splitAt(history []store.Entry, revision int64) (target store.Entry, later []store.Entry, previous store.Entry, err error) {
+	i := slices.IndexFunc(history, func(e store.Entry) bool { return e.Revision == revision })
+	if i < 0 {
+		return store.Entry{}, nil, store.Entry{}, errNotInHistory
+	}
+	if i+1 < len(history) {
+		previous = history[i+1]
+	}
+	return history[i], history[:i], previous, nil
 }
 
 func sourceLabel(s string) string {

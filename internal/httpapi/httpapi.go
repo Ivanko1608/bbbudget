@@ -338,7 +338,7 @@ func (s *server) undo(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	v, err := s.app.Undo(r.Context(), r.PathValue("id"), in.Revision, in.Force, in.Latest)
+	v, err := s.app.Undo(r.Context(), r.PathValue("id"), app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Latest})
 	if err != nil {
 		s.fail(w, r, err)
 		return

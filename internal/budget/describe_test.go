@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,21 @@ func TestDescribeChangeCoversPots(t *testing.T) {
 	for _, want := range []string{"added pot Holiday", "added withdrawal Car repair"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+// Every field of Budget that isn't a list is a setting, and must be diffed.
+func TestBudgetSettingsCoverEveryField(t *testing.T) {
+	have := map[string]bool{}
+	settings := reflect.TypeFor[budgetSettings]()
+	for i := range settings.NumField() {
+		have[settings.Field(i).Name] = true
+	}
+	doc := reflect.TypeFor[Budget]()
+	for i := range doc.NumField() {
+		if f := doc.Field(i); f.Type.Kind() != reflect.Slice && !have[f.Name] {
+			t.Errorf("Budget.%s is missing from budgetSettings, so changes to it never show in the history", f.Name)
 		}
 	}
 }

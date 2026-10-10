@@ -355,7 +355,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Undo(ctx, id, in.Revision, in.Force, in.Latest))
+			return sum(h.app.Undo(ctx, id, app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Latest}))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{

@@ -311,7 +311,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Undo(ctx, id, *revision, *force, 0)
+		v, err := a.Undo(ctx, id, app.UndoRequest{Revision: *revision, Force: *force})
 		if err != nil {
 			return err
 		}

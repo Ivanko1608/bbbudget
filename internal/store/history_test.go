@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -109,7 +110,7 @@ func TestAutosavesCoalesce(t *testing.T) {
 	for _, e := range h {
 		revs = append(revs, e.Revision)
 	}
-	if want := []int64{9, 8, 7, 6, 5, 1}; !equal(revs, want) {
+	if want := []int64{9, 8, 7, 6, 5, 1}; !slices.Equal(revs, want) {
 		t.Fatalf("revisions %v, want %v", revs, want)
 	}
 	if !strings.Contains(h[4].Summary, "amount 1150 → 1200") { // r2–r5 as one change
@@ -126,7 +127,7 @@ func TestHistoryIsCapped(t *testing.T) {
 	s.HistoryLimit = 5
 	mustCreate(t, s, ctx, b)
 	for i := range 9 {
-		mustUpdate(t, s, as("cli"), setRent(string(rune('1'+i))))
+		mustUpdate(t, s, as("cli"), setRent(strconv.Itoa(i+1)))
 	}
 	h, err := s.History(ctx, "home", 0)
 	if err != nil {
@@ -199,18 +200,6 @@ func TestDeleteRemovesHistory(t *testing.T) {
 	if h, _ := s.History(ctx, "home", 0); len(h) != 1 {
 		t.Fatalf("history of the new budget: %+v", h)
 	}
-}
-
-func equal(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // A damaged history must never stop the budget from being saved: bad lines
