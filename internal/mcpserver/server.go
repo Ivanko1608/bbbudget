@@ -22,14 +22,14 @@ import (
 
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
-Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
+Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), items (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
 Language: text fields (insights, schedules, month labels) are in the user's configured language (app setting "locale"). Always answer in the language the user writes in. Each insight also has a key and typed args with the exact amounts and months; quote numbers from args, not from re-reading the text.
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
 Workflow: call list_budgets, then get_budget before answering about numbers. Writes and what_if return what changed and its effect (totals, first month, debt payoff, goal dates, insights that appeared or went away), not the whole budget: use that to answer, and get_budget (with a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
-Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
+Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Items/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
 type Options struct {
@@ -99,7 +99,7 @@ type Ref struct {
 
 type GetIn struct {
 	Ref
-	View string `json:"view,omitempty" jsonschema:"which part: overview (default: everything, months trimmed to the first few and the last), all, lines, months, debts, goals or insights"`
+	View string `json:"view,omitempty" jsonschema:"which part: overview (default: everything, months trimmed to the first few and the last), all, items, months, debts, goals or insights"`
 	From string `json:"from,omitempty" jsonschema:"first month to include, YYYY-MM"`
 	To   string `json:"to,omitempty" jsonschema:"last month to include, YYYY-MM"`
 }
@@ -116,7 +116,7 @@ type ScheduleIn struct {
 	Ends   string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive); omit for no end"`
 }
 
-type AddLineIn struct {
+type AddItemIn struct {
 	WriteRef
 	Name     string        `json:"name"`
 	Amount   money.Decimal `json:"amount"`
@@ -125,9 +125,9 @@ type AddLineIn struct {
 	ScheduleIn
 }
 
-type UpdateLineIn struct {
+type UpdateItemIn struct {
 	WriteRef
-	Line     string         `json:"line" jsonschema:"line id or name"`
+	Item     string         `json:"item" jsonschema:"item id or name"`
 	Name     *string        `json:"name,omitempty"`
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
@@ -135,9 +135,9 @@ type UpdateLineIn struct {
 	ScheduleIn
 }
 
-type LineRef struct {
+type ItemRef struct {
 	WriteRef
-	Line string `json:"line" jsonschema:"line id or name"`
+	Item string `json:"item" jsonschema:"item id or name"`
 }
 
 type CurrencyIn struct {
@@ -214,7 +214,7 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Line{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
+Value fields: Item{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -228,7 +228,7 @@ func (h *handlers) register(s *mcp.Server) {
 		v, err := h.app.Create(ctx, in.ID, in.Name, in.Template)
 		return sum(v, err)
 	})
-	tool(s, "get_budget", "The budget: settings, every line with its base-currency cost, debts, goals, scenarios, the month-by-month projection, totals and insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
+	tool(s, "get_budget", "The budget: settings, every item with its base-currency cost, debts, goals, scenarios, the month-by-month projection, totals and insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
 		func(ctx context.Context, in GetIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -241,22 +241,22 @@ func (h *handlers) register(s *mcp.Server) {
 			return view(summarize(v), in.View, in.From, in.To)
 		})
 
-	tool(s, "add_line", "Add an income or cost line. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddLineIn) (any, error) {
+	tool(s, "add_item", "Add an income or cost item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddItemIn) (any, error) {
 		return h.withSchedule(ctx, in.WriteRef, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			l := budget.Line{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: budget.Monthly()}
+			l := budget.Item{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: budget.Monthly()}
 			if sch != nil {
 				l.Schedule = *sch
 			}
-			return []budget.Op{budget.NewOp("add_line", "", l)}
+			return []budget.Op{budget.NewOp("add_item", "", l)}
 		})
 	})
-	tool(s, "update_line", "Change fields of one line; omitted fields stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateLineIn) (any, error) {
+	tool(s, "update_item", "Change fields of one item; omitted fields stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
 		return h.withSchedule(ctx, in.WriteRef, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			return []budget.Op{budget.NewOp("set_line", in.Line, budget.LinePatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: sch})}
+			return []budget.Op{budget.NewOp("set_item", in.Item, budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: sch})}
 		})
 	})
-	tool(s, "remove_line", "Delete one line. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in LineRef) (any, error) {
-		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("remove_line", in.Line, nil))
+	tool(s, "remove_item", "Delete one item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in ItemRef) (any, error) {
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
 	})
 	tool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in CurrencyIn) (any, error) {

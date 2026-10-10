@@ -40,7 +40,7 @@ func TestCRUD(t *testing.T) {
 		t.Fatalf("duplicate create: %v", err)
 	}
 	got, err := s.Get(ctx, "home")
-	if err != nil || got.Budget.Lines[1].Amount.String() != "1150" {
+	if err != nil || got.Budget.Items[1].Amount.String() != "1150" {
 		t.Fatalf("get: %v", err)
 	}
 	list, _ := s.List(ctx)
@@ -70,7 +70,7 @@ func TestOptimisticConcurrency(t *testing.T) {
 	set := func(amount string) func(budget.Budget) (budget.Budget, error) {
 		return func(b budget.Budget) (budget.Budget, error) {
 			v := money.MustDecimal(amount)
-			return budget.Apply(b, budget.NewOp("set_line", "rent", budget.LinePatch{Amount: &v}))
+			return budget.Apply(b, budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &v}))
 		}
 	}
 	if _, err := s.Update(ctx, "home", 1, set("1200")); err != nil {
@@ -82,7 +82,7 @@ func TestOptimisticConcurrency(t *testing.T) {
 		t.Fatalf("expected conflict, got %v", err)
 	}
 	r, _ := s.Get(ctx, "home")
-	if r.Budget.Lines[1].Amount.String() != "1200" {
+	if r.Budget.Items[1].Amount.String() != "1200" {
 		t.Fatal("stale write went through")
 	}
 }
@@ -91,14 +91,14 @@ func TestNeverStoresInvalidBudget(t *testing.T) {
 	s, b := newStore(t)
 	s.Create(ctx, "home", b)
 	_, err := s.Update(ctx, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
-		b.Lines[0].Currency = "XXX"
+		b.Items[0].Currency = "XXX"
 		return b, nil
 	})
 	if err == nil {
 		t.Fatal("invalid budget stored")
 	}
 	r, _ := s.Get(ctx, "home")
-	if r.Revision != 1 || r.Budget.Lines[0].Currency != "EUR" {
+	if r.Revision != 1 || r.Budget.Items[0].Currency != "EUR" {
 		t.Fatal("store changed after a rejected write")
 	}
 	entries, _ := os.ReadDir(s.dir)
@@ -126,7 +126,7 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 				s = other
 			}
 			_, err := s.Update(ctx, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
-				b.Lines = append(b.Lines, budget.Line{ID: fmt.Sprintf("x%d", i), Name: "x", Amount: money.MustDecimal("1"),
+				b.Items = append(b.Items, budget.Item{ID: fmt.Sprintf("x%d", i), Name: "x", Amount: money.MustDecimal("1"),
 					Currency: "EUR", Category: "home", Schedule: budget.Monthly()})
 				return b, nil
 			})
@@ -137,7 +137,7 @@ func TestConcurrentWritersLoseNothing(t *testing.T) {
 	}
 	wg.Wait()
 	r, _ := a.Get(ctx, "home")
-	if r.Revision != n+1 || len(r.Budget.Lines) != 8+n {
-		t.Fatalf("revision %d, %d lines; expected %d, %d", r.Revision, len(r.Budget.Lines), n+1, 8+n)
+	if r.Revision != n+1 || len(r.Budget.Items) != 8+n {
+		t.Fatalf("revision %d, %d items; expected %d, %d", r.Revision, len(r.Budget.Items), n+1, 8+n)
 	}
 }

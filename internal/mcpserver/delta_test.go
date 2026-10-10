@@ -28,7 +28,7 @@ func effectOf(t *testing.T, r map[string]any) map[string]any {
 
 func TestWritesReturnWhatChanged(t *testing.T) {
 	h := setup(t)
-	r := h.call("update_line", map[string]any{"line": "rent", "amount": "1200"}, false)
+	r := h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
 	if r["saved"] != true || r["revision"].(float64) != 2 || r["currency"] != "EUR" {
 		t.Fatalf("header: %v", r)
 	}
@@ -44,20 +44,20 @@ func TestWritesReturnWhatChanged(t *testing.T) {
 		t.Errorf("first month left should move: %v", e["first_month"])
 	}
 	if e["updated_insights"] == nil {
-		t.Error("raising the biggest line should update insights")
+		t.Error("raising the biggest item should update insights")
 	}
-	if r["lines"] != nil || r["months"] != nil {
+	if r["items"] != nil || r["months"] != nil {
 		t.Error("a delta must not carry the whole budget")
 	}
 }
 
 func TestDeltaShowsInsightsComingAndGoing(t *testing.T) {
 	h := setup(t)
-	r := h.call("add_line", map[string]any{"name": "New car", "amount": "9000", "category": "travel", "every": 0, "starts": "2027-03"}, false)
+	r := h.call("add_item", map[string]any{"name": "New car", "amount": "9000", "category": "travel", "every": 0, "starts": "2027-03"}, false)
 	if !strings.Contains(strings.Join(ids(effectOf(t, r)["new_insights"]), ","), "one_off_new-car") {
 		t.Fatalf("new insight: %v", effectOf(t, r)["new_insights"])
 	}
-	r = h.call("remove_line", map[string]any{"line": "new car"}, false)
+	r = h.call("remove_item", map[string]any{"item": "new car"}, false)
 	if !strings.Contains(strings.Join(ids(effectOf(t, r)["gone_insights"]), ","), "one_off_new-car") {
 		t.Fatalf("gone insight: %v", effectOf(t, r)["gone_insights"])
 	}
@@ -74,14 +74,14 @@ func ids(v any) []string {
 
 func TestChangeWithoutEffectSaysSo(t *testing.T) {
 	h := setup(t)
-	r := h.call("update_line", map[string]any{"line": "rent", "name": "Flat"}, false)
+	r := h.call("update_item", map[string]any{"item": "rent", "name": "Flat"}, false)
 	e := effectOf(t, r)
 	if e["totals"] != nil || !strings.Contains(r["change"].(string), "name Rent → Flat") {
 		t.Fatalf("rename: %v", r)
 	}
-	// The biggest-line insight names the line, so it is the one thing that moved.
+	// The biggest-item insight names the item, so it is the one thing that moved.
 	if e["none"] != nil && e["updated_insights"] == nil {
-		t.Fatalf("expected the renamed line's insight to update: %v", e)
+		t.Fatalf("expected the renamed item's insight to update: %v", e)
 	}
 	r = h.call("update_settings", map[string]any{"name": "Our home"}, false)
 	if effectOf(t, r)["none"] == nil {
@@ -92,7 +92,7 @@ func TestChangeWithoutEffectSaysSo(t *testing.T) {
 func TestWhatIfReturnsADelta(t *testing.T) {
 	h := setup(t)
 	r := h.call("what_if", map[string]any{"ops": []any{
-		map[string]any{"op": "set_line", "target": "tuition", "value": map[string]any{"amount": "450"}},
+		map[string]any{"op": "set_item", "target": "tuition", "value": map[string]any{"amount": "450"}},
 	}}, false)
 	if r["saved"] != false || r["revision"] != nil {
 		t.Fatalf("what_if header: %v", r)
@@ -112,18 +112,18 @@ func TestGetBudgetViews(t *testing.T) {
 	if n := len(o["months"].([]any)); n != overviewMonths+1 || o["months_note"] == nil {
 		t.Fatalf("overview months: %d, note %v", n, o["months_note"])
 	}
-	if o["lines"] == nil || o["insights"] == nil || o["settings"] == nil {
+	if o["items"] == nil || o["insights"] == nil || o["settings"] == nil {
 		t.Fatal("overview should have everything else")
 	}
 	m := h.call("get_budget", map[string]any{"view": "months", "from": "2027-01", "to": "2027-03"}, false)
-	if n := len(m["months"].([]any)); n != 3 || m["lines"] != nil || m["base_currency"] != "EUR" {
+	if n := len(m["months"].([]any)); n != 3 || m["items"] != nil || m["base_currency"] != "EUR" {
 		t.Fatalf("months view: %v", m)
 	}
 	if a := h.call("get_budget", map[string]any{"view": "all"}, false); len(a["months"].([]any)) != 12 {
 		t.Fatal("view all should keep every month")
 	}
-	if l := h.call("get_budget", map[string]any{"view": "lines"}, false); l["lines"] == nil || l["months"] != nil || l["insights"] != nil {
-		t.Fatalf("lines view: %v", l)
+	if l := h.call("get_budget", map[string]any{"view": "items"}, false); l["items"] == nil || l["months"] != nil || l["insights"] != nil {
+		t.Fatalf("items view: %v", l)
 	}
 	h.call("get_budget", map[string]any{"view": "everything"}, true)
 	h.call("get_budget", map[string]any{"view": "months", "from": "2030-01"}, true)
@@ -134,8 +134,8 @@ func TestGetBudgetViews(t *testing.T) {
 func TestWriteResponsesStaySmall(t *testing.T) {
 	h := setup(t)
 	h.call("update_settings", map[string]any{"months": 600}, false)
-	small := h.raw("update_line", map[string]any{"line": "rent", "amount": "1200"})
-	full := h.raw("update_line", map[string]any{"line": "rent", "amount": "1250", "detail": "full"})
+	small := h.raw("update_item", map[string]any{"item": "rent", "amount": "1200"})
+	full := h.raw("update_item", map[string]any{"item": "rent", "amount": "1250", "detail": "full"})
 	if len(small) > 3000 {
 		t.Errorf("delta is %d bytes:\n%s", len(small), small)
 	}
@@ -146,6 +146,6 @@ func TestWriteResponsesStaySmall(t *testing.T) {
 	if len(overview) > 8000 {
 		t.Errorf("overview of a 600-month budget is %d bytes", len(overview))
 	}
-	h.call("update_line", map[string]any{"line": "rent", "amount": "1"}, false)
-	h.call("update_line", map[string]any{"line": "rent", "detail": "everything"}, true)
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1"}, false)
+	h.call("update_item", map[string]any{"item": "rent", "detail": "everything"}, true)
 }
