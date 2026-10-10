@@ -40,7 +40,8 @@ func setup(t *testing.T) *harness {
 	if _, err := a.UpdateSettings(settings.Patch{FetchRates: &on}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Create(ctx, "home", "Home", "example"); err != nil {
+	fromCLI := store.Origin{Source: store.SourceCLI}
+	if _, err := a.Create(ctx, fromCLI, a.Localizer(""), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, Options{DefaultBudget: "home", Version: "test"})
@@ -102,8 +103,13 @@ func TestToolsAreListedWithStringAmounts(t *testing.T) {
 	for _, tl := range res.Tools {
 		names[tl.Name] = tl
 	}
-	for _, want := range []string{"list_budgets", "create_budget", "get_budget", "add_item", "update_item", "remove_item", "set_currency",
-		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario", "refresh_rates", "history", "undo"} {
+	wantTools := []string{
+		"list_budgets", "create_budget", "get_budget", "list_templates",
+		"add_item", "update_item", "remove_item", "set_currency", "update_settings", "set_debt",
+		"apply_ops", "what_if", "refresh_rates", "history", "undo",
+		"save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario",
+	}
+	for _, want := range wantTools {
 		if names[want] == nil {
 			t.Errorf("missing tool %s", want)
 		}
@@ -173,6 +179,39 @@ func TestDebtUpsert(t *testing.T) {
 	debts = s["debts"].([]any)
 	if len(debts) != 1 || debts[0].(map[string]any)["apr_pct"] != "25" {
 		t.Fatalf("update: %v", debts)
+	}
+}
+
+func TestDebtPayoff(t *testing.T) {
+	h := setup(t)
+	s := h.call("set_debt", map[string]any{"detail": "full", "debt": "Car loan", "balance": "2000", "apr_pct": "6", "min_payment": "100", "payoff_month": 2, "payoff_from": "General"}, false)
+	var row map[string]any
+	for _, d := range s["debts"].([]any) {
+		if d.(map[string]any)["id"] == "car-loan" {
+			row = d.(map[string]any)
+		}
+	}
+	// The example fills the Emergency fund's target first, so General savings
+	// is empty in Dec 2026: the payoff can't happen and the insight says so.
+	if row == nil || row["payoff_plan"] != "Dec 2026 from General savings" {
+		t.Fatalf("payoff on create: %v", row)
+	}
+	flagged := false
+	for _, in := range s["insights"].([]any) {
+		flagged = flagged || strings.Contains(in.(map[string]any)["text"].(string), "Car loan: General savings holds nothing in Dec 2026")
+	}
+	if !flagged {
+		t.Errorf("an empty pot must be flagged: %v", s["insights"])
+	}
+	s = h.call("set_debt", map[string]any{"detail": "full", "debt": "car loan", "payoff_from": ""}, false)
+	if s["months"].([]any)[2].(map[string]any)["payoff"] == nil {
+		t.Errorf("a payoff from the month must show in month 2: %v", s["months"].([]any)[2])
+	}
+	s = h.call("set_debt", map[string]any{"detail": "full", "debt": "car loan", "payoff_month": -1}, false)
+	for _, d := range s["debts"].([]any) {
+		if d.(map[string]any)["id"] == "car-loan" && d.(map[string]any)["payoff_plan"] != nil {
+			t.Errorf("payoff not removed: %v", d)
+		}
 	}
 }
 
@@ -255,7 +294,7 @@ func TestCryptoIncomeAndRates(t *testing.T) {
 	}
 	h.call("add_item", map[string]any{"name": "Dust", "amount": "0.000000001", "currency": "BTC", "category": "income"}, true)
 
-	r := h.call("refresh_rates", map[string]any{"codes": []string{"USD"}}, false)
+	r := h.call("refresh_rates", map[string]any{"detail": "full", "codes": []string{"USD"}}, false)
 	u := r["rate_updates"].([]any)[0].(map[string]any)
 	if u["old"] != "1.08" || u["new"] != "1.1186" || u["from"] != "currency-api" {
 		t.Fatalf("refresh_rates: %v", u)
@@ -269,38 +308,95 @@ func TestRatesWhenOffline(t *testing.T) {
 	if _, err := h.app.UpdateSettings(settings.Patch{FetchRates: &off}); err != nil {
 		t.Fatal(err)
 	}
-	if e := h.call("set_currency", map[string]any{"code": "BTC"}, true)["error"].(string); !strings.Contains(e, "turned off") {
+	if e := h.call("set_currency", map[string]any{"detail": "full", "code": "BTC"}, true)["error"].(string); !strings.Contains(e, "turned off") {
 		t.Fatalf("set_currency: %s", e)
 	}
 	h.call("refresh_rates", map[string]any{"codes": []string{"USD"}}, true)
 	// Nothing to fetch is not an error, and a typed rate still works offline.
-	if r := h.call("refresh_rates", map[string]any{}, false); len(r["rate_updates"].([]any)) != 0 {
+	if r := h.call("refresh_rates", map[string]any{"detail": "full"}, false); len(r["rate_updates"].([]any)) != 0 {
 		t.Fatal(r["rate_updates"])
 	}
 	h.call("set_currency", map[string]any{"code": "BTC", "per_base": "0.00001"}, false)
 }
 
-func TestHistoryAndUndoTools(t *testing.T) {
+func TestHistoryListsTheAssistantsChange(t *testing.T) {
 	h := setup(t)
 	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
-	hist := h.call("history", map[string]any{}, false)["items"].([]any)
-	last := hist[0].(map[string]any)
-	if last["source"] != "mcp" || !strings.Contains(last["summary"].(string), "1150 → 1200") {
-		t.Fatalf("history: %v", last)
+
+	history := h.call("history", map[string]any{}, false)["items"].([]any)
+
+	newest := history[0].(map[string]any)
+	if newest["source"] != "mcp" {
+		t.Errorf("source: %v", newest["source"])
 	}
-	s := h.call("undo", map[string]any{"detail": "full"}, false)
-	if item(s, "rent")["amount"] != "1150.00" {
-		t.Fatalf("undo: %v", item(s, "rent"))
+	if summary := newest["summary"].(string); !strings.Contains(summary, "1150 → 1200") {
+		t.Errorf("summary: %q", summary)
 	}
-	// Someone else edits after the assistant: undoing the assistant's change
-	// is refused, and the error names the other change.
-	h.call("update_item", map[string]any{"item": "rent", "amount": "1300"}, false) // r4
-	ctx := store.WithChange(context.Background(), store.Change{Source: "web"})
-	a := money.MustDecimal("1350")
-	h.app.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &a})})
-	if e := h.call("undo", map[string]any{"change": 4}, true)["error"].(string); !strings.Contains(e, "(web)") {
-		t.Fatalf("conflict error: %s", e)
+}
+
+func TestUndoRevertsTheAssistantsChange(t *testing.T) {
+	h := setup(t)
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
+
+	summary := h.call("undo", map[string]any{"detail": "full"}, false)
+
+	if amount := item(summary, "rent")["amount"]; amount != "1150.00" {
+		t.Errorf("rent after undo: %v", amount)
 	}
+}
+
+// Someone else edits after the assistant: undoing the assistant's change is
+// refused, and the error names the other change.
+func TestUndoNamesChangesSomeoneElseMadeSince(t *testing.T) {
+	h := setup(t)
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1300"}, false) // r2
+	amount := money.MustDecimal("1350")
+	webEdit := budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &amount})
+	web := store.Origin{Source: store.SourceWeb}
+	ops := []budget.Op{webEdit}
+	if _, err := h.app.Apply(context.Background(), web, "home", store.AnyRevision, ops); err != nil {
+		t.Fatal(err)
+	}
+
+	refusal := h.call("undo", map[string]any{"detail": "full", "revision": 2}, true)["error"].(string)
+
+	if !strings.Contains(refusal, "r3 (web)") {
+		t.Errorf("refusal doesn't name the web change: %s", refusal)
+	}
+}
+
+// update_item with only an end date used to rebuild the schedule from
+// "monthly from the first month", silently moving the item's start.
+func TestUpdateItemEndKeepsStart(t *testing.T) {
+	h := setup(t)
+	h.call("add_item", map[string]any{"name": "Insurance", "amount": "120", "category": "home", "every": 3, "starts": "2026-12"}, false)
+	s := h.call("update_item", map[string]any{"detail": "full", "item": "insurance", "ends": "2027-12"}, false)
+	if l := item(s, "insurance"); l["schedule"] != "quarterly from Dec 2026 until Dec 2027" {
+		t.Fatalf("ends only: %v", l)
+	}
+	s = h.call("update_item", map[string]any{"detail": "full", "item": "insurance", "ends": ""}, false)
+	if l := item(s, "insurance"); l["schedule"] != "quarterly from Dec 2026" {
+		t.Fatalf("clearing ends: %v", l)
+	}
+	s = h.call("update_item", map[string]any{"detail": "full", "item": "insurance", "every": 12}, false)
+	if l := item(s, "insurance"); l["schedule"] != "yearly from Dec 2026" {
+		t.Fatalf("every only: %v", l)
+	}
+}
+
+func TestApplyOpsTakesCalendarMonths(t *testing.T) {
+	h := setup(t)
+	s := h.call("apply_ops", map[string]any{"detail": "full", "ops": []any{
+		map[string]any{"op": "add_item", "value": map[string]any{"name": "Bonus", "amount": "500", "category": "income",
+			"schedule": map[string]any{"starts": "2027-03", "every": 0}}},
+	}}, false)
+	if l := item(s, "bonus"); l["schedule"] != "once, Mar 2027" {
+		t.Fatalf("bonus: %v", l)
+	}
+	h.call("apply_ops", map[string]any{"ops": []any{
+		map[string]any{"op": "add_item", "value": map[string]any{"name": "X", "amount": "1", "category": "home",
+			"schedule": map[string]any{"starts": "2027-03", "start": 2}}},
+	}}, true)
 }
 
 func TestInsightsAreStructured(t *testing.T) {

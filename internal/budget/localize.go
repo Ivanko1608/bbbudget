@@ -7,8 +7,8 @@ import (
 )
 
 // Localize renders every human-readable field of the report in l's
-// language: month labels, schedule descriptions, payoff and goal dates and
-// insight text. Numbers and keys are untouched. Analyze localizes to
+// language: month labels, schedule descriptions, payoff, goal and shortfall
+// dates and insight text. Numbers and keys are untouched. Analyze localizes to
 // English; transports re-localize for their reader.
 func (r *Report) Localize(l *i18n.Localizer) {
 	for i := range r.Months {
@@ -22,13 +22,25 @@ func (r *Report) Localize(l *i18n.Localizer) {
 			r.Debts[i].PaidOffLabel = r.Months[*d.PaidOffMonth].Label
 		}
 	}
-	for i, g := range r.Goals {
-		if g.ReachedMonth != nil {
-			r.Goals[i].ReachedLabel = r.Months[*g.ReachedMonth].Label
+	for i := range r.Goals {
+		r.localizeGoal(&r.Goals[i])
+	}
+	for i := range r.Pots {
+		if r.Pots[i].Goal != nil {
+			r.localizeGoal(r.Pots[i].Goal)
 		}
 	}
+	for i, sf := range r.Shortfalls {
+		r.Shortfalls[i].Label = r.Months[sf.Month].Label
+	}
 	for i := range r.Insights {
-		r.Insights[i].Text = l.T(r.Insights[i].Msg)
+		r.Insights[i].Text = l.Render(r.Insights[i].Msg)
+	}
+}
+
+func (r *Report) localizeGoal(g *GoalStatus) {
+	if g.ReachedMonth != nil {
+		g.ReachedLabel = r.Months[*g.ReachedMonth].Label
 	}
 }
 
@@ -37,24 +49,24 @@ func (r *Report) Localize(l *i18n.Localizer) {
 func ScheduleText(l *i18n.Localizer, startMonth string, s Schedule) string {
 	month := func(i int) i18n.Arg { return i18n.Month(MonthKey(startMonth, i)) }
 	if s.Every == 0 {
-		return l.Text("schedule.once", args{"month": month(s.Start)})
+		return l.Render(msg("schedule.once", args{"month": month(s.Start)}))
 	}
 	var txt string
 	switch s.Every {
 	case 1:
-		txt = l.Text("schedule.monthly", nil)
+		txt = l.Render(msg("schedule.monthly", nil))
 	case 3:
-		txt = l.Text("schedule.quarterly", nil)
+		txt = l.Render(msg("schedule.quarterly", nil))
 	case 12:
-		txt = l.Text("schedule.yearly", nil)
+		txt = l.Render(msg("schedule.yearly", nil))
 	default:
-		txt = l.Text("schedule.every", args{"count": i18n.Int(int64(s.Every))})
+		txt = l.Render(msg("schedule.every", args{"count": i18n.Int(int64(s.Every))}))
 	}
 	if s.Start > 0 {
-		txt = l.Text("schedule.from", args{"schedule": i18n.Text(txt), "month": month(s.Start)})
+		txt = l.Render(msg("schedule.from", args{"schedule": i18n.Text(txt), "month": month(s.Start)}))
 	}
 	if s.End != nil {
-		txt = l.Text("schedule.until", args{"schedule": i18n.Text(txt), "month": month(*s.End)})
+		txt = l.Render(msg("schedule.until", args{"schedule": i18n.Text(txt), "month": month(*s.End)}))
 	}
 	return txt
 }

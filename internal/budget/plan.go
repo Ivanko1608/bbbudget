@@ -36,7 +36,7 @@ type Issue struct {
 // Localized returns the issue with Message in l's language.
 func (i Issue) Localized(l *i18n.Localizer) Issue {
 	if i.Key != "" {
-		i.Message = l.T(i.Msg)
+		i.Message = l.Render(i.Msg)
 	}
 	return i
 }
@@ -54,17 +54,22 @@ func (e *ValidationError) Error() string {
 
 // Plan is a validated budget with exact money values, ready to project.
 type Plan struct {
-	Doc          Budget
-	Base         money.Currency
-	Start        time.Time // first day of the first month, UTC
-	Months       int
-	SavingsStart money.Money
-	ExtraPct     money.Decimal
-	Strategy     string
-	Categories   map[string]Category
-	Items        []PlanItem
-	Debts        []PlanDebt
-	Goals        []PlanGoal
+	Doc         Budget
+	Base        money.Currency
+	Start       time.Time // first day of the first month, UTC
+	Months      int
+	ExtraPct    money.Decimal
+	Strategy    string
+	Categories  map[string]Category
+	Items       []PlanItem
+	Debts       []PlanDebt
+	Pots        []PlanPot
+	Withdrawals []PlanWithdrawal
+	// OverdraftStart is owed on the current account at the start.
+	OverdraftStart money.Money
+	// DefaultPot is the index of the pot that receives what no rule assigns:
+	// the first general pot, else the last pot.
+	DefaultPot int
 
 	rates map[string]fx
 }
@@ -80,6 +85,8 @@ type PlanItem struct {
 	Item
 	Amt    money.Money
 	Income bool
+	// PotIdx indexes Plan.Pots for an item routed through a pot, else -1.
+	PotIdx int
 }
 
 type PlanDebt struct {
@@ -87,11 +94,20 @@ type PlanDebt struct {
 	Bal, Min money.Money
 	// MonthlyRate is APR/1200, exact.
 	MonthlyRate *big.Rat
+	// PotIdx indexes Plan.Pots for a payoff paid from a pot, else -1.
+	PotIdx int
 }
 
-type PlanGoal struct {
-	Goal
+type PlanPot struct {
+	Pot
+	Bal, Target, Monthly money.Money
+}
+
+type PlanWithdrawal struct {
+	Withdrawal
 	Amt money.Money
+	// PotIdx indexes Plan.Pots.
+	PotIdx int
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -104,11 +120,10 @@ func (c *checker) add(path, key string, a args) { c.issues = append(c.issues, is
 
 func issue(path, key string, a args) Issue {
 	m := i18n.Msg{Key: key, Args: a}
-	return Issue{Path: path, Message: english().T(m), Msg: m}
+	return Issue{Path: path, Message: english().Render(m), Msg: m}
 }
 
-func errArg(err error) args   { return args{"error": i18n.Text(err.Error())} }
-func intArg(n int64) i18n.Arg { return i18n.Text(fmt.Sprint(n)) } // limits, ungrouped as before
+func errArg(err error) args { return args{"error": i18n.Text(err.Error())} }
 
 func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allowNeg bool) money.Money {
 	m, err := money.FromDecimal(d, cur)
@@ -120,7 +135,7 @@ func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allow
 		c.add(path, "issue.negative", nil)
 	}
 	if d.Rat().Abs(d.Rat()).Cmp(big.NewRat(MaxAmountMajor, 1)) > 0 || m.Minor() > MaxAmountMinor || m.Minor() < -MaxAmountMinor {
-		c.add(path, "issue.too_large", args{"max": intArg(MaxAmountMajor)})
+		c.add(path, "issue.too_large", args{"max": i18n.Int(MaxAmountMajor)})
 		return money.Zero(cur)
 	}
 	return m
@@ -128,7 +143,7 @@ func (c *checker) amount(path string, d money.Decimal, cur money.Currency, allow
 
 func (c *checker) pct(path string, d money.Decimal, max int64) {
 	if d.Sign() < 0 || d.Rat().Cmp(big.NewRat(max, 1)) > 0 {
-		c.add(path, "issue.between", args{"min": intArg(0), "max": intArg(max)})
+		c.add(path, "issue.between", args{"min": i18n.Int(0), "max": i18n.Int(int64(max))})
 	}
 }
 
@@ -168,10 +183,10 @@ func Compile(b Budget) (*Plan, error) {
 		p.Start = t
 	}
 	if b.Months < 1 || b.Months > MaxMonths {
-		c.add("months", "issue.between", args{"min": intArg(1), "max": intArg(MaxMonths)})
+		c.add("months", "issue.between", args{"min": i18n.Int(1), "max": i18n.Int(MaxMonths)})
 	}
 	p.Months = b.Months
-	p.SavingsStart = c.amount("savings_start", b.SavingsStart, base, true)
+	p.OverdraftStart = c.amount("overdraft_start", b.OverdraftStart, base, false)
 	c.pct("extra_to_debt_pct", b.ExtraToDebtPct, 100)
 	switch b.DebtStrategy {
 	case StrategyAvalanche, StrategySnowball, StrategyListed:
@@ -232,7 +247,7 @@ func Compile(b Budget) (*Plan, error) {
 	}
 
 	if len(b.Items) > MaxItems {
-		c.add("items", "issue.max_items", args{"max": intArg(MaxItems)})
+		c.add("items", "issue.max_items", args{"max": i18n.Int(MaxItems)})
 	}
 	seen = map[string]bool{}
 	for i, l := range b.Items {
@@ -249,7 +264,7 @@ func Compile(b Budget) (*Plan, error) {
 		if !ok {
 			continue
 		}
-		p.Items = append(p.Items, PlanItem{Item: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome})
+		p.Items = append(p.Items, PlanItem{Item: l, Amt: c.amount(path+".amount", l.Amount, cur, false), Income: cat.Kind == KindIncome, PotIdx: -1})
 	}
 
 	seen = map[string]bool{}
@@ -266,14 +281,80 @@ func Compile(b Budget) (*Plan, error) {
 			Bal:         c.amount(path+".balance", d.Balance, cur, false),
 			Min:         c.amount(path+".min_payment", d.MinPayment, cur, false),
 			MonthlyRate: new(big.Rat).Quo(d.APRPct.Rat(), big.NewRat(1200, 1)),
+			PotIdx:      -1,
 		})
+		if d.PayoffMonth != nil && (*d.PayoffMonth < 0 || *d.PayoffMonth >= MaxMonths) {
+			c.add(path+".payoff_month", "issue.between", args{"min": i18n.Int(0), "max": i18n.Int(MaxMonths - 1)})
+		}
+		if d.PayoffFrom != "" && d.PayoffMonth == nil {
+			c.add(path+".payoff_from", "issue.needs_payoff_month", nil)
+		}
 	}
 
 	seen = map[string]bool{}
-	for i, g := range b.Goals {
-		path := fmt.Sprintf("goals[%d]", i)
-		c.id(path+".id", g.ID, seen)
-		p.Goals = append(p.Goals, PlanGoal{g, c.amount(path+".target", g.Target, base, false)})
+	potIdx := map[string]int{}
+	p.DefaultPot = -1
+	if len(b.Pots) == 0 {
+		c.add("pots", "issue.no_pots", nil)
+	}
+	for i, pt := range b.Pots {
+		path := fmt.Sprintf("pots[%d]", i)
+		c.id(path+".id", pt.ID, seen)
+		if strings.TrimSpace(pt.Name) == "" {
+			c.add(path+".name", "issue.required", nil)
+		}
+		if !slices.Contains(PotKinds, pt.Kind) {
+			c.add(path+".kind", "issue.one_of", args{"values": i18n.Text(strings.Join(PotKinds, ", "))})
+		}
+		if pt.Kind == PotGeneral && p.DefaultPot < 0 {
+			p.DefaultPot = i
+		}
+		potIdx[pt.ID] = i
+		p.Pots = append(p.Pots, PlanPot{Pot: pt,
+			Bal:     c.amount(path+".balance", pt.Balance, base, false),
+			Target:  c.amount(path+".target", pt.Target, base, false),
+			Monthly: c.amount(path+".monthly", pt.Monthly, base, false)})
+	}
+	if p.DefaultPot < 0 {
+		p.DefaultPot = len(p.Pots) - 1
+	}
+	for i := range p.Items {
+		if ref := p.Items[i].Pot; ref != "" {
+			k, ok := potIdx[ref]
+			if !ok {
+				c.add(fmt.Sprintf("items[%d].pot", indexWhere(b.Items, func(l Item) bool { return l.ID == p.Items[i].ID })), "issue.unknown_pot", args{"id": i18n.Text(ref)})
+				continue
+			}
+			p.Items[i].PotIdx = k
+		}
+	}
+	for i := range p.Debts {
+		if ref := p.Debts[i].PayoffFrom; ref != "" {
+			k, ok := potIdx[ref]
+			if !ok {
+				c.add(fmt.Sprintf("debts[%d].payoff_from", indexWhere(b.Debts, func(d Debt) bool { return d.ID == p.Debts[i].ID })), "issue.unknown_pot", args{"id": i18n.Text(ref)})
+				continue
+			}
+			p.Debts[i].PotIdx = k
+		}
+	}
+
+	seen = map[string]bool{}
+	for i, w := range b.Withdrawals {
+		path := fmt.Sprintf("withdrawals[%d]", i)
+		c.id(path+".id", w.ID, seen)
+		k, ok := potIdx[w.Pot]
+		if !ok {
+			c.add(path+".pot", "issue.unknown_pot", args{"id": i18n.Text(w.Pot)})
+		}
+		if s := w.Schedule; s.Start < 0 || s.Every < 0 || (s.End != nil && *s.End < s.Start) {
+			c.add(path+".schedule", "issue.schedule", nil)
+		}
+		amt := c.amount(path+".amount", w.Amount, base, false)
+		if !amt.IsPositive() {
+			c.add(path+".amount", "issue.positive", nil)
+		}
+		p.Withdrawals = append(p.Withdrawals, PlanWithdrawal{Withdrawal: w, Amt: amt, PotIdx: k})
 	}
 
 	seen = map[string]bool{}

@@ -102,13 +102,15 @@ func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([
 // all fail nothing is saved and a *RateError is returned. A currency edited
 // while its rate was being fetched (say, a rate typed by hand) is left as the
 // edit made it.
-func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*View, []RateUpdate, error) {
+func (a *App) RefreshRates(
+	ctx context.Context, origin store.Origin, id string, codes []string,
+) (*View, []RateUpdate, error) {
 	r, targets, updates, err := a.fetchRates(ctx, id, codes)
 	if err != nil || len(targets) == 0 {
 		if err != nil {
 			return nil, updates, err
 		}
-		v, err := a.view(ctx, r)
+		v, err := view(r)
 		return v, updates, err
 	}
 	fetched := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
@@ -116,7 +118,7 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 		fetched[c.Code] = c
 	}
 	var skipped map[string]bool
-	v, err := a.update(ctx, id, store.AnyRevision, func(cur budget.Budget) (budget.Budget, error) {
+	updateRates := func(cur budget.Budget) (budget.Budget, error) {
 		if cur.BaseCurrency != r.Budget.BaseCurrency {
 			return budget.Budget{}, fmt.Errorf("the base currency changed to %s while rates were fetched; refresh again", cur.BaseCurrency)
 		}
@@ -135,7 +137,8 @@ func (a *App) RefreshRates(ctx context.Context, id string, codes []string) (*Vie
 			ops = append(ops, budget.NewOp("set_currency", u.Code, budget.CurrencyPatch{PerBase: &updates[i].New, Source: &src, RateDate: &updates[i].Date, RateFrom: &updates[i].From}))
 		}
 		return budget.Apply(cur, ops...)
-	})
+	}
+	v, err := a.update(ctx, origin, id, store.AnyRevision, updateRates)
 	if err != nil {
 		return nil, updates, err
 	}
@@ -238,7 +241,9 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 // SetCurrency adds or edits a currency. A new currency without a per_base,
 // or one switched to a non-manual source without one, gets its rate fetched
 // (a new currency gets the default source from the settings).
-func (a *App) SetCurrency(ctx context.Context, id, code string, patch budget.CurrencyPatch) (*View, error) {
+func (a *App) SetCurrency(
+	ctx context.Context, origin store.Origin, id, code string, patch budget.CurrencyPatch,
+) (*View, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if patch.Source != nil && *patch.Source == "" {
 		patch.Source = nil // "" is "not given", not a silent "manual" on a fetched rate
@@ -264,5 +269,6 @@ func (a *App) SetCurrency(ctx context.Context, id, code string, patch budget.Cur
 			patch.PerBase, patch.Source, patch.RateDate, patch.RateFrom = &q[0].New, &src, &q[0].Date, &q[0].From
 		}
 	}
-	return a.Apply(ctx, id, store.AnyRevision, []budget.Op{budget.NewOp("set_currency", code, patch)})
+	setCurrency := budget.NewOp("set_currency", code, patch)
+	return a.Apply(ctx, origin, id, store.AnyRevision, []budget.Op{setCurrency})
 }
