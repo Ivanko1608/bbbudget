@@ -138,7 +138,7 @@ func (a *App) RefreshRates(
 		}
 		return budget.Apply(cur, ops...)
 	}
-	saved, err := a.Store.Update(ctx, origin, id, store.AnyRevision, updateRates)
+	v, err := a.update(ctx, origin, id, store.AnyRevision, updateRates)
 	if err != nil {
 		return nil, updates, err
 	}
@@ -147,8 +147,7 @@ func (a *App) RefreshRates(
 			updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
 		}
 	}
-	v, err := view(saved)
-	return v, updates, err
+	return v, updates, nil
 }
 
 // PreviewRates is RefreshRates without saving: the same currencies, sources

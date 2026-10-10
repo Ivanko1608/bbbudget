@@ -59,8 +59,10 @@ back to currency-api for crypto and other currencies; ecb; currency-api; coingec
 fetches current rates; set_currency fetches automatically when adding a currency without per_base.
 Never invent a rate: fetch it.
 
-Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for
-hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change,
+Workflow: call list_budgets, then get_budget before answering about numbers. Writes and what_if
+return what changed and its effect (totals, first month, debt payoffs, goal dates, insights that
+appeared, went away or changed), not the whole budget: answer from that, and call get_budget (with
+a view) when you need more. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change,
 then state what changed and that it can be undone.
 
 Every write is recorded in the budget's history with who made it (mcp = you, web = the person in
@@ -115,7 +117,7 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
-			raw, err := json.MarshalIndent(out, "", " ")
+			raw, err := json.Marshal(out)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -152,7 +154,7 @@ type ScheduleIn struct {
 }
 
 type AddItemIn struct {
-	Ref
+	WriteRef
 	Name     string        `json:"name"`
 	Amount   money.Decimal `json:"amount"`
 	Currency string        `json:"currency,omitempty" jsonschema:"defaults to the base currency"`
@@ -161,7 +163,7 @@ type AddItemIn struct {
 }
 
 type UpdateItemIn struct {
-	Ref
+	WriteRef
 	Item     string         `json:"item" jsonschema:"item id or name"`
 	Name     *string        `json:"name,omitempty"`
 	Amount   *money.Decimal `json:"amount,omitempty"`
@@ -171,12 +173,12 @@ type UpdateItemIn struct {
 }
 
 type ItemRef struct {
-	Ref
+	WriteRef
 	Item string `json:"item" jsonschema:"item id or name"`
 }
 
 type CurrencyIn struct {
-	Ref
+	WriteRef
 	Code           string         `json:"code" jsonschema:"ISO code or crypto ticker, e.g. USD, BTC, USDT"`
 	PerBase        *money.Decimal `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit; setting it makes the rate manual. Omit to fetch the current rate"`
 	Source         *string        `json:"source,omitempty" jsonschema:"where the rate comes from: manual, auto, ecb, currency-api or coingecko"`
@@ -185,17 +187,17 @@ type CurrencyIn struct {
 }
 
 type RatesIn struct {
-	Ref
+	WriteRef
 	Codes []string `json:"codes,omitempty" jsonschema:"currencies to refresh; omit for every currency whose source isn't manual. Naming a manual one switches it to auto"`
 }
 
 type SettingsIn struct {
-	Ref
+	WriteRef
 	budget.SettingsPatch
 }
 
 type DebtIn struct {
-	Ref
+	WriteRef
 	Debt        string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
 	Currency    *string        `json:"currency,omitempty"`
 	Balance     *money.Decimal `json:"balance,omitempty"`
@@ -206,7 +208,7 @@ type DebtIn struct {
 }
 
 type OpsIn struct {
-	Ref
+	WriteRef
 	Ops []budget.Op `json:"ops" jsonschema:"edits applied in order, atomically"`
 	// ExpectedRevision guards against concurrent edits; omit to apply on top of the latest.
 	ExpectedRevision *int64 `json:"expected_revision,omitempty"`
@@ -230,7 +232,7 @@ type HistoryIn struct {
 }
 
 type UndoIn struct {
-	Ref
+	WriteRef
 	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
 	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
 	Seen     int64 `json:"seen,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
@@ -238,6 +240,11 @@ type UndoIn struct {
 
 type ScenarioRef struct {
 	Ref
+	Scenario string `json:"scenario" jsonschema:"scenario id or name"`
+}
+
+type AdoptIn struct {
+	WriteRef
 	Scenario string `json:"scenario" jsonschema:"scenario id or name"`
 }
 
@@ -267,27 +274,32 @@ func (h *handlers) register(s *mcp.Server) {
 		v, err := h.app.Create(ctx, fromAssistant, h.reader(), in.ID, in.Name, in.Template)
 		return h.sum(v, err)
 	})
-	tool(s, "get_budget", "The full budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
-		func(ctx context.Context, in Ref) (any, error) {
+	tool(s, "get_budget", "The budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
+		func(ctx context.Context, in GetIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
-			return h.sum(h.app.Get(ctx, id))
+			v, err := h.app.Get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			v.Localize(h.reader())
+			return part(summarize(v), in)
 		})
 
-	tool(s, "add_item", "Add an income or cost item. Returns the updated budget.", func(ctx context.Context, in AddItemIn) (any, error) {
+	tool(s, "add_item", "Add an income or cost item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddItemIn) (any, error) {
 		l := budget.ItemInput{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
-		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("add_item", "", l))
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("add_item", "", l))
 	})
-	tool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns the updated budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
+	tool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
 		p := budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
-		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
 	})
-	tool(s, "remove_item", "Delete one item. Returns the updated budget.", func(ctx context.Context, in ItemRef) (any, error) {
-		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
+	tool(s, "remove_item", "Delete one item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in ItemRef) (any, error) {
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
 	})
-	tool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns the updated budget.",
+	tool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in CurrencyIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -299,7 +311,8 @@ func (h *handlers) register(s *mcp.Server) {
 				TransferFeePct: in.TransferFeePct,
 				CashOutFeePct:  in.CashOutFeePct,
 			}
-			return h.sum(h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch))
+			v, err := h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch)
+			return h.written(in.WriteRef, v, err)
 		})
 	tool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
 		func(ctx context.Context, in RatesIn) (any, error) {
@@ -314,14 +327,17 @@ func (h *handlers) register(s *mcp.Server) {
 				}
 				return nil, err
 			}
-			v.Localize(h.reader())
-			return map[string]any{"rate_updates": updates, "budget": summarize(v)}, nil
+			result, err := h.written(in.WriteRef, v, nil)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"rate_updates": updates, "result": result}, nil
 		})
-	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns the updated budget.",
+	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
-			return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
+			return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
 		})
-	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns the updated budget.",
+	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in DebtIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -335,7 +351,8 @@ func (h *handlers) register(s *mcp.Server) {
 				PayoffMonth: in.PayoffMonth,
 				PayoffFrom:  in.PayoffFrom,
 			}
-			return h.sum(h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch))
+			v, err := h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch)
+			return h.written(in.WriteRef, v, err)
 		})
 	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
@@ -343,7 +360,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if in.ExpectedRevision != nil {
 				rev = *in.ExpectedRevision
 			}
-			return h.apply(ctx, in.Budget, rev, in.Ops...)
+			return h.apply(ctx, in.WriteRef, rev, in.Ops...)
 		})
 	tool(s, "what_if", "Preview edits WITHOUT saving: returns the projection and insights as if the ops were applied. Same op format as apply_ops.",
 		func(ctx context.Context, in OpsIn) (any, error) {
@@ -351,14 +368,11 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			nb, r, err := h.app.WhatIf(ctx, id, in.Ops)
+			v, err := h.app.WhatIf(ctx, id, in.Ops)
 			if err != nil {
 				return nil, err
 			}
-			r.Localize(h.reader())
-			out := summarizeReport(nb, r)
-			out.ID = id + " (what-if, not saved)"
-			return out, nil
+			return h.previewed(in.WriteRef, v)
 		})
 
 	tool(s, "save_scenario", "Save a named set of ops as a scenario to compare later. The real budget is not changed.", func(ctx context.Context, in ScenarioIn) (any, error) {
@@ -379,12 +393,13 @@ func (h *handlers) register(s *mcp.Server) {
 		}
 		return outcomeRows(out), nil
 	})
-	tool(s, "adopt_scenario", "Apply a saved scenario to the real budget and remove it from the scenario list. Returns the updated budget.", func(ctx context.Context, in ScenarioRef) (any, error) {
+	tool(s, "adopt_scenario", "Apply a saved scenario to the real budget and remove it from the scenario list. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AdoptIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		return h.sum(h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario))
+		v, err := h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario)
+		return h.written(in.WriteRef, v, err)
 	})
 	tool(s, "delete_scenario", "Delete a saved scenario.", func(ctx context.Context, in ScenarioRef) (any, error) {
 		id, err := h.id(in.Budget)
@@ -413,14 +428,15 @@ func (h *handlers) register(s *mcp.Server) {
 			app.LocalizeHistory(history, h.reader())
 			return history, nil
 		})
-	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns the updated budget.",
+	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in UndoIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
 			req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
-			return h.sum(h.app.Undo(ctx, fromAssistant, id, req))
+			v, err := h.app.Undo(ctx, fromAssistant, id, req)
+			return h.written(in.WriteRef, v, err)
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -440,12 +456,15 @@ func (h *handlers) register(s *mcp.Server) {
 	})
 }
 
-func (h *handlers) apply(ctx context.Context, ref string, rev int64, ops ...budget.Op) (any, error) {
-	id, err := h.id(ref)
+func (h *handlers) apply(
+	ctx context.Context, w WriteRef, rev int64, ops ...budget.Op,
+) (any, error) {
+	id, err := h.id(w.Budget)
 	if err != nil {
 		return nil, err
 	}
-	return h.sum(h.app.Apply(ctx, fromAssistant, id, rev, ops))
+	v, err := h.app.Apply(ctx, fromAssistant, id, rev, ops)
+	return h.written(w, v, err)
 }
 
 // spec turns the flat schedule fields of add_item/update_item into a

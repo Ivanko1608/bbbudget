@@ -424,13 +424,13 @@ func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	b, rep, err := s.app.WhatIf(r.Context(), r.PathValue("id"), in.Ops)
+	v, err := s.app.WhatIf(r.Context(), r.PathValue("id"), in.Ops)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	rep.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, map[string]any{"budget": b, "report": rep})
+	v.Localize(s.reader(r))
+	writeJSON(w, http.StatusOK, map[string]any{"budget": v.Budget, "report": v.Report})
 }
 
 // settingsView is what the settings page sees. The API key itself never

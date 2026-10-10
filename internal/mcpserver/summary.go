@@ -17,7 +17,11 @@ type Summary struct {
 	Revision int64  `json:"revision,omitempty"`
 	Name     string `json:"name"`
 	Note     string `json:"note,omitempty"`
-	Settings struct {
+	// View is the part of the budget get_budget was asked for.
+	View View `json:"view,omitempty"`
+	// BaseCurrency repeats the settings' one in views without settings.
+	BaseCurrency string `json:"base_currency,omitempty"`
+	Settings     struct {
 		BaseCurrency   string                `json:"base_currency"`
 		StartMonth     string                `json:"start_month"`
 		Months         int                   `json:"months"`
@@ -25,30 +29,80 @@ type Summary struct {
 		ExtraToDebtPct string                `json:"extra_to_debt_pct"`
 		DebtStrategy   string                `json:"debt_strategy"`
 		Currencies     []budget.CurrencyRate `json:"currencies"`
-	} `json:"settings"`
-	Categories  []budget.Category   `json:"categories"`
-	Items       []itemRow           `json:"items"`
+	} `json:"settings,omitzero"`
+	Categories  []budget.Category   `json:"categories,omitempty"`
+	Items       []itemRow           `json:"items,omitempty"`
 	Debts       []debtRow           `json:"debts,omitempty"`
-	Pots        []potRow            `json:"pots"`
+	Pots        []potRow            `json:"pots,omitempty"`
 	Withdrawals []budget.Withdrawal `json:"withdrawals,omitempty"`
 	Goals       []goalRow           `json:"goals,omitempty"`
 	// Shortfalls: months that fall short and the pots that could cover them.
 	// Savings are never used automatically; suggest add_withdrawal.
-	Shortfalls []shortfallRow    `json:"shortfalls,omitempty"`
-	Scenarios  []scenarioRow     `json:"scenarios,omitempty"`
-	Months     []monthRow        `json:"months"`
-	Totals     map[string]string `json:"totals"`
-	Insights   []insightRow      `json:"insights"`
+	Shortfalls []shortfallRow `json:"shortfalls,omitempty"`
+	Scenarios  []scenarioRow  `json:"scenarios,omitempty"`
+	Months     []monthRow     `json:"months,omitempty"`
+	// MonthsNote says which months the overview left out.
+	MonthsNote string            `json:"months_note,omitempty"`
+	Totals     map[string]string `json:"totals,omitempty"`
+	Insights   []insightRow      `json:"insights,omitempty"`
 }
 
 // insightRow is an insight as text in the configured language, plus its
-// message key and typed arguments: the exact amounts and months behind it.
+// message key and arguments: the exact amounts ("1906.6 EUR"), months
+// ("2027-03") and counts behind the text.
 type insightRow struct {
-	ID   string              `json:"id"`
-	Tone string              `json:"tone"`
-	Text string              `json:"text"`
-	Key  string              `json:"key"`
-	Args map[string]i18n.Arg `json:"args,omitempty"`
+	ID   string         `json:"id"`
+	Tone string         `json:"tone"`
+	Text string         `json:"text"`
+	Key  string         `json:"key"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
+func newInsightRow(in budget.Insight) insightRow {
+	return insightRow{in.ID, in.Tone, plain(in.Text), in.Key, flatArgs(in.Args)}
+}
+
+// flatArgs turns typed message arguments into plain values: exact money as
+// "amount CODE", months as "YYYY-MM", counts as numbers, lists as lists.
+func flatArgs(args map[string]i18n.Arg) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(args))
+	for k, a := range args {
+		out[k] = flatArg(a)
+	}
+	return out
+}
+
+func flatArg(a i18n.Arg) any {
+	switch {
+	case a.Money != nil:
+		return a.Money.String() + " " + a.Money.Currency().Code
+	case a.Month != "":
+		return a.Month
+	case a.Int != nil:
+		return *a.Int
+	case a.Number != "":
+		return a.Number
+	case a.Msg != nil:
+		return flatMsg(*a.Msg)
+	case a.List != nil:
+		items := make([]any, len(a.List))
+		for i, m := range a.List {
+			items[i] = flatMsg(m)
+		}
+		return items
+	}
+	return a.Text
+}
+
+// flatMsg is a nested message's arguments, or its key when it has none.
+func flatMsg(m i18n.Msg) any {
+	if len(m.Args) == 0 {
+		return m.Key
+	}
+	return flatArgs(m.Args)
 }
 
 type itemRow struct {
@@ -235,7 +289,7 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 		"saved": t.Saved.String(), "end_savings": t.EndSavings.String(), "interest": t.TotalInterest.String(),
 	}
 	for _, in := range r.Insights {
-		s.Insights = append(s.Insights, insightRow{in.ID, in.Tone, plain(in.Text), in.Key, in.Args})
+		s.Insights = append(s.Insights, newInsightRow(in))
 	}
 	return s
 }

@@ -52,6 +52,8 @@ type View struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	Budget    budget.Budget  `json:"budget"`
 	Report    *budget.Report `json:"report"`
+	// Before is the budget as it was just before this write; nil for reads.
+	Before *budget.Budget `json:"-"`
 }
 
 // view analyzes a stored budget, with its text in English.
@@ -61,6 +63,33 @@ func view(r store.Record) (*View, error) {
 		return nil, err
 	}
 	return &View{ID: r.ID, Revision: r.Revision, UpdatedAt: r.UpdatedAt, Budget: r.Budget, Report: rep}, nil
+}
+
+// update saves edit and returns the new view together with the budget it
+// replaced. The old budget is copied inside the store transaction, so a
+// concurrent write can't be mistaken for part of this one.
+func (a *App) update(
+	ctx context.Context, origin store.Origin, id string, revision int64, edit store.EditFunc,
+) (*View, error) {
+	var before budget.Budget
+	keepBefore := func(current budget.Budget) (budget.Budget, error) {
+		copied, err := budget.Clone(current)
+		if err != nil {
+			return budget.Budget{}, err
+		}
+		before = copied
+		return edit(current)
+	}
+	r, err := a.Store.Update(ctx, origin, id, revision, keepBefore)
+	if err != nil {
+		return nil, err
+	}
+	v, err := view(r)
+	if err != nil {
+		return nil, err
+	}
+	v.Before = &before
+	return v, nil
 }
 
 func (a *App) List(ctx context.Context) ([]store.Meta, error) { return a.Store.List(ctx) }
@@ -134,11 +163,7 @@ func (a *App) Delete(ctx context.Context, id string) error { return a.Store.Dele
 func (a *App) Replace(
 	ctx context.Context, origin store.Origin, id string, revision int64, b budget.Budget,
 ) (*View, error) {
-	r, err := a.Store.Update(ctx, origin, id, revision, replaceWith(b))
-	if err != nil {
-		return nil, err
-	}
-	return view(r)
+	return a.update(ctx, origin, id, revision, replaceWith(b))
 }
 
 // Apply runs ops against the latest budget and saves the result atomically.
@@ -146,26 +171,28 @@ func (a *App) Replace(
 func (a *App) Apply(
 	ctx context.Context, origin store.Origin, id string, revision int64, ops []budget.Op,
 ) (*View, error) {
-	r, err := a.Store.Update(ctx, origin, id, revision, applyOps(ops))
-	if err != nil {
-		return nil, err
-	}
-	return view(r)
+	return a.update(ctx, origin, id, revision, applyOps(ops))
 }
 
 // WhatIf previews ops without saving anything. It returns the hypothetical
-// budget and its report, in English.
-func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Budget, *budget.Report, error) {
+// budget and its report, in English, with Before set to the saved budget.
+func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (*View, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
-		return budget.Budget{}, nil, err
+		return nil, err
 	}
-	nb, err := budget.Apply(r.Budget, ops...)
+	hypothetical, err := budget.Apply(r.Budget, ops...)
 	if err != nil {
-		return budget.Budget{}, nil, err
+		return nil, err
 	}
-	rep, err := budget.Analyze(nb)
-	return nb, rep, err
+	preview := r
+	preview.Budget = hypothetical
+	v, err := view(preview)
+	if err != nil {
+		return nil, err
+	}
+	v.Before = &r.Budget
+	return v, nil
 }
 
 // SetDebt updates the debt matching ref, or creates one named ref if none
@@ -173,11 +200,7 @@ func (a *App) WhatIf(ctx context.Context, id string, ops []budget.Op) (budget.Bu
 func (a *App) SetDebt(
 	ctx context.Context, origin store.Origin, id, ref string, patch budget.DebtPatch,
 ) (*View, error) {
-	r, err := a.Store.Update(ctx, origin, id, store.AnyRevision, setOrAddDebt(ref, patch))
-	if err != nil {
-		return nil, err
-	}
-	return view(r)
+	return a.update(ctx, origin, id, store.AnyRevision, setOrAddDebt(ref, patch))
 }
 
 // setOrAddDebt updates the debt matching ref, or adds one named ref.
@@ -255,11 +278,7 @@ func (a *App) Compare(
 func (a *App) AdoptScenario(
 	ctx context.Context, origin store.Origin, id, scenario string,
 ) (*View, error) {
-	r, err := a.Store.Update(ctx, origin, id, store.AnyRevision, adoptScenario(scenario))
-	if err != nil {
-		return nil, err
-	}
-	return view(r)
+	return a.update(ctx, origin, id, store.AnyRevision, adoptScenario(scenario))
 }
 
 func (a *App) DeleteScenario(ctx context.Context, origin store.Origin, id, scenario string) error {

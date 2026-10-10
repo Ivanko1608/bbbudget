@@ -119,11 +119,7 @@ func (a *App) Undo(
 	origin.Undoes = plan.revision
 	// Expecting the revision the plan was made against turns a write that
 	// lands in between into a conflict, instead of undoing it unseen.
-	saved, err := a.Store.Update(ctx, origin, id, latest.Revision, replaceWith(old))
-	if err != nil {
-		return nil, err
-	}
-	return view(saved)
+	return a.update(ctx, origin, id, latest.Revision, replaceWith(old))
 }
 
 // undoPlan is the change an undo reverts and the revision it restores.

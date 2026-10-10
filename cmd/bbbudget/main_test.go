@@ -157,8 +157,12 @@ func TestStdioMCP(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("update_item: %v %+v", err, res)
 	}
-	if !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `"amount": "1200.00"`) {
-		t.Fatal("update not reflected")
+	text := res.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "amount 1150 → 1200") {
+		t.Errorf("the change is missing: %s", text)
+	}
+	if !strings.Contains(text, `"end_savings"`) {
+		t.Errorf("the effect on end savings is missing: %s", text)
 	}
 	// The change is on disk for every other process (e.g. the web server).
 	out, _ := exec.Command(bin, "report", "home", "-dir", dir).CombinedOutput()

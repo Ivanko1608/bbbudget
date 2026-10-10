@@ -292,6 +292,21 @@ The editor saves as you type, so its saves within two minutes of each other merg
 
 Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`. There is also a resource, `budget://{id}`, with the raw document.
 
+**Responses are sized for a model's context.** A write returns what changed and what that did, not the whole budget again:
+
+```json
+{"budget":"home","revision":2,"saved":true,"change":"Rent: amount 1150 → 1200","currency":"EUR",
+ "effect":{"totals":{"end_savings":{"before":"10409.88","after":"9771.60","by":"-638.28"}},
+           "first_month":{"left":{"before":"317.49","after":"264.30","by":"-53.19"}},
+           "insights":{"changed":[{"id":"biggest_item","text":"Biggest recurring item: Rent at €1,277 a month (33% of income).",
+                                   "args":{"amount":"1276.60 EUR","name":"Rent","pct":33}}]},
+           "goals_reached":{"Emergency fund":{"before":"2026-12","after":"2027-01"}}}}
+```
+
+`effect` holds only what moved: totals, the first month, the projection length, insights that were `added`, `removed` or `changed`, `debt_payoffs` and `goals_reached`. When nothing in the outcome moved, it says `"none": true`. `what_if` answers in the same shape with `"saved": false`. Pass `"detail": "full"` to a write for the whole budget instead. For a 600-month budget an edit returns about 2 KB rather than 87 KB. The example above is shortened.
+
+`get_budget` returns an overview by default: everything, but only the first three months and the last. Use `view` (`items`, `months`, `debts`, `goals`, `insights`, `all`) and `from`/`to` (`YYYY-MM`) to get exactly the part you need.
+
 `-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Schedules in every tool and op take calendar months, `{"starts": "2026-03", "ends": "2026-12", "every": 3}`. Months are resolved against the budget's start month inside the same write, so a saved scenario keeps pointing at the same months even if the start month moves later. Editing an item's schedule changes only the fields you give (`"ends": ""` removes the end). The stored document uses 0-based month indexes (`{"start": 2, "every": 0}`), which ops still accept, but a schedule can't mix the two forms. Items are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
 The web UI and the MCP server can run as separate processes on the same data directory. Writes are serialised with a file lock and guarded by revision numbers. The UI polls and picks up Claude's edits within a few seconds. If you were mid-edit when a change arrived, the UI reloads and tells you, rather than overwriting the other change.
