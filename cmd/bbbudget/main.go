@@ -6,6 +6,7 @@
 //	bbbudget list             list budgets
 //	bbbudget report <id>      print a budget's projection and insights
 //	bbbudget rates <id>       fetch current exchange rates into a budget
+//	bbbudget log <id> <amount> <category>   record money actually spent or received
 //	bbbudget history <id>     list recent changes and who made them
 //	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
@@ -36,6 +37,7 @@ import (
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/mcpserver"
+	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 	"bbbudget/internal/templates"
@@ -65,6 +67,7 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
+  log      record money spent or received:  bbbudget log home 40 home [-date 2026-10-03] [-currency USD] [-note "Lidl"]
   history  list recent changes and who made them:  bbbudget history home [-limit 20]
   undo     undo a change:  bbbudget undo home [-revision REV] [-force]
   version  print the version
@@ -281,6 +284,37 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 
+	case "log":
+		date := fs.String("date", "", "day it happened, YYYY-MM-DD (default today)")
+		currency := fs.String("currency", "", "currency (default the base currency)")
+		note := fs.String("note", "", "a note")
+		item := fs.String("item", "", "the planned item it pays (id or name)")
+		usage := "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]"
+		pos, err := parseArgs(fs, args, 3, usage)
+		if err != nil {
+			return err
+		}
+		amount, err := money.ParseDecimal(pos[1])
+		if err != nil {
+			return fmt.Errorf("amount: %w", err)
+		}
+		a, err := openApp()
+		if err != nil {
+			return err
+		}
+		if *date == "" {
+			*date = a.Now().Format(time.DateOnly)
+		}
+		in := budget.TransactionInput{
+			Date:     *date,
+			Amount:   amount,
+			Currency: *currency,
+			Category: pos[2],
+			Note:     *note,
+			Item:     *item,
+		}
+		return logOne(ctx, stdout, a, pos[0], in)
+
 	case "history":
 		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
 		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
@@ -493,4 +527,24 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 		}
 		fmt.Fprintf(w, "%s %s\n", mark, strings.ReplaceAll(in.Text, "**", ""))
 	}
+}
+
+// logOne logs one transaction and prints it, with its base value when it
+// was in another currency.
+func logOne(ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput) error {
+	result, err := a.LogTransactions(ctx, fromCLI, id, []budget.TransactionInput{in})
+	if err != nil {
+		return err
+	}
+	v, err := a.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	t := result.Logged[0]
+	line := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
+	if base := v.Budget.BaseCurrency; t.Currency != base {
+		line += fmt.Sprintf("  → %s %s", t.Base, base)
+	}
+	fmt.Fprintln(w, line)
+	return nil
 }
