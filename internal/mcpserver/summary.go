@@ -19,15 +19,20 @@ type Summary struct {
 		BaseCurrency   string                `json:"base_currency"`
 		StartMonth     string                `json:"start_month"`
 		Months         int                   `json:"months"`
-		SavingsStart   string                `json:"savings_start"`
+		OverdraftStart string                `json:"overdraft_start,omitempty"`
 		ExtraToDebtPct string                `json:"extra_to_debt_pct"`
 		DebtStrategy   string                `json:"debt_strategy"`
 		Currencies     []budget.CurrencyRate `json:"currencies"`
 	} `json:"settings"`
-	Categories []budget.Category `json:"categories"`
-	Lines      []lineRow         `json:"lines"`
-	Debts      []debtRow         `json:"debts,omitempty"`
-	Goals      []goalRow         `json:"goals,omitempty"`
+	Categories  []budget.Category   `json:"categories"`
+	Lines       []lineRow           `json:"lines"`
+	Debts       []debtRow           `json:"debts,omitempty"`
+	Pots        []potRow            `json:"pots"`
+	Withdrawals []budget.Withdrawal `json:"withdrawals,omitempty"`
+	Goals       []goalRow           `json:"goals,omitempty"`
+	// Shortfalls: months that fall short and the pots that could cover them.
+	// Savings are never used automatically; suggest add_withdrawal.
+	Shortfalls []shortfallRow    `json:"shortfalls,omitempty"`
 	Scenarios  []scenarioRow     `json:"scenarios,omitempty"`
 	Months     []monthRow        `json:"months"`
 	Totals     map[string]string `json:"totals"`
@@ -43,6 +48,8 @@ type lineRow struct {
 	// Base is one occurrence in base currency, transfer loss included.
 	Base     string `json:"base"`
 	Schedule string `json:"schedule"`
+	// Pot: income goes straight into this pot / the cost is paid from it.
+	Pot string `json:"pot,omitempty"`
 }
 
 type debtRow struct {
@@ -64,6 +71,24 @@ type goalRow struct {
 	Reached string `json:"reached"`
 }
 
+// potRow amounts are base currency.
+type potRow struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Balance string `json:"balance"`
+	Target  string `json:"target,omitempty"`
+	Monthly string `json:"monthly,omitempty"`
+	End     string `json:"end_balance"`
+	Default bool   `json:"gets_leftover,omitempty"`
+}
+
+type shortfallRow struct {
+	Month   string            `json:"month"`
+	Short   string            `json:"short"`
+	CoverBy map[string]string `json:"could_cover_from,omitempty"`
+}
+
 type scenarioRow struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -78,6 +103,8 @@ type monthRow struct {
 	Expenses    string `json:"expenses"`
 	DebtPayment string `json:"debt_payments"`
 	Left        string `json:"left"`
+	FromSav     string `json:"from_savings,omitempty"`
+	Overdraft   string `json:"overdraft,omitempty"`
 	Saved       string `json:"saved"`
 	Savings     string `json:"savings"`
 }
@@ -96,13 +123,19 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 	s.Settings.BaseCurrency = b.BaseCurrency
 	s.Settings.StartMonth = b.StartMonth
 	s.Settings.Months = b.Months
-	s.Settings.SavingsStart = b.SavingsStart.String()
+	if !b.OverdraftStart.IsZero() {
+		s.Settings.OverdraftStart = b.OverdraftStart.String()
+	}
 	s.Settings.ExtraToDebtPct = b.ExtraToDebtPct.String()
 	s.Settings.DebtStrategy = b.DebtStrategy
 	s.Settings.Currencies = b.Currencies
 	s.Categories = b.Categories
 	for _, l := range r.Lines {
-		s.Lines = append(s.Lines, lineRow{l.ID, l.Name, l.Category, l.Amount.String(), l.Amount.Currency().Code, l.PerOccurrence.String(), l.ScheduleText})
+		pot := ""
+		if i := indexWhere(b.Lines, func(x budget.Line) bool { return x.ID == l.ID }); i >= 0 {
+			pot = b.Lines[i].Pot
+		}
+		s.Lines = append(s.Lines, lineRow{l.ID, l.Name, l.Category, l.Amount.String(), l.Amount.Currency().Code, l.PerOccurrence.String(), l.ScheduleText, pot})
 	}
 	for i, d := range r.Debts {
 		doc := b.Debts[i]
@@ -113,6 +146,28 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 			paid = "nothing owed"
 		}
 		s.Debts = append(s.Debts, debtRow{d.ID, d.Name, doc.Currency, doc.Balance.String(), doc.APRPct.String(), doc.MinPayment.String(), d.EndBalance.String(), d.TotalInterest.String(), paid})
+	}
+	for i, p := range r.Pots {
+		doc := b.Pots[i]
+		row := potRow{ID: p.ID, Name: p.Name, Kind: p.Kind, Balance: p.Start.String(), End: p.End.String(), Default: p.Default}
+		if !doc.Target.IsZero() {
+			row.Target = doc.Target.String()
+		}
+		if !doc.Monthly.IsZero() {
+			row.Monthly = doc.Monthly.String()
+		}
+		s.Pots = append(s.Pots, row)
+	}
+	s.Withdrawals = b.Withdrawals
+	for _, sf := range r.Shortfalls {
+		row := shortfallRow{Month: sf.Label, Short: sf.Amount.String()}
+		if len(sf.Options) > 0 {
+			row.CoverBy = map[string]string{}
+			for _, o := range sf.Options {
+				row.CoverBy[o.Name+" ("+o.Kind+")"] = o.Available.String() + " available"
+			}
+		}
+		s.Shortfalls = append(s.Shortfalls, row)
 	}
 	for _, g := range r.Goals {
 		reached := "not within the window"
@@ -130,8 +185,15 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 		s.Scenarios = append(s.Scenarios, scenarioRow{sc.ID, sc.Name, sc.Description, len(sc.Ops)})
 	}
 	for _, m := range r.Months {
-		s.Months = append(s.Months, monthRow{m.Key, m.Income.String(), m.Expenses.String(),
-			m.DebtPayments.String(), m.Left.String(), m.Saved.String(), m.Savings.String()})
+		row := monthRow{Month: m.Key, Income: m.Income.String(), Expenses: m.Expenses.String(),
+			DebtPayment: m.DebtPayments.String(), Left: m.Left.String(), Saved: m.Saved.String(), Savings: m.Savings.String()}
+		if m.FromSavings.IsPositive() {
+			row.FromSav = m.FromSavings.String()
+		}
+		if m.Overdraft.IsPositive() {
+			row.Overdraft = m.Overdraft.String()
+		}
+		s.Months = append(s.Months, row)
 	}
 	t := r.Totals
 	s.Totals = map[string]string{
@@ -194,4 +256,13 @@ func outcomeRows(out []budget.Outcome) []map[string]any {
 		rows[i] = row
 	}
 	return rows
+}
+
+func indexWhere[T any](s []T, f func(T) bool) int {
+	for i, v := range s {
+		if f(v) {
+			return i
+		}
+	}
+	return -1
 }

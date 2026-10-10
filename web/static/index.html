@@ -76,6 +76,7 @@
     <!-- Overview -->
     <section class="view" id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
       <div class="card summary mobile-only" id="mobileSummary"></div>
+      <section class="card shortfall" id="shortfall" aria-labelledby="h-short" hidden></section>
       <section class="card" aria-labelledby="h-month">
         <h2 id="h-month">Where <span id="monthName"></span>'s money goes</h2>
         <div class="split-total"><span id="incomeBig"></span><small>income</small></div>
@@ -94,7 +95,7 @@
         </div>
         <div class="legend legend-inline">
           <div><span class="sw" style="background:var(--save)"></span>Savings</div>
-          <div><span class="sw sw-debt"></span>Debt (in base currency)</div>
+          <div><span class="sw sw-debt"></span><span id="debtLegend">Debt (in base currency)</span></div>
         </div>
         <div class="table-wrap"><table id="table" class="sticky-first"></table></div>
       </section>
@@ -110,17 +111,29 @@
       <button class="add" type="button" data-action="add-line">+ Add a line</button>
     </section>
 
-    <!-- Plan: debts and goals -->
+    <!-- Plan: debts, savings pots, withdrawals -->
     <section class="view" id="view-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
       <section class="card" aria-labelledby="h-debt">
         <h2 id="h-debt">Debts</h2>
         <div id="debts" class="items"></div>
         <button class="add" type="button" data-action="add-debt">+ Add a debt</button>
       </section>
-      <section class="card" aria-labelledby="h-goals">
-        <h2 id="h-goals">Savings goals</h2>
-        <div id="goals" class="items"></div>
-        <button class="add" type="button" data-action="add-goal">+ Add a goal</button>
+      <section class="card" aria-labelledby="h-flow">
+        <h2 id="h-flow">Where leftover money goes</h2>
+        <p class="muted">Each month, what's left after spending and minimum debt payments goes through these steps, in order. Income you send straight to a pot (on its line) skips them.</p>
+        <ol class="flow" id="flow"></ol>
+      </section>
+      <section class="card" aria-labelledby="h-pots">
+        <h2 id="h-pots">Savings pots</h2>
+        <p class="muted">Savings are never spent to cover a short month unless you plan it. To send a sale or bonus straight into a pot, or pay a cost from one, open that line and pick the pot.</p>
+        <div id="pots" class="items"></div>
+        <button class="add" type="button" data-action="add-pot">+ Add a pot</button>
+      </section>
+      <section class="card" aria-labelledby="h-wd">
+        <h2 id="h-wd">Transfers from savings</h2>
+        <p class="muted">Money you move out of a pot into a month, for example to cover a short month. It shows as “from savings”, never as income.</p>
+        <div id="withdrawals" class="items"></div>
+        <button class="add" type="button" data-action="add-withdrawal">+ Plan a transfer</button>
       </section>
     </section>
 

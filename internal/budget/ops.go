@@ -31,6 +31,8 @@ type LinePatch struct {
 	Currency *string        `json:"currency,omitempty"`
 	Category *string        `json:"category,omitempty"`
 	Schedule *Schedule      `json:"schedule,omitempty"`
+	// Pot routes the line through a pot; "" puts it back in the month's budget.
+	Pot *string `json:"pot,omitempty"`
 }
 
 // CurrencyPatch edits a currency. Setting per_base without a source makes the
@@ -61,11 +63,14 @@ func (v CurrencyPatch) apply(c *CurrencyRate) {
 }
 
 type SettingsPatch struct {
-	Name           *string        `json:"name,omitempty"`
-	Description    *string        `json:"description,omitempty"`
-	StartMonth     *string        `json:"start_month,omitempty"`
-	Months         *int           `json:"months,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	StartMonth  *string `json:"start_month,omitempty"`
+	Months      *int    `json:"months,omitempty"`
+	// SavingsStart is the old single savings balance: it sets the balance of
+	// the default pot (the first general one).
 	SavingsStart   *money.Decimal `json:"savings_start,omitempty"`
+	OverdraftStart *money.Decimal `json:"overdraft_start,omitempty"`
 	ExtraToDebtPct *money.Decimal `json:"extra_to_debt_pct,omitempty"`
 	DebtStrategy   *string        `json:"debt_strategy,omitempty"`
 }
@@ -83,6 +88,21 @@ type GoalPatch struct {
 	Target *money.Decimal `json:"target,omitempty"`
 }
 
+type PotPatch struct {
+	Name    *string        `json:"name,omitempty"`
+	Kind    *string        `json:"kind,omitempty"`
+	Balance *money.Decimal `json:"balance,omitempty"`
+	Target  *money.Decimal `json:"target,omitempty"`
+	Monthly *money.Decimal `json:"monthly,omitempty"`
+}
+
+type WithdrawalPatch struct {
+	Name     *string        `json:"name,omitempty"`
+	Pot      *string        `json:"pot,omitempty"`
+	Amount   *money.Decimal `json:"amount,omitempty"`
+	Schedule *Schedule      `json:"schedule,omitempty"`
+}
+
 type CategoryPatch struct {
 	Label *string `json:"label,omitempty"`
 	Kind  *string `json:"kind,omitempty"`
@@ -91,21 +111,27 @@ type CategoryPatch struct {
 
 // OpKinds documents every supported op and its value type.
 var OpKinds = map[string]string{
-	"set_settings":    "value: SettingsPatch (no target)",
-	"set_currency":    "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
-	"remove_currency": "target: code (must be unused)",
-	"add_category":    "value: Category",
-	"set_category":    "target: category; value: CategoryPatch",
-	"remove_category": "target: category (must be unused)",
-	"add_line":        "value: Line (id optional)",
-	"set_line":        "target: line; value: LinePatch",
-	"remove_line":     "target: line",
-	"add_debt":        "value: Debt (id optional)",
-	"set_debt":        "target: debt; value: DebtPatch",
-	"remove_debt":     "target: debt",
-	"add_goal":        "value: Goal (id optional)",
-	"set_goal":        "target: goal; value: GoalPatch",
-	"remove_goal":     "target: goal",
+	"set_settings":      "value: SettingsPatch (no target)",
+	"set_currency":      "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
+	"remove_currency":   "target: code (must be unused)",
+	"add_category":      "value: Category",
+	"set_category":      "target: category; value: CategoryPatch",
+	"remove_category":   "target: category (must be unused)",
+	"add_line":          "value: Line (id optional)",
+	"set_line":          "target: line; value: LinePatch",
+	"remove_line":       "target: line",
+	"add_debt":          "value: Debt (id optional)",
+	"set_debt":          "target: debt; value: DebtPatch",
+	"remove_debt":       "target: debt",
+	"add_pot":           "value: Pot (id optional; kind general|sinking|emergency, default general)",
+	"set_pot":           "target: pot; value: PotPatch",
+	"remove_pot":        "target: pot (must have no withdrawals; keep at least one pot)",
+	"add_withdrawal":    "value: Withdrawal{name, pot, amount, schedule} (id optional; base currency; schedule defaults to once in month 0)",
+	"set_withdrawal":    "target: withdrawal; value: WithdrawalPatch",
+	"remove_withdrawal": "target: withdrawal",
+	"add_goal":          "value: Goal{name, target}: same as add_pot with kind sinking (kept for older clients)",
+	"set_goal":          "target: pot; value: GoalPatch (kept for older clients)",
+	"remove_goal":       "target: pot (kept for older clients)",
 }
 
 // NewOp builds an Op from a typed value.
@@ -179,7 +205,14 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&b.Description, v.Description)
 		setIf(&b.StartMonth, v.StartMonth)
 		setIf(&b.Months, v.Months)
-		setIf(&b.SavingsStart, v.SavingsStart)
+		setIf(&b.OverdraftStart, v.OverdraftStart)
+		if v.SavingsStart != nil {
+			i := defaultPot(b)
+			if i < 0 {
+				return fmt.Errorf("savings_start needs a savings pot; add one with add_pot")
+			}
+			b.Pots[i].Balance = *v.SavingsStart
+		}
 		setIf(&b.ExtraToDebtPct, v.ExtraToDebtPct)
 		setIf(&b.DebtStrategy, v.DebtStrategy)
 
@@ -272,6 +305,13 @@ func applyOne(b *Budget, op Op) error {
 		if v.Category == "" {
 			return fmt.Errorf("category is required")
 		}
+		if v.Pot != "" {
+			id, err := potRef(b, v.Pot)
+			if err != nil {
+				return err
+			}
+			v.Pot = id
+		}
 		b.Lines = append(b.Lines, v)
 
 	case "set_line":
@@ -289,6 +329,15 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&l.Currency, v.Currency)
 		setIf(&l.Category, v.Category)
 		setIf(&l.Schedule, v.Schedule)
+		if v.Pot != nil {
+			id := ""
+			if *v.Pot != "" {
+				if id, err = potRef(b, *v.Pot); err != nil {
+					return err
+				}
+			}
+			l.Pot = id
+		}
 
 	case "remove_line":
 		i, err := find("line", op.Target, ids(b.Lines, lineKey))
@@ -333,34 +382,106 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Debts = remove(b.Debts, i)
 
-	case "add_goal":
-		var v Goal
-		if err := decodeStrict(op.Value, &v); err != nil {
+	case "add_pot", "add_goal":
+		v := Pot{Kind: PotGeneral}
+		if op.Op == "add_goal" {
+			var g Goal
+			if err := decodeStrict(op.Value, &g); err != nil {
+				return err
+			}
+			v = Pot{ID: g.ID, Name: g.Name, Kind: PotSinking, Target: g.Target}
+		} else if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
 		if v.ID == "" {
-			v.ID = uniqueID(v.Name, ids(b.Goals, goalKey))
+			v.ID = uniqueID(v.Name, ids(b.Pots, potKey))
 		}
-		b.Goals = append(b.Goals, v)
+		if v.Kind == "" {
+			v.Kind = PotGeneral
+		}
+		b.Pots = append(b.Pots, v)
 
-	case "set_goal":
-		var v GoalPatch
+	case "set_pot", "set_goal":
+		var v PotPatch
+		if op.Op == "set_goal" {
+			var g GoalPatch
+			if err := decodeStrict(op.Value, &g); err != nil {
+				return err
+			}
+			v = PotPatch{Name: g.Name, Target: g.Target}
+		} else if err := decodeStrict(op.Value, &v); err != nil {
+			return err
+		}
+		i, err := find("pot", op.Target, ids(b.Pots, potKey))
+		if err != nil {
+			return err
+		}
+		pt := &b.Pots[i]
+		setIf(&pt.Name, v.Name)
+		setIf(&pt.Kind, v.Kind)
+		setIf(&pt.Balance, v.Balance)
+		setIf(&pt.Target, v.Target)
+		setIf(&pt.Monthly, v.Monthly)
+
+	case "remove_pot", "remove_goal":
+		i, err := find("pot", op.Target, ids(b.Pots, potKey))
+		if err != nil {
+			return err
+		}
+		for _, w := range b.Withdrawals {
+			if w.Pot == b.Pots[i].ID {
+				return fmt.Errorf("pot %q is used by the transfer %q; remove that first", b.Pots[i].Name, w.Name)
+			}
+		}
+		for _, l := range b.Lines {
+			if l.Pot == b.Pots[i].ID {
+				return fmt.Errorf("pot %q is used by the line %q; route that line elsewhere first", b.Pots[i].Name, l.Name)
+			}
+		}
+		b.Pots = remove(b.Pots, i)
+
+	case "add_withdrawal":
+		var v Withdrawal
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
-		i, err := find("goal", op.Target, ids(b.Goals, goalKey))
+		i, err := find("pot", v.Pot, ids(b.Pots, potKey))
 		if err != nil {
 			return err
 		}
-		setIf(&b.Goals[i].Name, v.Name)
-		setIf(&b.Goals[i].Target, v.Target)
+		v.Pot = b.Pots[i].ID
+		if v.ID == "" {
+			v.ID = uniqueID(v.Name, ids(b.Withdrawals, withdrawalKey))
+		}
+		b.Withdrawals = append(b.Withdrawals, v)
 
-	case "remove_goal":
-		i, err := find("goal", op.Target, ids(b.Goals, goalKey))
+	case "set_withdrawal":
+		var v WithdrawalPatch
+		if err := decodeStrict(op.Value, &v); err != nil {
+			return err
+		}
+		i, err := find("withdrawal", op.Target, ids(b.Withdrawals, withdrawalKey))
 		if err != nil {
 			return err
 		}
-		b.Goals = remove(b.Goals, i)
+		w := &b.Withdrawals[i]
+		if v.Pot != nil {
+			k, err := find("pot", *v.Pot, ids(b.Pots, potKey))
+			if err != nil {
+				return err
+			}
+			w.Pot = b.Pots[k].ID
+		}
+		setIf(&w.Name, v.Name)
+		setIf(&w.Amount, v.Amount)
+		setIf(&w.Schedule, v.Schedule)
+
+	case "remove_withdrawal":
+		i, err := find("withdrawal", op.Target, ids(b.Withdrawals, withdrawalKey))
+		if err != nil {
+			return err
+		}
+		b.Withdrawals = remove(b.Withdrawals, i)
 
 	default:
 		return fmt.Errorf("unknown op %q", op.Op)
@@ -395,9 +516,30 @@ func ids[T any](s []T, key func(T) (string, string)) []idName {
 	return out
 }
 
-func lineKey(l Line) (string, string) { return l.ID, l.Name }
-func debtKey(d Debt) (string, string) { return d.ID, d.Name }
-func goalKey(g Goal) (string, string) { return g.ID, g.Name }
+func lineKey(l Line) (string, string)             { return l.ID, l.Name }
+func debtKey(d Debt) (string, string)             { return d.ID, d.Name }
+func potKey(p Pot) (string, string)               { return p.ID, p.Name }
+func withdrawalKey(w Withdrawal) (string, string) { return w.ID, w.Name }
+
+// potRef resolves a pot reference (id or name) to its id.
+func potRef(b *Budget, ref string) (string, error) {
+	i, err := find("pot", ref, ids(b.Pots, potKey))
+	if err != nil {
+		return "", err
+	}
+	return b.Pots[i].ID, nil
+}
+
+// defaultPot is the index of the pot that receives unassigned leftover: the
+// first general pot, else the last pot, or -1 when there are none.
+func defaultPot(b *Budget) int {
+	for i, p := range b.Pots {
+		if p.Kind == PotGeneral {
+			return i
+		}
+	}
+	return len(b.Pots) - 1
+}
 
 // find resolves a reference: exact id, then exact name, then a unique
 // substring of a name (all case-insensitive). Ambiguity is an error rather

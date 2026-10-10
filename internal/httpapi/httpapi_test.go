@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -295,5 +296,58 @@ func TestMetaListsCrypto(t *testing.T) {
 	}
 	if d := v["digits"].(map[string]any); d["EUR"] != 2.0 || d["JPY"] != 0.0 || d["BTC"] != 8.0 {
 		t.Fatalf("digits: %v", d)
+	}
+}
+
+// Budgets saved before pots existed (no "pots"/"withdrawals") or saved with
+// null lists must load with every list as [], never null: the UI iterates them.
+func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"old","revision":3,"updated_at":"2026-10-01T00:00:00Z","budget":{
+		"name":"Old","base_currency":"EUR","start_month":"2026-10","months":12,"savings_start":"250",
+		"currencies":[],"categories":[{"id":"income","label":"Income","kind":"income"}],
+		"lines":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income","schedule":{"start":0,"every":1}}],
+		"debts":[],"extra_to_debt_pct":"0","debt_strategy":"avalanche",
+		"goals":[{"id":"emergency","name":"Emergency fund","target":"2000"}],"scenarios":[]}}`
+	nulls := `{"id":"nulls","revision":1,"updated_at":"2026-10-01T00:00:00Z","budget":{
+		"name":"Nulls","base_currency":"EUR","start_month":"2026-10","months":12,
+		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],"lines":null,"debts":null,
+		"extra_to_debt_pct":"0","debt_strategy":"avalanche",
+		"pots":[{"id":"savings","name":"General savings","kind":"general","balance":"0"}],"withdrawals":null,"scenarios":null}}`
+	for name, raw := range map[string]string{"old.json": legacy, "nulls.json": nulls} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := store.NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := app.New(st, nil)
+	a.Rates = offlineRates()
+	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
+	c := &client{t, New(a, Options{Static: fstest.MapFS{}})}
+	for _, id := range []string{"old", "nulls"} {
+		w := c.req("GET", "/api/budgets/"+id, "", nil)
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", id, w.Code, w.Body)
+		}
+		var v struct {
+			Budget map[string]any `json:"budget"`
+			Report map[string]any `json:"report"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"currencies", "categories", "lines", "debts", "pots", "withdrawals", "scenarios"} {
+			if _, ok := v.Budget[k].([]any); !ok {
+				t.Errorf("%s: budget.%s = %v, want a list", id, k, v.Budget[k])
+			}
+		}
+		for _, k := range []string{"pots", "goals", "shortfalls", "insights"} {
+			if _, ok := v.Report[k].([]any); !ok {
+				t.Errorf("%s: report.%s = %v, want a list", id, k, v.Report[k])
+			}
+		}
 	}
 }

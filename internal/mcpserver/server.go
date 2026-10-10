@@ -22,12 +22,13 @@ import (
 
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
-Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), and savings goals.
+Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), lines (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), savings pots and planned withdrawals.
+Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}. Savings are balances, never income. Each month's leftover first repays any overdraft, then pays fixed monthly contributions, then the debt share, then fills pots that have a target (in order), then goes to the first general pot. A month that falls short is NOT covered from savings automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the user agrees. A line can also have a pot: income on it (a sale, a bonus) goes straight into that pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds were saved for. Offer general savings first, then sinking funds (say which planned cost it delays), and the emergency fund only as a last resort.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
 
-Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/goals can be referenced by id, exact name, or an unambiguous part of a name.`
+Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed. Use save_scenario + compare_scenarios to explore alternatives side by side. Lines/debts/pots/withdrawals can be referenced by id, exact name, or an unambiguous part of a name.`
 
 // Options configures the server.
 type Options struct {
@@ -194,7 +195,7 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Line{name, amount, currency, category, schedule{start, every, end}} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Goal{name, target}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, savings_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
+Value fields: Line{name, amount, currency, category, schedule{start, every, end}, pot} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -208,7 +209,7 @@ func (h *handlers) register(s *mcp.Server) {
 		v, err := h.app.Create(ctx, in.ID, in.Name, in.Template)
 		return sum(v, err)
 	})
-	tool(s, "get_budget", "The full budget: settings, every line with its base-currency cost, debts, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
+	tool(s, "get_budget", "The full budget: settings, every line with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
 		func(ctx context.Context, in Ref) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -257,7 +258,7 @@ func (h *handlers) register(s *mcp.Server) {
 			}
 			return map[string]any{"rate_updates": updates, "budget": summarize(v)}, nil
 		})
-	tool(s, "update_settings", "Change budget settings (name, start_month, months, savings_start, extra_to_debt_pct, debt_strategy). Returns the updated budget.",
+	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns the updated budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
 			return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
 		})
@@ -269,7 +270,7 @@ func (h *handlers) register(s *mcp.Server) {
 			}
 			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment}))
 		})
-	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, goals and removals. Op kinds:"+opsHelp(),
+	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
 			rev := store.AnyRevision
 			if in.ExpectedRevision != nil {

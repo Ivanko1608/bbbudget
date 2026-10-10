@@ -4,7 +4,6 @@ name: Example household
 description: Fictional example. Salary in EUR, rent in CHF, school fees in USD with a 2% transfer loss, a one-off holiday and card minimums.
 base_currency: EUR
 months: 12
-savings_start: 0
 extra_to_debt_pct: 50
 debt_strategy: avalanche
 currencies:
@@ -25,5 +24,9 @@ lines:
   - {id: tuition, name: School tuition, amount: 900, currency: USD, category: education}
   - {id: supplies, name: School supplies, amount: 45.50, currency: USD, category: education}
   - {id: card-minimums, name: Card minimum payments, amount: 250, currency: USD, category: cards}
-goals:
-  - {id: emergency, name: Emergency fund, target: 2000}
+# Savings pots. Leftover fills pots with a target first (in order), then goes
+# to the first general pot. A short month is never paid from a pot unless you
+# add a withdrawal.
+pots:
+  - {id: savings, name: General savings, kind: general, balance: 0}
+  - {id: emergency, name: Emergency fund, kind: emergency, balance: 0, target: 2000}

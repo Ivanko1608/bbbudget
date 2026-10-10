@@ -30,8 +30,9 @@ type Budget struct {
 	StartMonth string `json:"start_month"`
 	// Months is the projection length.
 	Months int `json:"months"`
-	// SavingsStart is savings already held, in base currency.
-	SavingsStart money.Decimal `json:"savings_start"`
+	// OverdraftStart is money already owed on the current account at the
+	// start (base currency, not negative). Later surpluses repay it first.
+	OverdraftStart money.Decimal `json:"overdraft_start,omitzero"`
 	// Currencies lists every non-base currency used, with its rate and transfer loss.
 	Currencies []CurrencyRate `json:"currencies"`
 	Categories []Category     `json:"categories"`
@@ -40,8 +41,12 @@ type Budget struct {
 	// ExtraToDebtPct is the percent of each month's positive leftover sent to debts.
 	ExtraToDebtPct money.Decimal `json:"extra_to_debt_pct"`
 	DebtStrategy   string        `json:"debt_strategy"`
-	Goals          []Goal        `json:"goals"`
-	Scenarios      []Scenario    `json:"scenarios"`
+	// Pots hold savings. Savings are balances, never income: a short month is
+	// never covered from a pot unless a Withdrawal says so.
+	Pots []Pot `json:"pots"`
+	// Withdrawals are planned transfers from a pot into a month's spending.
+	Withdrawals []Withdrawal `json:"withdrawals"`
+	Scenarios   []Scenario   `json:"scenarios"`
 }
 
 // CurrencyRate configures one foreign currency.
@@ -97,6 +102,11 @@ type Line struct {
 	Currency string        `json:"currency"`
 	Category string        `json:"category"`
 	Schedule Schedule      `json:"schedule"`
+	// Pot routes the line through a savings pot instead of the month's
+	// budget: income goes straight into the pot (it is not spendable that
+	// month and no share of it goes to debts); a cost is paid from the pot,
+	// as far as the pot holds, and only the rest comes out of the month.
+	Pot string `json:"pot,omitempty"`
 }
 
 // Schedule says in which projection months (0-based) a line applies.
@@ -138,7 +148,43 @@ type Debt struct {
 	MinPayment money.Decimal `json:"min_payment"`
 }
 
-// Goal is a savings target in base currency.
+// Pot kinds. They decide how a pot is offered when a month is short.
+const (
+	PotGeneral   = "general"   // unassigned savings: offered first
+	PotSinking   = "sinking"   // saving ahead for a known cost: offered, delays that cost
+	PotEmergency = "emergency" // for emergencies: offered last, as a last resort
+)
+
+// PotKinds lists every valid Pot.Kind, in the order pots are offered to cover a short month.
+var PotKinds = []string{PotGeneral, PotSinking, PotEmergency}
+
+// Pot is a savings pot in base currency. Each month's leftover goes, in
+// order: fixed Monthly contributions, the share to debts, filling pots that
+// have a Target (in list order), then the first general pot.
+type Pot struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	// Balance is what the pot holds at the start.
+	Balance money.Decimal `json:"balance"`
+	// Target is optional: the pot stops receiving money once it is reached.
+	Target money.Decimal `json:"target,omitzero"`
+	// Monthly is an optional fixed contribution, paid when the month has room.
+	Monthly money.Decimal `json:"monthly,omitzero"`
+}
+
+// Withdrawal takes money out of a pot to spend it: shown as "from savings",
+// never as income. It never takes more than the pot holds.
+type Withdrawal struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Pot      string        `json:"pot"`
+	Amount   money.Decimal `json:"amount"`
+	Schedule Schedule      `json:"schedule"`
+}
+
+// Goal is the old form of a savings target (before pots). It is still read,
+// and becomes a pot with that target.
 type Goal struct {
 	ID     string        `json:"id"`
 	Name   string        `json:"name"`

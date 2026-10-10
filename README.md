@@ -21,17 +21,19 @@ Requires Go 1.25+ (the MCP SDK's minimum; developed on 1.27). One static binary;
 | **Categories** | `income` or `expense`, with a label and colour. |
 | **Lines** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
 | **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
-| **Goals** | Savings targets: when they're reached, or the monthly rate needed to reach them. |
+| **Savings pots** | Savings split by purpose: general savings, sinking funds (saving ahead for a known cost) and an emergency fund. Each has a balance and optionally a target and a fixed monthly contribution. Each month's leftover pays the contributions, then the share to debts, then fills pots with a target (top to bottom), then goes to the first general pot. |
+| **Short months** | Savings are balances, never income. A month that falls short is **not** paid from savings automatically: it's reported with the pots that could cover it (general first, sinking funds next, the emergency fund last), and otherwise owed on the current account and repaid from the next surplus before anything is saved. |
+| **Withdrawals** | Planned transfers out of a pot ("take €300 from General savings in October"), shown as *from savings*, never as income. One tap on a short month plans one. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest line, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest line, whether debt minimums cover interest, payoff dates, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
 
 ## Money handling
 
 - **No floating point in any calculation.** Amounts are `int64` minor units (cents, pence; 0 digits for JPY, 3 for KWD). Rates and percentages are exact rationals (`math/big.Rat`). The one exception is chart pixel positions in the browser.
 - **Exact on the wire.** Amounts, rates and percentages are JSON *strings* (`"1150"`, `"1.08"`). Bare JSON numbers are accepted on input and parsed from their literal text, never through `float64`. Exponents, `NaN`, thousands separators and more decimal places than the currency allows (`€1.001`) are rejected.
 - **Rounding is explicit and pessimistic.** There is one rounding per conversion. Money you pay rounds **up**, money you receive rounds **down**, and interest charged to you rounds up. A plan therefore never looks better than reality, and is off by at most one minor unit per conversion.
-- **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `saved = left − extra debt payment`, and `savings = previous + saved`. Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies and schedules.
+- **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `left + from savings + change in overdraft = extra debt payment + into savings`, `saved = into savings − from savings`, `savings = previous + saved = the sum of the pots`, and every pot reconciles (`opening + in − out = closing`, never below zero). Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies, schedules, pots, withdrawals and overdrafts.
 - **Overflow can't wrap.** Arithmetic is checked: overflow and currency mismatches become errors, never wrapped values or crashes. Inputs are bounded (amounts ≤ 10¹² units and ≤ 10¹⁵ minor units, ≤ 600 months).
 - **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`lines[3].amount`). The UI highlights the matching fields.
 
@@ -86,7 +88,7 @@ lines:
 
 ## The app
 
-The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Lines** (income and costs grouped by category, amounts editable in place), **Plan** (debts and goals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
+The UI has five views: **Overview** (where the money goes, ranked insights, the projection), **Lines** (income and costs grouped by category, amounts editable in place), **Plan** (debts, savings pots, planned withdrawals), **Scenarios** (try changes, save and compare them) and **Setup** (budget settings, currencies, categories).
 
 - **Wide screens** show the views as tabs next to a summary that stays in view: what's left this month, savings at the end, goal and debt-free dates and the top warning. Every edit's effect shows up there straight away.
 - **Phones and small tablets** get an app layout: a bottom tab bar, a pinned bar with the two key numbers, and bottom sheets for editing a line. Touch targets are at least 44px, and safe-area insets clear notches and the home indicator.
@@ -115,9 +117,15 @@ lines:
   - {name: Flights, amount: 450.50, currency: USD, category: home, schedule: {every: 0, start: 1}}  # one-off
 debts:
   - {name: Credit card, currency: USD, balance: 4000, apr_pct: 24, min_payment: 250}
-goals:
-  - {name: Emergency fund, target: 5000}
+pots:                                                    # kind: general | sinking | emergency
+  - {name: General savings, balance: 1200}               # kind defaults to general; gets the leftover
+  - {name: Emergency fund, kind: emergency, balance: 0, target: 5000}
+  - {name: Holiday, kind: sinking, balance: 300, target: 1500, monthly: 100}
+withdrawals:                                             # optional: planned use of savings
+  - {name: New tyres, pot: general-savings, amount: 400, schedule: {start: 3}}  # once, in month 3
 ```
+
+Older files with `savings_start` and `goals` still load: the balance becomes a *General savings* pot and each goal a pot with that target (an *emergency* pot if its name says so). Old goals all counted the same money; as pots, each fills on its own.
 
 ```
 bbbudget templates                         # list built-in and your templates
