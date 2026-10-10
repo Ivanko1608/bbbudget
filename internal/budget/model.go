@@ -146,7 +146,17 @@ type Debt struct {
 	APRPct money.Decimal `json:"apr_pct"`
 	// MinPayment is paid each month (in the debt's currency) until the balance is zero.
 	MinPayment money.Decimal `json:"min_payment"`
+	// PayoffMonth, when set, pays off the whole balance (that month's interest
+	// included) in that month (0-based index from start_month).
+	PayoffMonth *int `json:"payoff_month,omitempty"`
+	// PayoffFrom is the pot that pays it off, after income routed to pots has
+	// landed that month. "" pays it from the month's own money. A pot that holds
+	// less pays what it can; the rest stays owed, with its minimum payment.
+	PayoffFrom string `json:"payoff_from,omitempty"`
 }
+
+// PaysOffIn reports whether the debt is set to be paid off in full in month m.
+func (d Debt) PaysOffIn(m int) bool { return d.PayoffMonth != nil && *d.PayoffMonth == m }
 
 // Pot kinds. They decide how a pot is offered when a month is short.
 const (

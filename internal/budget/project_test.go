@@ -262,12 +262,20 @@ func randomBudget(rng *rand.Rand) Budget {
 		code := codes[rng.IntN(3)]
 		b.Debts = append(b.Debts, Debt{ID: fmt.Sprintf("d%d", i), Name: "D", Currency: code,
 			Balance: dec(15000, 2), APRPct: dec(60, 2), MinPayment: dec(700, 2)})
+		if rng.IntN(2) == 0 {
+			m := rng.IntN(b.Months + 2) // sometimes after the window
+			b.Debts[i].PayoffMonth = &m
+			if rng.IntN(3) > 0 {
+				b.Debts[i].PayoffFrom = b.Pots[rng.IntN(len(b.Pots))].ID
+			}
+		}
 	}
 	return b
 }
 
 func TestInvariantsHoldExactly(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
+	var fromPot, partial, fromMonth int
 	for n := range 400 {
 		b := randomBudget(rng)
 		p, err := Compile(b)
@@ -290,11 +298,14 @@ func TestInvariantsHoldExactly(t *testing.T) {
 		}
 		for _, m := range pr.Months {
 			fail := func(f string, a ...any) { t.Fatalf("case %d month %d: "+f, append([]any{n, m.Index}, a...)...) }
-			if !m.Left.Sub(m.Income.Sub(m.IncomeToPots).Sub(m.Expenses.Sub(m.PaidFromPots)).Sub(m.DebtMinCost)).IsZero() {
-				fail("left != income - routed income - (expenses - paid from pots) - min")
+			if !m.Left.Sub(m.Income.Sub(m.IncomeToPots).Sub(m.Expenses.Sub(m.PaidFromPots)).Sub(m.DebtMinCost).Sub(m.Payoff.Sub(m.PayoffFromPots))).IsZero() {
+				fail("left != income - routed income - (expenses - paid from pots) - min - (payoff - payoff from pots)")
 			}
-			if !m.FromSavings.Sub(m.Transfers.Add(m.PaidFromPots)).IsZero() {
-				fail("from savings != transfers + paid from pots")
+			if !m.FromSavings.Sub(m.Transfers.Add(m.PaidFromPots).Add(m.PayoffFromPots)).IsZero() {
+				fail("from savings != transfers + paid from pots + payoff from pots")
+			}
+			if m.PayoffFromPots.Cmp(m.Payoff) > 0 {
+				fail("payoff from pots %s > payoff %s", m.PayoffFromPots, m.Payoff)
 			}
 			// Cash reconciles: what came in pays debts and savings, the rest is owed.
 			if !m.Left.Add(m.Transfers).Add(m.Overdraft.Sub(prevOwed)).Sub(m.ExtraCost.Add(m.ToSavings.Sub(m.IncomeToPots))).IsZero() {
@@ -352,19 +363,39 @@ func TestInvariantsHoldExactly(t *testing.T) {
 				if dm.Balance.IsNegative() {
 					fail("negative balance")
 				}
-				if !prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra).Sub(dm.Balance).IsZero() {
+				if !prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra).Sub(dm.Payoff).Sub(dm.Balance).IsZero() {
 					fail("debt %s does not reconcile", dm.ID)
+				}
+				// A payoff from the month's own money always clears the debt.
+				if d := p.Debts[i]; d.PaysOffIn(m.Index) && d.PotIdx < 0 && dm.Balance.IsPositive() {
+					fail("debt %s not cleared by its payoff", dm.ID)
+				}
+				if dm.Payoff.IsPositive() && !p.Debts[i].PaysOffIn(m.Index) {
+					fail("debt %s paid off outside its payoff month", dm.ID)
+				}
+				if dm.Payoff.IsPositive() {
+					switch {
+					case p.Debts[i].PotIdx < 0:
+						fromMonth++
+					case dm.Balance.IsPositive():
+						partial++
+					default:
+						fromPot++
+					}
 				}
 				prevBal[i] = dm.Balance
 			}
-			if debtCost.Cmp(m.DebtMinCost.Add(m.ExtraCost)) != 0 {
-				fail("debt costs %s != min+extra %s", debtCost, m.DebtMinCost.Add(m.ExtraCost))
+			if debtCost.Cmp(m.DebtPayments) != 0 || m.DebtPayments.Cmp(m.DebtMinCost.Add(m.Payoff).Add(m.ExtraCost)) != 0 {
+				fail("debt costs %s != min+payoff+extra %s", debtCost, m.DebtPayments)
 			}
 			prevSav = m.Savings
 		}
 		if _, err := buildReport(pr); err != nil {
 			t.Fatalf("case %d report: %v", n, err)
 		}
+	}
+	if fromPot == 0 || partial == 0 || fromMonth == 0 {
+		t.Fatalf("random budgets missed a payoff case: from pot %d, partial %d, from the month %d", fromPot, partial, fromMonth)
 	}
 }
 

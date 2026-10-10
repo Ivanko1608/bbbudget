@@ -12,10 +12,11 @@ import (
 // Totals are exact sums of these rounded amounts, so every identity below
 // holds to the cent:
 //
-//	Left      = Income − IncomeToPots − (Expenses − PaidFromPots) − DebtMinCost
-//	            (the month's own money: items routed through pots excluded)
+//	Left      = Income − IncomeToPots − (Expenses − PaidFromPots) − DebtMinCost − (Payoff − PayoffFromPots)
+//	            (the month's own money: items and payoffs routed through pots excluded)
 //	Left + Transfers + (Overdraft − previous Overdraft) = ExtraCost + (ToSavings − IncomeToPots)
-//	FromSavings = Transfers + PaidFromPots
+//	FromSavings = Transfers + PaidFromPots + PayoffFromPots
+//	DebtPayments = DebtMinCost + Payoff + ExtraCost
 //	Saved     = ToSavings − FromSavings                (net change in savings)
 //	Savings   = previous Savings + Saved = sum of the pots
 //
@@ -45,9 +46,13 @@ type Month struct {
 	// Left is the month's own money: income minus spending, with items routed
 	// through pots and savings left out.
 	Left money.Money `json:"left"`
+	// Payoff is what paying off debts in full cost this month (Debt.PayoffMonth).
+	Payoff money.Money `json:"payoff"`
+	// PayoffFromPots is the part of Payoff that pots paid.
+	PayoffFromPots money.Money `json:"payoff_from_pots"`
 	// Transfers is what planned transfers (withdrawals) moved from pots into the month.
 	Transfers money.Money `json:"transfers"`
-	// FromSavings is everything that left the pots: Transfers + PaidFromPots.
+	// FromSavings is everything that left the pots: Transfers + PaidFromPots + PayoffFromPots.
 	FromSavings money.Money `json:"from_savings"`
 	// Short is how far the month falls short after planned withdrawals.
 	// It is owed (Overdraft), never taken from savings silently.
@@ -57,7 +62,7 @@ type Month struct {
 	// Overdraft is owed on the current account at the end of the month.
 	Overdraft money.Money `json:"overdraft"`
 	ExtraCost money.Money `json:"extra_to_debt"`
-	// DebtPayments is DebtMinCost + ExtraCost.
+	// DebtPayments is DebtMinCost + Payoff + ExtraCost.
 	DebtPayments money.Money `json:"debt_payments"`
 	// ToSavings is what went into pots.
 	ToSavings money.Money `json:"to_savings"`
@@ -80,6 +85,8 @@ type DebtMonth struct {
 	Interest money.Money `json:"interest"`
 	MinPaid  money.Money `json:"min_paid"`
 	Extra    money.Money `json:"extra_paid"`
+	// Payoff is the lump sum paid to clear the debt (Debt.PayoffMonth).
+	Payoff money.Money `json:"payoff_paid"`
 	// Cost is what this month's payments to the debt cost in base currency.
 	Cost    money.Money `json:"cost"`
 	Balance money.Money `json:"balance"`
@@ -137,7 +144,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 			Index: m, Key: p.MonthKey(m), Label: p.MonthLabel(m),
 			Income: zero, Expenses: zero, DebtMinCost: zero, ExtraCost: zero, ByCategory: map[string]money.Money{},
 			FromSavings: zero, Short: zero, OverdraftRepaid: zero, ToSavings: zero,
-			IncomeToPots: zero, PaidFromPots: zero, Transfers: zero,
+			IncomeToPots: zero, PaidFromPots: zero, Transfers: zero, Payoff: zero, PayoffFromPots: zero,
 		}
 		pm := make([]PotMonth, len(p.Pots))
 		for k, pt := range p.Pots {
@@ -158,7 +165,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 		dm := make([]DebtMonth, len(p.Debts))
 		for i, d := range p.Debts {
 			cur := d.Bal.Currency()
-			dm[i] = DebtMonth{ID: d.ID, Interest: money.Zero(cur), MinPaid: money.Zero(cur), Extra: money.Zero(cur), Cost: money.Zero(base)}
+			dm[i] = DebtMonth{ID: d.ID, Interest: money.Zero(cur), MinPaid: money.Zero(cur), Extra: money.Zero(cur), Payoff: money.Zero(cur), Cost: money.Zero(base)}
 			if balances[i].IsPositive() {
 				dm[i].Interest = balances[i].Mul(d.MonthlyRate, roundPay)
 				balances[i] = balances[i].Add(dm[i].Interest)
@@ -186,16 +193,22 @@ func Project(p *Plan) (proj *Projection, err error) {
 			}
 		}
 
-		// 3. Minimum payments, capped at what is owed.
-		for i, d := range p.Debts {
+		// 3. Minimum payments, capped at what is owed. A debt paid off this month
+		// pays its minimum only on what the payoff leaves (below).
+		minPay := func(i int) {
 			if !balances[i].IsPositive() {
-				continue
+				return
 			}
-			pay := money.Min(d.Min, balances[i])
+			pay := money.Min(p.Debts[i].Min, balances[i])
 			balances[i] = balances[i].Sub(pay)
 			cost := p.PayCost(pay, roundPay)
-			dm[i].MinPaid, dm[i].Cost = pay, cost
+			dm[i].MinPaid, dm[i].Cost = pay, dm[i].Cost.Add(cost)
 			mo.DebtMinCost = mo.DebtMinCost.Add(cost)
+		}
+		for i, d := range p.Debts {
+			if !d.PaysOffIn(m) {
+				minPay(i)
+			}
 		}
 
 		// Routed items: income goes straight into its pot first, then costs are
@@ -217,7 +230,33 @@ func Project(p *Plan) (proj *Projection, err error) {
 			mo.PotCosts = append(mo.PotCosts, PotCostMonth{ItemID: l.ID, Cost: routedAmt[i], Paid: paid})
 		}
 
-		mo.Left = mo.Income.Sub(mo.IncomeToPots).Sub(mo.Expenses.Sub(mo.PaidFromPots)).Sub(mo.DebtMinCost)
+		// Payoffs: the whole balance, this month's interest included, from the
+		// debt's pot (routed income has landed by now) or the month's own money.
+		// A pot pays only what it holds; the rest stays owed and pays its minimum.
+		for i, d := range p.Debts {
+			if !d.PaysOffIn(m) {
+				continue
+			}
+			if balances[i].IsPositive() {
+				pay, cost := balances[i], p.PayCost(balances[i], roundPay)
+				if k := d.PotIdx; k >= 0 {
+					if cost.Cmp(pots[k]) > 0 {
+						// Pay as much as the pot buys; its true cost is <= the pot.
+						pay = p.Receivable(pots[k], balances[i].Currency().Code, roundReceive)
+						cost = p.PayCost(pay, roundPay)
+					}
+					pots[k] = pots[k].Sub(cost)
+					pm[k].Out = pm[k].Out.Add(cost)
+					mo.PayoffFromPots = mo.PayoffFromPots.Add(cost)
+				}
+				balances[i] = balances[i].Sub(pay)
+				dm[i].Payoff, dm[i].Cost = pay, dm[i].Cost.Add(cost)
+				mo.Payoff = mo.Payoff.Add(cost)
+			}
+			minPay(i)
+		}
+
+		mo.Left = mo.Income.Sub(mo.IncomeToPots).Sub(mo.Expenses.Sub(mo.PaidFromPots)).Sub(mo.DebtMinCost).Sub(mo.Payoff.Sub(mo.PayoffFromPots))
 
 		// 4. Planned withdrawals, never more than the pot holds.
 		for _, w := range p.Withdrawals {
@@ -233,7 +272,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 
 		// 5. A short month is owed, not taken from savings; a surplus first
 		// repays what earlier months owe.
-		mo.FromSavings = mo.Transfers.Add(mo.PaidFromPots)
+		mo.FromSavings = mo.Transfers.Add(mo.PaidFromPots).Add(mo.PayoffFromPots)
 		flow := mo.Left.Add(mo.Transfers)
 		if flow.IsNegative() {
 			mo.Short = flow.Neg()
@@ -314,7 +353,7 @@ func Project(p *Plan) (proj *Projection, err error) {
 			mo.DebtBase = mo.DebtBase.Add(p.ToBase(balances[i], money.HalfEven))
 		}
 		mo.Debts = dm
-		mo.DebtPayments = mo.DebtMinCost.Add(mo.ExtraCost)
+		mo.DebtPayments = mo.DebtMinCost.Add(mo.Payoff).Add(mo.ExtraCost)
 		mo.Saved = mo.ToSavings.Sub(mo.FromSavings)
 		mo.Savings = zero
 		for k := range pm {

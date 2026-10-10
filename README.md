@@ -128,13 +128,13 @@ One honest caveat: when you use the MCP server with a hosted AI assistant, the M
 | **Rate source** | Per currency: `manual` (typed) or fetched from `ecb`, `currency-api`, `coingecko` or `auto`. See [Exchange rates](#exchange-rates). |
 | **Categories** | `income` or `expense`, with a label and colour. |
 | **Items** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
-| **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
+| **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. A debt can be **paid off in full** in a chosen month, from a pot or from that month's money. The whole balance, that month's interest included, is paid after income sent to that pot has landed, so a sale can clear a debt in the month it arrives. A pot that holds less pays what it can; the rest stays owed, with its minimum. |
 | **Savings pots** | Savings split by purpose: general savings, sinking funds (saving ahead for a known cost) and an emergency fund. Each has a balance and optionally a target and a fixed monthly contribution. Each month's leftover pays the contributions, then the share to debts, then fills pots with a target (top to bottom), then goes to the first general pot. |
 | **Short months** | Savings are balances, never income. A month that falls short is **not** paid from savings automatically: it's reported with the pots that could cover it (general first, sinking funds next, the emergency fund last), and otherwise owed on the current account and repaid from the next surplus before anything is saved. |
 | **Withdrawals** | Planned transfers out of a pot ("take €300 from General savings in October"), shown as *from savings*, never as income. One tap on a short month plans one. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, what paying a debt off in full costs and whether its pot can cover it, when each pot reaches its target, short months and how to cover them, withdrawals a pot can't fully pay, and a missing emergency fund (3–6 months of spending).
 
 ## Money handling
 
@@ -225,6 +225,7 @@ items:
   - {name: Flights, amount: 450.50, currency: USD, category: home, schedule: {every: 0, start: 1}}  # one-off
 debts:
   - {name: Credit card, currency: USD, balance: 4000, apr_pct: 24, min_payment: 250}
+  - {name: Car loan, balance: 6000, apr_pct: 7, min_payment: 180, payoff_month: 5, payoff_from: general-savings}  # pay it off from that pot in month 5
 pots:                                                    # kind: general | sinking | emergency
   - {name: General savings, balance: 1200}               # kind defaults to general; gets the leftover
   - {name: Emergency fund, kind: emergency, balance: 0, target: 5000}

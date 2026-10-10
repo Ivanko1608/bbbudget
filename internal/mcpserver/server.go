@@ -23,7 +23,7 @@ import (
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
 Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), items (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), savings pots and planned withdrawals.
-Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}. Savings are balances, never income. Each month's leftover first repays any overdraft, then pays fixed monthly contributions, then the debt share, then fills pots that have a target (in order), then goes to the first general pot. A month that falls short is NOT covered from savings automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the user agrees. An item can also have a pot: income on it (a sale, a bonus) goes straight into that pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds were saved for. Offer general savings first, then sinking funds (say which planned cost it delays), and the emergency fund only as a last resort.
+Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}. Savings are balances, never income. Each month's leftover first repays any overdraft, then pays fixed monthly contributions, then the debt share, then fills pots that have a target (in order), then goes to the first general pot. A month that falls short is NOT covered from savings automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the user agrees. An item can also have a pot: income on it (a sale, a bonus) goes straight into that pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds were saved for. A debt can be paid off in full in one month: payoff_month (0-based) and payoff_from (a pot, or "" for that month's own money). The whole balance, that month's interest included, is paid after income routed to pots has landed, so a sale routed to a pot can pay off a debt in the same month; a pot that holds less pays what it can and the rest stays owed. set_debt with payoff_month -1 removes it. Offer general savings first, then sinking funds (say which planned cost it delays), and the emergency fund only as a last resort.
 Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
 Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
 Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
@@ -153,11 +153,13 @@ type SettingsIn struct {
 
 type DebtIn struct {
 	Ref
-	Debt       string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
-	Currency   *string        `json:"currency,omitempty"`
-	Balance    *money.Decimal `json:"balance,omitempty"`
-	APRPct     *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
-	MinPayment *money.Decimal `json:"min_payment,omitempty" jsonschema:"monthly minimum payment in the debt's currency"`
+	Debt        string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
+	Currency    *string        `json:"currency,omitempty"`
+	Balance     *money.Decimal `json:"balance,omitempty"`
+	APRPct      *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
+	MinPayment  *money.Decimal `json:"min_payment,omitempty" jsonschema:"monthly minimum payment in the debt's currency"`
+	PayoffMonth *int           `json:"payoff_month,omitempty" jsonschema:"pay the whole balance off in this month (0-based from start_month); -1 removes the payoff"`
+	PayoffFrom  *string        `json:"payoff_from,omitempty" jsonschema:"pot (id or name) that pays it off; empty string pays it from that month's own money"`
 }
 
 type OpsIn struct {
@@ -195,7 +197,7 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Item{name, amount, currency, category, schedule{start, every, end}, pot} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
+Value fields: Item{name, amount, currency, category, schedule{start, every, end}, pot} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment, payoff_month, payoff_from}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -262,13 +264,13 @@ func (h *handlers) register(s *mcp.Server) {
 		func(ctx context.Context, in SettingsIn) (any, error) {
 			return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
 		})
-	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. Returns the updated budget.",
+	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns the updated budget.",
 		func(ctx context.Context, in DebtIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment}))
+			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment, PayoffMonth: in.PayoffMonth, PayoffFrom: in.PayoffFrom}))
 		})
 	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {

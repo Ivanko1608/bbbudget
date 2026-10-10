@@ -81,6 +81,8 @@ type PlanDebt struct {
 	Bal, Min money.Money
 	// MonthlyRate is APR/1200, exact.
 	MonthlyRate *big.Rat
+	// PotIdx indexes Plan.Pots for a payoff paid from a pot, else -1.
+	PotIdx int
 }
 
 type PlanPot struct {
@@ -259,7 +261,14 @@ func Compile(b Budget) (*Plan, error) {
 			Bal:         c.amount(path+".balance", d.Balance, cur, false),
 			Min:         c.amount(path+".min_payment", d.MinPayment, cur, false),
 			MonthlyRate: new(big.Rat).Quo(d.APRPct.Rat(), big.NewRat(1200, 1)),
+			PotIdx:      -1,
 		})
+		if d.PayoffMonth != nil && (*d.PayoffMonth < 0 || *d.PayoffMonth >= MaxMonths) {
+			c.add(path+".payoff_month", "must be between 0 and %d", MaxMonths-1)
+		}
+		if d.PayoffFrom != "" && d.PayoffMonth == nil {
+			c.add(path+".payoff_from", "needs a payoff_month")
+		}
 	}
 
 	seen = map[string]bool{}
@@ -297,6 +306,16 @@ func Compile(b Budget) (*Plan, error) {
 				continue
 			}
 			p.Items[i].PotIdx = k
+		}
+	}
+	for i := range p.Debts {
+		if ref := p.Debts[i].PayoffFrom; ref != "" {
+			k, ok := potIdx[ref]
+			if !ok {
+				c.add(fmt.Sprintf("debts[%d].payoff_from", indexWhere(b.Debts, func(d Debt) bool { return d.ID == p.Debts[i].ID })), "unknown pot %q", ref)
+				continue
+			}
+			p.Debts[i].PotIdx = k
 		}
 	}
 

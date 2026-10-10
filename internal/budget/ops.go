@@ -81,6 +81,10 @@ type DebtPatch struct {
 	Balance    *money.Decimal `json:"balance,omitempty"`
 	APRPct     *money.Decimal `json:"apr_pct,omitempty"`
 	MinPayment *money.Decimal `json:"min_payment,omitempty"`
+	// PayoffMonth sets the month to pay the debt off in full; -1 removes the payoff.
+	PayoffMonth *int `json:"payoff_month,omitempty"`
+	// PayoffFrom names the pot that pays it off; "" pays it from the month's own money.
+	PayoffFrom *string `json:"payoff_from,omitempty"`
 }
 
 type GoalPatch struct {
@@ -120,8 +124,8 @@ var OpKinds = map[string]string{
 	"add_item":          "value: Item (id optional)",
 	"set_item":          "target: item; value: ItemPatch",
 	"remove_item":       "target: item",
-	"add_debt":          "value: Debt (id optional)",
-	"set_debt":          "target: debt; value: DebtPatch",
+	"add_debt":          "value: Debt (id optional; payoff_month + payoff_from pot pay it off in full that month)",
+	"set_debt":          "target: debt; value: DebtPatch (payoff_month -1 removes the payoff; payoff_from \"\" pays it from the month's own money)",
 	"remove_debt":       "target: debt",
 	"add_pot":           "value: Pot (id optional; kind general|sinking|emergency, default general)",
 	"set_pot":           "target: pot; value: PotPatch",
@@ -357,6 +361,13 @@ func applyOne(b *Budget, op Op) error {
 		if v.Currency == "" {
 			v.Currency = b.BaseCurrency
 		}
+		if v.PayoffFrom != "" {
+			id, err := potRef(b, v.PayoffFrom)
+			if err != nil {
+				return err
+			}
+			v.PayoffFrom = id
+		}
 		b.Debts = append(b.Debts, v)
 
 	case "set_debt":
@@ -374,6 +385,23 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&d.Balance, v.Balance)
 		setIf(&d.APRPct, v.APRPct)
 		setIf(&d.MinPayment, v.MinPayment)
+		if v.PayoffFrom != nil {
+			id := ""
+			if *v.PayoffFrom != "" {
+				if id, err = potRef(b, *v.PayoffFrom); err != nil {
+					return err
+				}
+			}
+			d.PayoffFrom = id
+		}
+		if v.PayoffMonth != nil {
+			if *v.PayoffMonth < 0 {
+				d.PayoffMonth, d.PayoffFrom = nil, ""
+			} else {
+				d.PayoffMonth = new(int)
+				*d.PayoffMonth = *v.PayoffMonth
+			}
+		}
 
 	case "remove_debt":
 		i, err := find("debt", op.Target, ids(b.Debts, debtKey))
@@ -431,6 +459,11 @@ func applyOne(b *Budget, op Op) error {
 		for _, w := range b.Withdrawals {
 			if w.Pot == b.Pots[i].ID {
 				return fmt.Errorf("pot %q is used by the transfer %q; remove that first", b.Pots[i].Name, w.Name)
+			}
+		}
+		for _, d := range b.Debts {
+			if d.PayoffFrom == b.Pots[i].ID {
+				return fmt.Errorf("pot %q pays off the debt %q; change that first", b.Pots[i].Name, d.Name)
 			}
 		}
 		for _, l := range b.Items {

@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"fmt"
 	"strings"
 
 	"bbbudget/internal/app"
@@ -62,6 +63,8 @@ type debtRow struct {
 	EndBalance    string `json:"end_balance"`
 	TotalInterest string `json:"total_interest"`
 	PaidOff       string `json:"paid_off"`
+	// PayoffPlan says when and from where the debt is paid off in full, if set.
+	PayoffPlan string `json:"payoff_plan,omitempty"`
 }
 
 type goalRow struct {
@@ -102,11 +105,28 @@ type monthRow struct {
 	Income      string `json:"income"`
 	Expenses    string `json:"expenses"`
 	DebtPayment string `json:"debt_payments"`
+	Payoff      string `json:"payoff,omitempty"`
 	Left        string `json:"left"`
 	FromSav     string `json:"from_savings,omitempty"`
 	Overdraft   string `json:"overdraft,omitempty"`
 	Saved       string `json:"saved"`
 	Savings     string `json:"savings"`
+}
+
+// payoffPlan describes a debt's payoff: "Nov 2026 from General savings".
+func payoffPlan(b budget.Budget, r *budget.Report, d budget.Debt) string {
+	if d.PayoffMonth == nil {
+		return ""
+	}
+	when := fmt.Sprintf("month %d, after this window", *d.PayoffMonth)
+	if m := *d.PayoffMonth; m < len(r.Months) {
+		when = r.Months[m].Label
+	}
+	from := "that month's money"
+	if i := indexWhere(b.Pots, func(p budget.Pot) bool { return p.ID == d.PayoffFrom }); i >= 0 {
+		from = b.Pots[i].Name
+	}
+	return when + " from " + from
 }
 
 func plain(s string) string { return strings.ReplaceAll(s, "**", "") }
@@ -145,7 +165,7 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 		} else if d.StartBalance.IsZero() {
 			paid = "nothing owed"
 		}
-		s.Debts = append(s.Debts, debtRow{d.ID, d.Name, doc.Currency, doc.Balance.String(), doc.APRPct.String(), doc.MinPayment.String(), d.EndBalance.String(), d.TotalInterest.String(), paid})
+		s.Debts = append(s.Debts, debtRow{d.ID, d.Name, doc.Currency, doc.Balance.String(), doc.APRPct.String(), doc.MinPayment.String(), d.EndBalance.String(), d.TotalInterest.String(), paid, payoffPlan(b, r, doc)})
 	}
 	for i, p := range r.Pots {
 		doc := b.Pots[i]
@@ -189,6 +209,9 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 			DebtPayment: m.DebtPayments.String(), Left: m.Left.String(), Saved: m.Saved.String(), Savings: m.Savings.String()}
 		if m.FromSavings.IsPositive() {
 			row.FromSav = m.FromSavings.String()
+		}
+		if m.Payoff.IsPositive() {
+			row.Payoff = m.Payoff.String()
 		}
 		if m.Overdraft.IsPositive() {
 			row.Overdraft = m.Overdraft.String()

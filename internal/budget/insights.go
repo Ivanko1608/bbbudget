@@ -40,6 +40,7 @@ var DefaultRules = []Rule{
 	{"first_month", ruleFirstMonth},
 	{"biggest_item", ruleBiggestItem},
 	{"debt", ruleDebt},
+	{"debt_payoff", ruleDebtPayoff},
 	{"goals", ruleGoals},
 	{"shortfall", ruleShortfall},
 	{"withdrawal_cut", ruleWithdrawalCut},
@@ -321,6 +322,49 @@ func ruleDebt(pr *Projection) []Insight {
 		out = append(out, Insight{ID: "debt_total_" + d.ID, Tone: tone, Text: fmt.Sprintf(
 			"%s %s and costs %s (%s) in interest over %d months.",
 			d.Name, when, w(s.TotalInterest), w(p.ToBase(s.TotalInterest, money.HalfEven)), p.Months)})
+	}
+	return out
+}
+
+// ruleDebtPayoff says what paying a debt off in full costs, where the money
+// comes from, and what stays owed when the pot can't cover it.
+func ruleDebtPayoff(pr *Projection) []Insight {
+	p := pr.Plan
+	var out []Insight
+	for i, d := range p.Debts {
+		if d.PayoffMonth == nil || *d.PayoffMonth >= len(pr.Months) {
+			continue
+		}
+		m := *d.PayoffMonth
+		mo, dm := pr.Months[m], pr.Months[m].Debts[i]
+		owing := d.Bal
+		if m > 0 {
+			owing = pr.Months[m-1].Debts[i].Balance
+		}
+		if owing = owing.Add(dm.Interest); !owing.IsPositive() {
+			continue // already paid off by then
+		}
+		cost := p.PayCost(dm.Payoff, roundPay)
+		from := "that month's money"
+		if d.PotIdx >= 0 {
+			from = p.Pots[d.PotIdx].Name
+		}
+		amount := w(dm.Payoff)
+		if dm.Payoff.Currency() != p.Base {
+			amount += " (" + w(cost) + ")"
+		}
+		if rest := owing.Sub(dm.Payoff); rest.IsPositive() {
+			text := fmt.Sprintf("%s: %s only holds %s in %s, so it pays off %s and **%s stays owed**, with its minimum payment.",
+				d.Name, from, w(cost), mo.Label, w(dm.Payoff), w(rest))
+			if !dm.Payoff.IsPositive() {
+				text = fmt.Sprintf("%s: %s holds nothing in %s, so the payoff can't happen and **%s stays owed**, with its minimum payment.",
+					d.Name, from, mo.Label, w(rest))
+			}
+			out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneWarn, Text: text})
+			continue
+		}
+		out = append(out, Insight{ID: "debt_payoff_" + d.ID, Tone: ToneGood, Text: fmt.Sprintf(
+			"%s is paid off in full in **%s**: %s from %s, interest up to then included.", d.Name, mo.Label, amount, from)})
 	}
 	return out
 }

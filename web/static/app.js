@@ -379,8 +379,9 @@ function renderItems() {
   $("#debts").innerHTML = b.debts.map((d, i) => {
     const rep = debtRep[d.id];
     const when = rep ? (rep.paid_off_label ? `paid off ${esc(rep.paid_off_label)}` : parseFloat(d.balance) > 0 ? "not paid off in this window" : "") : "";
+    const payoff = d.payoff_month == null ? "" : `pay off in full ${esc(r?.months?.[d.payoff_month]?.label || monthKey(d.payoff_month))} from ${esc(b.pots.find((p) => p.id === d.payoff_from)?.name || "that month's money")}`;
     return itemRow({ kind: "debts", i, name: d.name, color: "var(--debt)",
-      meta: [`${esc(d.apr_pct)}% APR`, `min ${esc(fmtAmount(d.min_payment, d.currency))} ${esc(d.currency)}/mo`, when].filter(Boolean).join(" · "),
+      meta: [`${esc(d.apr_pct)}% APR`, `min ${esc(fmtAmount(d.min_payment, d.currency))} ${esc(d.currency)}/mo`, payoff, when].filter(Boolean).join(" · "),
       value: `${esc(fmtAmount(d.balance, d.currency))} <small>${esc(d.currency)}</small>` });
   }).join("") || `<p class="muted pad">No debts. Add credit cards or loans to see interest and payoff dates.</p>`;
 
@@ -547,7 +548,10 @@ const SHEETS = {
         ${select("Currency", `debts.${i}.currency`, currencyOptions(), { structural: true })}
         ${field("APR %", `debts.${i}.apr_pct`, { type: "decimal" })}
         ${field("Minimum / month", `debts.${i}.min_payment`, { type: "decimal" })}
-        <p class="base">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>`;
+        <p class="base">Interest is charged monthly at APR ÷ 12. The minimum is paid each month until the balance is zero.</p>
+        <label class="f">Pay off in full (optional)<input type="month" data-path="debts.${i}.payoff_month" data-kind="monthidx-opt" data-structural value="${d.payoff_month == null ? "" : monthKey(d.payoff_month)}"></label>
+        ${d.payoff_month == null ? "" : `<label class="f">Paid from<select data-path="debts.${i}.payoff_from" data-kind="text" data-structural>${opts([["", "That month's money"], ...S.budget.pots.map((p) => [p.id, p.name])], d.payoff_from || "")}</select></label>`}
+        <p class="base">Pays the whole balance in that month, interest included, in place of the minimum. Income sent to the same pot that month, such as a sale, arrives first. If the pot holds less, it pays what it can and the rest stays owed.</p>`;
     },
   },
   pots: {
@@ -672,7 +676,10 @@ function onEditorInput(e) {
   if (path === "months" || path.endsWith(".every")) v = parseInt(v, 10);
   const cur = path.match(/^currencies\.(\d+)\.(\w+)$/);
   if (cur && cur[2] === "cash_out_fee_pct" && v === "") v = undefined;
-  if (/^items\.\d+\.pot$/.test(path) && v === "") v = undefined;
+  if (/^(items\.\d+\.pot|debts\.\d+\.payoff_from)$/.test(path) && v === "") v = undefined;
+  // Without a payoff month there is nothing to pay it from.
+  const payoff = path.match(/^debts\.(\d+)\.payoff_month$/);
+  if (payoff && v === undefined) delete S.budget.debts[+payoff[1]].payoff_from;
   if (path.startsWith("withdrawals.") && path.endsWith(".schedule.every") && v === 0) delete getPath(S.budget, path.replace(/\.every$/, "")).end;
   if (cur && (cur[2] === "code" || cur[2] === "source")) {
     // Selects fire input then change: act once, on change.
@@ -809,6 +816,8 @@ const ACTIONS = {
       if (w) { status(`“${item.name}” is used by the transfer “${w.name}”.`, true); return; }
       const l = S.budget.items.find((x) => x.pot === item.id);
       if (l) { status(`“${item.name}” is used by the item “${l.name}”. Route that item elsewhere first.`, true); return; }
+      const d = S.budget.debts.find((x) => x.payoff_from === item.id);
+      if (d) { status(`“${item.name}” pays off the debt “${d.name}”. Change that first.`, true); return; }
       if (S.budget.pots.length === 1) { status("Keep at least one pot: money left over each month goes there.", true); return; }
     }
     if (kind === "categories" && S.budget.items.some((l) => l.category === item.id)) {
