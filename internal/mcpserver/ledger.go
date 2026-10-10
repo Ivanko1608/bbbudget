@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,6 +38,11 @@ type DeleteTxIn struct {
 	Batch string   `json:"batch,omitempty" jsonschema:"remove everything one log call added (e.g. a mistaken import)"`
 }
 
+type StatusIn struct {
+	Ref
+	Month string `json:"month,omitempty" jsonschema:"YYYY-MM; default the current month"`
+}
+
 type txRow struct {
 	ID       string `json:"id"`
 	Date     string `json:"date"`
@@ -66,8 +73,106 @@ func txRows(txs []budget.Transaction) []txRow {
 	return out
 }
 
+type statusRow struct {
+	Category  string            `json:"category"`
+	Label     string            `json:"label"`
+	Kind      string            `json:"kind"`
+	State     budget.SpendState `json:"state"`
+	Planned   string            `json:"planned"`
+	Actual    string            `json:"actual"`
+	Remaining string            `json:"remaining"`
+	Projected string            `json:"projected,omitempty"`
+}
+
+type statusOut struct {
+	Month         string      `json:"month"`
+	Currency      string      `json:"currency"`
+	Days          int         `json:"days"`
+	Elapsed       int         `json:"elapsed"`
+	PlannedSpend  string      `json:"planned_spending"`
+	Spent         string      `json:"spent"`
+	PlannedIncome string      `json:"planned_income"`
+	Income        string      `json:"income"`
+	Transactions  int         `json:"transactions"`
+	Categories    []statusRow `json:"categories"`
+	Flags         []string    `json:"flags"`
+}
+
+func statusResult(s *budget.MonthStatus) statusOut {
+	out := statusOut{
+		Month:         s.Month,
+		Currency:      s.Spent.Currency().Code,
+		Days:          s.Days,
+		Elapsed:       s.Elapsed,
+		PlannedSpend:  s.Planned.String(),
+		Spent:         s.Spent.String(),
+		PlannedIncome: s.IncomePlan.String(),
+		Income:        s.Income.String(),
+		Transactions:  s.Transactions,
+		Categories:    []statusRow{},
+		Flags:         []string{},
+	}
+	for _, c := range s.Categories {
+		out.Categories = append(out.Categories, newStatusRow(c))
+	}
+	for _, f := range s.Flags {
+		out.Flags = append(out.Flags, plain(f.Text))
+	}
+	return out
+}
+
+func newStatusRow(c budget.CategoryStatus) statusRow {
+	row := statusRow{
+		Category:  c.Category,
+		Label:     c.Label,
+		Kind:      c.Kind,
+		State:     c.State,
+		Planned:   c.Planned.String(),
+		Actual:    c.Actual.String(),
+		Remaining: c.Remaining.String(),
+	}
+	if c.Projected != nil {
+		row.Projected = c.Projected.String()
+	}
+	return row
+}
+
+// monthStatus is a month's status with its flags in the user's language.
+func (h *handlers) monthStatus(ctx context.Context, id, month string) (*budget.MonthStatus, error) {
+	status, err := h.app.MonthStatus(ctx, id, month)
+	if err != nil {
+		return nil, err
+	}
+	status.Localize(h.reader())
+	return status, nil
+}
+
+// flagsByMonth are the flags of every month the transactions fall in.
+func (h *handlers) flagsByMonth(
+	ctx context.Context, id string, txs []budget.Transaction,
+) (map[string][]string, error) {
+	months := map[string]bool{}
+	for _, t := range txs {
+		months[t.Date[:len("YYYY-MM")]] = true
+	}
+	flags := map[string][]string{}
+	for _, month := range slices.Sorted(maps.Keys(months)) {
+		status, err := h.monthStatus(ctx, id, month)
+		if errors.Is(err, app.ErrBadInput) {
+			continue // a month outside the budget's window has no plan to compare with
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(status.Flags) > 0 {
+			flags[month] = statusResult(status).Flags
+		}
+	}
+	return flags, nil
+}
+
 func (h *handlers) registerLedger(s *mcp.Server) {
-	tool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged and its batch id.",
+	tool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, pace, unplanned spending).",
 		func(ctx context.Context, in LogIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -77,9 +182,16 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
+			flags, err := h.flagsByMonth(ctx, id, res.Logged)
+			if err != nil {
+				return nil, err
+			}
 			out := map[string]any{"batch": res.Batch, "logged": txRows(res.Logged)}
 			if len(res.Skipped) > 0 {
 				out["skipped_already_logged"] = res.Skipped
+			}
+			if len(flags) > 0 {
+				out["flags"] = flags
 			}
 			return out, nil
 		})
@@ -128,6 +240,18 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 				return nil, err
 			}
 			return map[string]int{"removed": n}, nil
+		})
+	tool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
+		func(ctx context.Context, in StatusIn) (any, error) {
+			id, err := h.id(in.Budget)
+			if err != nil {
+				return nil, err
+			}
+			st, err := h.monthStatus(ctx, id, in.Month)
+			if err != nil {
+				return nil, err
+			}
+			return statusResult(st), nil
 		})
 }
 

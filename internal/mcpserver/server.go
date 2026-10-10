@@ -67,7 +67,7 @@ tools when the user clearly asks for a change, then state what changed and that 
 
 Actual money: the budget is a plan; log_transactions records what was really spent or received ("I
 spent 40 on groceries", or a pasted bank statement: one call with every row, each with an
-external_id so a re-import is skipped). Choose
+external_id so a re-import is skipped). month_status compares the month with the plan. Choose
 categories from the budget; if one is unclear, ask. Correct mistakes with update_transaction or
 delete_transactions (a whole batch for a bad import).
 

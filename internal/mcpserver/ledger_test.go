@@ -1,6 +1,9 @@
 package mcpserver
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // statement is two rows of a bank statement, eight days into the budget's
 // first month (setup's today).
@@ -38,6 +41,18 @@ func TestLoggingAStatementReturnsTheBatch(t *testing.T) {
 	}
 }
 
+func TestLoggingReturnsTheMonthsFlags(t *testing.T) {
+	h := setup(t)
+
+	r := h.logStatement()
+
+	october, _ := field(t, r, "flags", "2026-10").([]any)
+	want := "Travel: €900 spent of €600 planned, €300 over."
+	if len(october) == 0 || !strings.Contains(october[0].(string), want) {
+		t.Errorf("flags: %v", r["flags"])
+	}
+}
+
 func TestPastingTheSameStatementAgainLogsNothing(t *testing.T) {
 	h := setup(t)
 	h.logStatement()
@@ -49,6 +64,23 @@ func TestPastingTheSameStatementAgainLogsNothing(t *testing.T) {
 	}
 	if skipped, _ := r["skipped_already_logged"].([]any); len(skipped) != 2 {
 		t.Errorf("skipped: %v", r["skipped_already_logged"])
+	}
+}
+
+func TestMonthStatusTool(t *testing.T) {
+	h := setup(t)
+	h.logStatement()
+
+	status := h.call("month_status", map[string]any{}, false)
+
+	if status["month"] != "2026-10" {
+		t.Errorf("month: %v", status["month"])
+	}
+	if status["spent"] != "945.20" {
+		t.Errorf("spent: %v", status["spent"])
+	}
+	if status["elapsed"] != 8.0 {
+		t.Errorf("elapsed: %v", status["elapsed"])
 	}
 }
 
@@ -93,6 +125,7 @@ func TestTransactionToolErrors(t *testing.T) {
 		args map[string]any
 	}{
 		{"unknown category", "log_transactions", map[string]any{"transactions": unknownCategory}},
+		{"month outside the budget", "month_status", map[string]any{"month": "1999-01"}},
 		{"neither ids nor batch", "delete_transactions", map[string]any{}},
 		{"both ids and batch", "delete_transactions", map[string]any{"ids": []any{"t1"}, "batch": "b1"}},
 	}
