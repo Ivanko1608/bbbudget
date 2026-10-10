@@ -69,7 +69,7 @@ func AdoptScenario(b Budget, ref string) (Budget, error) {
 type Outcome struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// Error is set when the scenario no longer applies (e.g. its line was deleted).
+	// Error is set when the scenario no longer applies (e.g. its item was deleted).
 	Error            string        `json:"error,omitempty"`
 	FirstMonthSaved  *money.Money  `json:"first_month_saved,omitempty"`
 	EndSavings       *money.Money  `json:"end_savings,omitempty"`

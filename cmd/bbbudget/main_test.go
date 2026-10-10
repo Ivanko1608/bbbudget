@@ -49,7 +49,7 @@ func TestCLI(t *testing.T) {
 	}
 	// Flags may follow positionals; YAML imports keep exact amounts.
 	file := filepath.Join(t.TempDir(), "mine.yaml")
-	os.WriteFile(file, []byte("name: Mine\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nlines:\n  - {name: Pay, amount: 2000.10, category: pay}\n  - {name: Rent, amount: 950, category: living}\n"), 0o600)
+	os.WriteFile(file, []byte("name: Mine\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nitems:\n  - {name: Pay, amount: 2000.10, category: pay}\n  - {name: Rent, amount: 950, category: living}\n"), 0o600)
 	if out, err := runCLI(t, "import", "mine", file, "-dir", dir); err != nil {
 		t.Fatalf("import: %v %s", err, out)
 	}
@@ -152,9 +152,9 @@ func TestStdioMCP(t *testing.T) {
 	if cs.InitializeResult().Instructions == "" {
 		t.Error("server instructions missing")
 	}
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "update_line", Arguments: map[string]any{"line": "rent", "amount": "1200"}})
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "update_item", Arguments: map[string]any{"item": "rent", "amount": "1200"}})
 	if err != nil || res.IsError {
-		t.Fatalf("update_line: %v %+v", err, res)
+		t.Fatalf("update_item: %v %+v", err, res)
 	}
 	if !strings.Contains(res.Content[0].(*mcp.TextContent).Text, `"amount": "1200.00"`) {
 		t.Fatal("update not reflected")

@@ -15,7 +15,7 @@ import (
 // Op is one edit to a budget. Every change (UI, MCP, scenarios) is expressed
 // as Ops so it can be previewed (what-if), saved (scenario) or applied.
 //
-//	{"op":"set_line","target":"rent","value":{"amount":"800"}}
+//	{"op":"set_item","target":"rent","value":{"amount":"800"}}
 type Op struct {
 	Op string `json:"op"`
 	// Target names the thing to change: an id, an exact name, or an
@@ -26,7 +26,7 @@ type Op struct {
 
 // Patches: nil fields are left unchanged.
 
-type LinePatch struct {
+type ItemPatch struct {
 	Name     *string        `json:"name,omitempty"`
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
@@ -34,9 +34,9 @@ type LinePatch struct {
 	Schedule *ScheduleSpec  `json:"schedule,omitempty"`
 }
 
-// LineInput is the value of add_line: a Line whose schedule is a ScheduleSpec.
+// ItemInput is the value of add_item: an Item whose schedule is a ScheduleSpec.
 // An omitted schedule means monthly from the first month.
-type LineInput struct {
+type ItemInput struct {
 	ID       string        `json:"id,omitempty"`
 	Name     string        `json:"name"`
 	Amount   money.Decimal `json:"amount"`
@@ -50,8 +50,8 @@ type LineInput struct {
 //   - by calendar month (preferred): {"starts":"2026-03","ends":"2026-12","every":1}.
 //     Months are resolved against the budget's start_month when the op is
 //     applied, so a stored scenario keeps pointing at the same calendar months.
-//     Omitted fields keep the line's current values (monthly from the first
-//     month for a new line), and "ends": "" removes the end. A spec with only
+//     Omitted fields keep the item's current values (monthly from the first
+//     month for a new item), and "ends": "" removes the end. A spec with only
 //     "every" is in this form too.
 //   - by month index from start_month, whenever start or end is given:
 //     {"start":2,"every":0,"end":5}. This is the stored form; omitted fields
@@ -67,7 +67,7 @@ type ScheduleSpec struct {
 }
 
 // resolve turns the spec into a Schedule for a budget starting at startMonth.
-// cur is the schedule being edited (set_line), nil for a new line.
+// cur is the schedule being edited (set_item), nil for a new item.
 func (s ScheduleSpec) resolve(startMonth string, cur *Schedule) (Schedule, error) {
 	byIndex := s.Start != nil || s.End != nil
 	if byIndex && (s.Starts != "" || s.Ends != nil) {
@@ -186,9 +186,9 @@ var OpKinds = map[string]string{
 	"add_category":    "value: Category",
 	"set_category":    "target: category; value: CategoryPatch",
 	"remove_category": "target: category (must be unused)",
-	"add_line":        "value: Line (id optional; schedule optional, default monthly)",
-	"set_line":        "target: line; value: LinePatch (schedule: only the given fields change when using starts/ends)",
-	"remove_line":     "target: line",
+	"add_item":        "value: Item (id optional; schedule optional, default monthly)",
+	"set_item":        "target: item; value: ItemPatch (schedule: only the given fields change when using starts/ends)",
+	"remove_item":     "target: item",
 	"add_debt":        "value: Debt (id optional)",
 	"set_debt":        "target: debt; value: DebtPatch",
 	"remove_debt":     "target: debt",
@@ -293,9 +293,9 @@ func applyOne(b *Budget, op Op) error {
 
 	case "remove_currency":
 		code := strings.ToUpper(strings.TrimSpace(op.Target))
-		for _, l := range b.Lines {
+		for _, l := range b.Items {
 			if l.Currency == code {
-				return fmt.Errorf("currency %s is used by line %q", code, l.Name)
+				return fmt.Errorf("currency %s is used by item %q", code, l.Name)
 			}
 		}
 		for _, d := range b.Debts {
@@ -340,19 +340,19 @@ func applyOne(b *Budget, op Op) error {
 		if err != nil {
 			return err
 		}
-		for _, l := range b.Lines {
+		for _, l := range b.Items {
 			if l.Category == b.Categories[i].ID {
-				return fmt.Errorf("category %q is used by line %q", b.Categories[i].Label, l.Name)
+				return fmt.Errorf("category %q is used by item %q", b.Categories[i].Label, l.Name)
 			}
 		}
 		b.Categories = remove(b.Categories, i)
 
-	case "add_line":
-		var in LineInput
+	case "add_item":
+		var in ItemInput
 		if err := decodeStrict(op.Value, &in); err != nil {
 			return err
 		}
-		v := Line{ID: in.ID, Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: Monthly()}
+		v := Item{ID: in.ID, Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: Monthly()}
 		if in.Schedule != nil {
 			s, err := in.Schedule.resolve(b.StartMonth, nil)
 			if err != nil {
@@ -361,7 +361,7 @@ func applyOne(b *Budget, op Op) error {
 			v.Schedule = s
 		}
 		if v.ID == "" {
-			v.ID = uniqueID(v.Name, ids(b.Lines, lineKey))
+			v.ID = uniqueID(v.Name, ids(b.Items, itemKey))
 		}
 		if v.Currency == "" {
 			v.Currency = b.BaseCurrency
@@ -369,18 +369,18 @@ func applyOne(b *Budget, op Op) error {
 		if v.Category == "" {
 			return fmt.Errorf("category is required")
 		}
-		b.Lines = append(b.Lines, v)
+		b.Items = append(b.Items, v)
 
-	case "set_line":
-		var v LinePatch
+	case "set_item":
+		var v ItemPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
-		i, err := find("line", op.Target, ids(b.Lines, lineKey))
+		i, err := find("item", op.Target, ids(b.Items, itemKey))
 		if err != nil {
 			return err
 		}
-		l := &b.Lines[i]
+		l := &b.Items[i]
 		setIf(&l.Name, v.Name)
 		setIf(&l.Amount, v.Amount)
 		setIf(&l.Currency, v.Currency)
@@ -393,12 +393,12 @@ func applyOne(b *Budget, op Op) error {
 			l.Schedule = s
 		}
 
-	case "remove_line":
-		i, err := find("line", op.Target, ids(b.Lines, lineKey))
+	case "remove_item":
+		i, err := find("item", op.Target, ids(b.Items, itemKey))
 		if err != nil {
 			return err
 		}
-		b.Lines = remove(b.Lines, i)
+		b.Items = remove(b.Items, i)
 
 	case "add_debt":
 		var v Debt
@@ -498,13 +498,13 @@ func ids[T any](s []T, key func(T) (string, string)) []idName {
 	return out
 }
 
-func lineKey(l Line) (string, string) { return l.ID, l.Name }
+func itemKey(l Item) (string, string) { return l.ID, l.Name }
 func debtKey(d Debt) (string, string) { return d.ID, d.Name }
 func goalKey(g Goal) (string, string) { return g.ID, g.Name }
 
 // find resolves a reference: exact id, then exact name, then a unique
 // substring of a name (all case-insensitive). Ambiguity is an error rather
-// than a guess, so "school" never silently edits the wrong line.
+// than a guess, so "school" never silently edits the wrong item.
 func find(kind, ref string, items []idName) (int, error) {
 	r := strings.ToLower(strings.TrimSpace(ref))
 	if r == "" {
