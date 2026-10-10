@@ -258,7 +258,7 @@ function renderEditors() {
   $("#items").innerHTML = b.items.map((l, i) => {
     const color = b.categories.find((c) => c.id === l.category)?.color || "var(--line)";
     const sch = l.schedule;
-    return `<div class="row row-line" style="box-shadow:inset 3px 0 0 ${esc(color)}">
+    return `<div class="row row-item" style="box-shadow:inset 3px 0 0 ${esc(color)}">
       ${field(t("field.name"), `items.${i}.name`, { cls: "name" })}
       ${field(t("field.amount"), `items.${i}.amount`, { type: "decimal" })}
       ${select(t("field.currency"), `items.${i}.currency`, currencyOptions())}
