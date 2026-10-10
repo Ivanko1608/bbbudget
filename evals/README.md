@@ -12,13 +12,13 @@ template: example                    # the budget to start from (fictional)
 turns:                               # what the person says, in order
   - Raise rent to 1200
 reference:                           # one list of tool calls per turn
-  - - {tool: update_line, input: {line: rent, amount: "1200"}}
+  - - {tool: update_item, input: {item: rent, amount: "1200"}}
 expect:
   saved: true                        # did anything get written?
   writes_by: assistant               # every write attributed to the assistant
-  lines:                             # by id: fields the line must have
+  items:                             # by id: fields the item must have
     rent: {amount: "1200"}
-  no_line_named: [gym]               # lines that must not exist
+  no_item_named: [gym]               # items that must not exist
   transactions: 1                    # how many logged in total
   transaction: {category: home, amount: "45.2"}  # one logged transaction must match
   reply_script: cyrillic             # the last reply is written in this script

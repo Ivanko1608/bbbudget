@@ -408,7 +408,7 @@ make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
 
-**Assistant evals.** Once an AI assistant is the main way in, the tool descriptions are the product. `evals/` holds conversations with checks on what should happen: a rent change lands on the right line, a what-if saves nothing, a statement pasted twice logs nothing twice, undo puts things back, and a question in Russian gets a Russian answer. `make eval` runs them against a real model and prints a pass rate. `make check` replays each case's reference solution through the same loop and tools, so the cases themselves stay correct. See [evals/README.md](evals/README.md).
+**Assistant evals.** Once an AI assistant is the main way in, the tool descriptions are the product. `evals/` holds conversations with checks on what should happen: a rent change lands on the right item, a what-if saves nothing, a statement pasted twice logs nothing twice, undo puts things back, and a question in Russian gets a Russian answer. `make eval` runs them against a real model and prints a pass rate. `make check` replays each case's reference solution through the same loop and tools, so the cases themselves stay correct. See [evals/README.md](evals/README.md).
 
 ```
 make eval                 # the model your settings choose, else Claude with ANTHROPIC_API_KEY

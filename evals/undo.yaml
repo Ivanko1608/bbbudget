@@ -3,10 +3,10 @@ turns:
   - Set rent to 1300.
   - Actually, undo that.
 reference:
-  - - {tool: update_line, input: {line: rent, amount: "1300"}}
+  - - {tool: update_item, input: {item: rent, amount: "1300"}}
   - - {tool: undo, input: {}}
 expect:
   saved: true
   writes_by: assistant
-  lines:
+  items:
     rent: {amount: "1150"}

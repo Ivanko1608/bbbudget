@@ -46,8 +46,8 @@ type Call struct {
 type Expect struct {
 	Saved         *bool                        `yaml:"saved"`
 	WritesBy      string                       `yaml:"writes_by"`
-	Lines         map[string]map[string]string `yaml:"lines"`
-	NoLineNamed   []string                     `yaml:"no_line_named"`
+	Items         map[string]map[string]string `yaml:"items"`
+	NoItemNamed   []string                     `yaml:"no_item_named"`
 	Transactions  *int                         `yaml:"transactions"`
 	Transaction   map[string]string            `yaml:"transaction"`
 	ReplyScript   string                       `yaml:"reply_script"`
@@ -163,14 +163,14 @@ func check(ctx context.Context, a *app.App, e Expect, reply string) []string {
 			}
 		}
 	}
-	lines := map[string]budget.Line{}
-	for _, l := range v.Budget.Lines {
-		lines[l.ID] = l
+	items := map[string]budget.Item{}
+	for _, l := range v.Budget.Items {
+		items[l.ID] = l
 	}
-	for id, want := range e.Lines {
-		l, ok := lines[id]
+	for id, want := range e.Items {
+		l, ok := items[id]
 		if !ok {
-			fail("no line %q (have %s)", id, lineIDs(v.Budget.Lines))
+			fail("no item %q (have %s)", id, itemIDs(v.Budget.Items))
 			continue
 		}
 		got := map[string]string{
@@ -179,16 +179,16 @@ func check(ctx context.Context, a *app.App, e Expect, reply string) []string {
 		}
 		for k, w := range want {
 			if g, ok := got[k]; !ok {
-				fail("line %s: unknown field %q in the case", id, k)
+				fail("item %s: unknown field %q in the case", id, k)
 			} else if !sameValue(g, w) {
-				fail("line %s: %s is %q, want %q", id, k, g, w)
+				fail("item %s: %s is %q, want %q", id, k, g, w)
 			}
 		}
 	}
-	for _, name := range e.NoLineNamed {
-		for _, l := range v.Budget.Lines {
+	for _, name := range e.NoItemNamed {
+		for _, l := range v.Budget.Items {
 			if strings.Contains(strings.ToLower(l.Name), strings.ToLower(name)) {
-				fail("line %q should not exist", l.Name)
+				fail("item %q should not exist", l.Name)
 			}
 		}
 	}
@@ -211,7 +211,7 @@ func check(ctx context.Context, a *app.App, e Expect, reply string) []string {
 	return fails
 }
 
-func lineIDs(ls []budget.Line) string {
+func itemIDs(ls []budget.Item) string {
 	var ids []string
 	for _, l := range ls {
 		ids = append(ids, l.ID)

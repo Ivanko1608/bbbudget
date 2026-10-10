@@ -2,9 +2,9 @@ template: example
 turns:
   - Raise rent to 1200
 reference:
-  - - {tool: update_line, input: {line: rent, amount: "1200"}}
+  - - {tool: update_item, input: {item: rent, amount: "1200"}}
 expect:
   saved: true
   writes_by: assistant
-  lines:
+  items:
     rent: {amount: "1200"}
