@@ -59,7 +59,7 @@ Few and short.
 
 ## Pull requests
 
-- **Keep a PR under 1000 changed lines** (additions plus deletions). 1500 is the hard limit. Split bigger work into stacked PRs, each one reviewable on its own.
+- **Keep a PR under 1000 added lines**. 1500 is the hard limit. Split bigger work into stacked PRs, each one reviewable on its own.
 
 ## Before you finish
 
