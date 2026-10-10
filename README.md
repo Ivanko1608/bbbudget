@@ -280,7 +280,7 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
                      manifest.webmanifest and icons (icon.svg is the source of the PNGs)
 ```
 
-Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← transports. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
+[ARCHITECTURE.md](ARCHITECTURE.md) explains how these fit together and why. Dependencies only point inward: `money` ← `budget` ← `store`/`app` ← transports. `rates` depends only on the standard library and is used by `app`. Only the transports know about HTTP or MCP.
 
 ### HTTP API
 
