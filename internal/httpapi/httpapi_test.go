@@ -135,7 +135,7 @@ func TestValidationIssuesAreReturned(t *testing.T) {
 	bad := strings.Replace(string(b), `"amount":"1150"`, `"amount":"1150.001"`, 1)
 	out := c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":`+bad+`}`, 422)
 	issues := out["issues"].([]any)
-	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "lines[1].amount" {
+	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "items[1].amount" {
 		t.Fatalf("issues: %v", issues)
 	}
 	// A float-y or malformed amount never reaches the domain.
@@ -145,13 +145,13 @@ func TestValidationIssuesAreReturned(t *testing.T) {
 
 func TestOpsWhatIfScenarios(t *testing.T) {
 	c := setup(t)
-	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"tuition","value":{"amount":"450"}}]}`, 200)
+	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"tuition","value":{"amount":"450"}}]}`, 200)
 	if endSavings(v) != "15509.88" { // +5100.00
 		t.Fatalf("ops: %s", endSavings(v))
 	}
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"school","value":{"amount":"1"}}]}`, 400) // ambiguous
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"nope","value":{"amount":"1"}}]}`, 400)   // no match inside an op
-	c.do("POST", "/api/budgets/home/ops", `{"revision":1,"ops":[{"op":"remove_line","target":"rent"}]}`, 409)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"school","value":{"amount":"1"}}]}`, 400) // ambiguous
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"nope","value":{"amount":"1"}}]}`, 400)   // no match inside an op
+	c.do("POST", "/api/budgets/home/ops", `{"revision":1,"ops":[{"op":"remove_item","target":"rent"}]}`, 409)
 
 	wi := c.do("POST", "/api/budgets/home/what-if", `{"ops":[{"op":"set_currency","target":"USD","value":{"per_base":"1"}}]}`, 200)
 	if wi["report"] == nil {
@@ -289,7 +289,7 @@ func TestMetaListsCrypto(t *testing.T) {
 
 func TestHistoryAndUndo(t *testing.T) {
 	c := setup(t)
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"rent","value":{"amount":"1200"}}]}`, 200)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1200"}}]}`, 200)
 	var h []map[string]any
 	w := c.req("GET", "/api/budgets/home/history", "", nil)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &h) != nil || len(h) != 2 {
@@ -301,7 +301,7 @@ func TestHistoryAndUndo(t *testing.T) {
 	c.do("GET", "/api/budgets/home/history?limit=x", "", 400)
 
 	// Undoing r2 while r3 exists needs force; the 409 lists what would be lost.
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_line","target":"rent","value":{"amount":"1300"}}]}`, 200)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1300"}}]}`, 200)
 	if v := c.do("POST", "/api/budgets/home/undo", `{"change":2}`, 409); len(v["later"].([]any)) != 1 {
 		t.Fatalf("conflict: %v", v)
 	}

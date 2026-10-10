@@ -13,20 +13,20 @@ start_month: "2026-10"
 savings_start: 0.1
 currencies: [{code: USD, per_base: 1.0800000001, transfer_fee_pct: 2}]
 categories: [{label: Living}]
-lines:
+items:
   - {name: Rent, amount: 1234567890123.45, category: living}
   - {name: Bill, amount: "0.30", currency: USD, category: living, schedule: {every: 3}}
 `), "yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.SavingsStart.String() != "0.1" || b.Currencies[0].PerBase.String() != "1.0800000001" || b.Lines[0].Amount.String() != "1234567890123.45" {
-		t.Fatalf("precision lost: %s %s %s", b.SavingsStart, b.Currencies[0].PerBase, b.Lines[0].Amount)
+	if b.SavingsStart.String() != "0.1" || b.Currencies[0].PerBase.String() != "1.0800000001" || b.Items[0].Amount.String() != "1234567890123.45" {
+		t.Fatalf("precision lost: %s %s %s", b.SavingsStart, b.Currencies[0].PerBase, b.Items[0].Amount)
 	}
 	// Normalization: ids from names/labels, base currency, monthly default, kind, window.
-	if b.Categories[0].ID != "living" || b.Categories[0].Kind != KindExpense || b.Lines[0].ID != "rent" ||
-		b.Lines[0].Currency != "EUR" || b.Lines[0].Schedule != Monthly() || b.Lines[1].Schedule.Every != 3 || b.Months != 12 {
-		t.Fatalf("normalize: %+v %+v", b.Categories[0], b.Lines)
+	if b.Categories[0].ID != "living" || b.Categories[0].Kind != KindExpense || b.Items[0].ID != "rent" ||
+		b.Items[0].Currency != "EUR" || b.Items[0].Schedule != Monthly() || b.Items[1].Schedule.Every != 3 || b.Months != 12 {
+		t.Fatalf("normalize: %+v %+v", b.Categories[0], b.Items)
 	}
 	if b.Debts == nil || b.Goals == nil || b.Scenarios == nil {
 		t.Fatal("lists must be empty, not null")
@@ -36,7 +36,7 @@ lines:
 func TestDocumentRejectsSurprises(t *testing.T) {
 	cases := map[string]string{
 		"unknown field":   "name: T\nbase_curency: EUR\n",
-		"unknown in line": "name: T\nlines: [{name: x, amout: 1}]\n",
+		"unknown in item": "name: T\nitems: [{name: x, amout: 1}]\n",
 		"exponent":        "name: T\nsavings_start: 1e3\n",
 		"hex":             "name: T\nsavings_start: 0x10\n",
 		"float months":    "name: T\nmonths: 1.5\n",

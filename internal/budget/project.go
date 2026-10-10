@@ -95,8 +95,8 @@ func Project(p *Plan) (proj *Projection, err error) {
 			}
 		}
 
-		// 2. Income and expense lines.
-		for _, l := range p.Lines {
+		// 2. Income and expense items.
+		for _, l := range p.Items {
 			if !l.Schedule.ActiveIn(m) {
 				continue
 			}

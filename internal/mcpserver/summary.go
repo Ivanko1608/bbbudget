@@ -26,7 +26,7 @@ type Summary struct {
 		Currencies     []budget.CurrencyRate `json:"currencies"`
 	} `json:"settings"`
 	Categories []budget.Category `json:"categories"`
-	Lines      []lineRow         `json:"lines"`
+	Items      []itemRow         `json:"items"`
 	Debts      []debtRow         `json:"debts,omitempty"`
 	Goals      []goalRow         `json:"goals,omitempty"`
 	Scenarios  []scenarioRow     `json:"scenarios,omitempty"`
@@ -45,7 +45,7 @@ type insightRow struct {
 	Args map[string]i18n.Arg `json:"args,omitempty"`
 }
 
-type lineRow struct {
+type itemRow struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Category string `json:"category"`
@@ -112,8 +112,8 @@ func summarizeReport(b budget.Budget, r *budget.Report) Summary {
 	s.Settings.DebtStrategy = b.DebtStrategy
 	s.Settings.Currencies = b.Currencies
 	s.Categories = b.Categories
-	for _, l := range r.Lines {
-		s.Lines = append(s.Lines, lineRow{l.ID, l.Name, l.Category, l.Amount.String(), l.Amount.Currency().Code, l.PerOccurrence.String(), l.ScheduleText})
+	for _, l := range r.Items {
+		s.Items = append(s.Items, itemRow{l.ID, l.Name, l.Category, l.Amount.String(), l.Amount.Currency().Code, l.PerOccurrence.String(), l.ScheduleText})
 	}
 	for i, d := range r.Debts {
 		doc := b.Debts[i]

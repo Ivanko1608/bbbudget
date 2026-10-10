@@ -47,7 +47,7 @@ func TestUserDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("mine.yaml", "description: My own\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nlines: [{name: Pay, amount: 2500, category: pay}]\n")
+	write("mine.yaml", "description: My own\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nitems: [{name: Pay, amount: 2500, category: pay}]\n")
 	write("blank.json", `{"description":"my blank","base_currency":"USD","categories":[{"label":"Stuff"}]}`)
 	write("notes.txt", "ignored")
 
@@ -69,7 +69,7 @@ func TestUserDirectory(t *testing.T) {
 	}
 
 	// A broken file is reported by name, not skipped silently.
-	write("broken.yaml", "base_currency: EUR\nlines: [{name: x, amount: 1.001, category: nope}]\n")
+	write("broken.yaml", "base_currency: EUR\nitems: [{name: x, amount: 1.001, category: nope}]\n")
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "broken.yaml") {
 		t.Fatalf("broken template: %v", err)
 	}
