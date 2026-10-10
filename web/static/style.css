@@ -97,14 +97,14 @@ input:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visi
 .row{display:grid;gap:6px;padding:10px 0 10px 8px;border-top:1px solid var(--line);align-items:end}
 .row:first-child{border-top:0}
 .row .f{font-size:.75rem}
-.row-line{grid-template-columns:1fr 1fr}
-.row-line .name{grid-column:1 / -1}
-.row-line .del{grid-column:2;justify-self:end}
+.row-item{grid-template-columns:1fr 1fr}
+.row-item .name{grid-column:1 / -1}
+.row-item .del{grid-column:2;justify-self:end}
 @media (min-width:700px){
   /* two rows: name amount currency category ✕ / repeats from until ≈base */
-  .row-line{grid-template-columns:2fr 1fr 1fr 1.2fr 64px}
-  .row-line .name{grid-column:auto}
-  .row-line .del{grid-column:5;grid-row:1}
+  .row-item{grid-template-columns:2fr 1fr 1fr 1.2fr 64px}
+  .row-item .name{grid-column:auto}
+  .row-item .del{grid-column:5;grid-row:1}
 }
 .row-cur{grid-template-columns:1fr 1fr}
 .row-cur .del{justify-self:end}

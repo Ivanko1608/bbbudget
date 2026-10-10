@@ -130,7 +130,7 @@ Ask a few questions at a time, in this order, and keep it conversational:
 5. Debts: balance, interest rate (APR), minimum payment; and savings I already have.
 6. Goals: what I am saving for and how much.
 Don't invent numbers; if I don't know one, suggest a placeholder and say so.
-Then create the budget` + idClause(a) + ` from the blank template (create_budget), add everything in one apply_ops call (categories first, then lines, debts, goals; schedules with "starts"/"ends" as YYYY-MM), and set currencies with set_currency so their rates are fetched.
+Then create the budget` + idClause(a) + ` from the blank template (create_budget), add everything in one apply_ops call (categories first, then items, debts, goals; schedules with "starts"/"ends" as YYYY-MM), and set currencies with set_currency so their rates are fetched.
 Finish with a short summary of the plan from get_budget: what is left each month, when debts are paid off, when goals are reached, and the one or two insights that matter most. Mention that every change can be undone.`
 		},
 	},
@@ -162,7 +162,7 @@ Keep it short. Numbers come from the tool results, never estimated.`
 				when = w
 			}
 			return fmt.Sprintf(`Can I afford %s for %s in %s? Use %s. %s
-Model it with what_if as a one-off line (schedule {"starts": the month, "every": 0}) in a fitting category; don't save anything.
+Model it with what_if as a one-off item (schedule {"starts": the month, "every": 0}) in a fitting category; don't save anything.
 Answer with yes, no, or "yes, but" first, then why, from the effect: what that month is left with, whether savings go negative, which goal dates or debt payoffs move and by how much.
 If it doesn't fit, say what would make it fit (a later month, spreading it, a cut elsewhere), quantified with one more what_if.`,
 				strings.TrimSpace(a["item"]), strings.TrimSpace(a["amount"]), when, which(a), lang(a))
@@ -190,9 +190,9 @@ If it doesn't fit, say what would make it fit (a later month, spreading it, a cu
 				st = "(ask me to paste it)"
 			}
 			return `Log my bank statement into ` + which(a) + `. ` + lang(a) + `
-1. get_budget (view "lines") for the categories and lines.
+1. get_budget (view "items") for the categories and items.
 2. Read every row: date (YYYY-MM-DD), amount, currency, description. Skip transfers between my own accounts and card repayments, and tell me you did.
-3. Pick a category for each row from the budget's categories (and the planned line it pays, when obvious). If a row is ambiguous, ask me about those rows together before logging anything; don't guess.
+3. Pick a category for each row from the budget's categories (and the planned item it pays, when obvious). If a row is ambiguous, ask me about those rows together before logging anything; don't guess.
 4. Give each row an external_id: the bank's own id if there is one, else date|amount|description. Then log every row in one log_transactions call.
 5. Report what was logged, what was skipped as already imported, and the month's flags. Say that the whole import can be taken back with delete_transactions and its batch id.
 
