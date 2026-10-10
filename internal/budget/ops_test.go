@@ -129,8 +129,9 @@ func TestDebtAndGoalOps(t *testing.T) {
 	if nb.Debts[0].ID != "credit-card" || nb.Debts[0].APRPct.String() != "19.9" {
 		t.Errorf("debt: %+v", nb.Debts[0])
 	}
-	if nb.Goals[1].ID != "new-laptop" || nb.Goals[0].Target.String() != "3000" {
-		t.Errorf("goals: %+v", nb.Goals)
+	// The old goal ops still work, on pots.
+	if nb.Pots[2].ID != "new-laptop" || nb.Pots[2].Kind != PotSinking || nb.Pots[1].Target.String() != "3000" {
+		t.Errorf("pots: %+v", nb.Pots)
 	}
 }
 
