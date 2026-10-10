@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -103,9 +102,9 @@ type CreateIn struct {
 }
 
 type ScheduleIn struct {
-	Every  *int   `json:"every,omitempty" jsonschema:"period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off"`
-	Starts string `json:"starts,omitempty" jsonschema:"first month YYYY-MM; default is the budget's start month"`
-	Ends   string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive); omit for no end"`
+	Every  *int    `json:"every,omitempty" jsonschema:"period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off"`
+	Starts string  `json:"starts,omitempty" jsonschema:"first month YYYY-MM; default is the budget's start month (add_item) or unchanged (update_item)"`
+	Ends   *string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive). In update_item omit to keep the current end, or send an empty string to remove it"`
 }
 
 type AddItemIn struct {
@@ -197,7 +196,8 @@ func opsHelp() string {
 		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
 	}
 	return b.String() + `
-Value fields: Item{name, amount, currency, category, schedule{start, every, end}, pot} (schedule uses 0-based month indexes from start_month), Debt{name, currency, balance, apr_pct, min_payment, payoff_month, payoff_from}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.`
+Value fields: Item{name, amount, currency, category, schedule, pot}, Debt{name, currency, balance, apr_pct, min_payment, payoff_month, payoff_from}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.
+Item schedules: give calendar months, {"starts":"YYYY-MM","ends":"YYYY-MM","every":N} (every: 1 monthly, the default; 3 quarterly; 12 yearly; 0 one-off in starts). In set_item only the given schedule fields change, and "ends":"" removes the end. The stored form uses 0-based month indexes {start, every, end}; don't mix the two in one schedule. Withdrawal schedules and payoff_month still take 0-based month indexes from start_month.`
 }
 
 func (h *handlers) register(s *mcp.Server) {
@@ -221,18 +221,12 @@ func (h *handlers) register(s *mcp.Server) {
 		})
 
 	tool(s, "add_item", "Add an income or cost item. Returns the updated budget.", func(ctx context.Context, in AddItemIn) (any, error) {
-		return h.withSchedule(ctx, in.Budget, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			l := budget.Item{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: budget.Monthly()}
-			if sch != nil {
-				l.Schedule = *sch
-			}
-			return []budget.Op{budget.NewOp("add_item", "", l)}
-		})
+		l := budget.ItemInput{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
+		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("add_item", "", l))
 	})
-	tool(s, "update_item", "Change fields of one item; omitted fields stay as they are. Returns the updated budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
-		return h.withSchedule(ctx, in.Budget, in.ScheduleIn, func(sch *budget.Schedule) []budget.Op {
-			return []budget.Op{budget.NewOp("set_item", in.Item, budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: sch})}
-		})
+	tool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns the updated budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
+		p := budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
+		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
 	})
 	tool(s, "remove_item", "Delete one item. Returns the updated budget.", func(ctx context.Context, in ItemRef) (any, error) {
 		return h.apply(ctx, in.Budget, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
@@ -356,54 +350,14 @@ func (h *handlers) apply(ctx context.Context, ref string, rev int64, ops ...budg
 	return sum(h.app.Apply(ctx, id, rev, ops))
 }
 
-// withSchedule resolves YYYY-MM schedule fields against the budget's start
-// month, then applies the ops built by mk (sch is nil when no schedule field was given).
-func (h *handlers) withSchedule(ctx context.Context, ref string, in ScheduleIn, mk func(*budget.Schedule) []budget.Op) (any, error) {
-	id, err := h.id(ref)
-	if err != nil {
-		return nil, err
+// spec turns the flat schedule fields of add_item/update_item into a
+// ScheduleSpec, or nil when none was given. Months are resolved inside the
+// store transaction (see budget.ScheduleSpec), never against a stale read.
+func (in ScheduleIn) spec() *budget.ScheduleSpec {
+	if in.Every == nil && in.Starts == "" && in.Ends == nil {
+		return nil
 	}
-	var sch *budget.Schedule
-	if in.Every != nil || in.Starts != "" || in.Ends != "" {
-		v, err := h.app.Get(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		s := budget.Monthly()
-		if in.Every != nil {
-			s.Every = *in.Every
-		}
-		if in.Starts != "" {
-			if s.Start, err = monthIndex(v.Budget.StartMonth, in.Starts); err != nil {
-				return nil, err
-			}
-		}
-		if in.Ends != "" {
-			e, err := monthIndex(v.Budget.StartMonth, in.Ends)
-			if err != nil {
-				return nil, err
-			}
-			s.End = &e
-		}
-		sch = &s
-	}
-	return h.apply(ctx, id, store.AnyRevision, mk(sch)...)
-}
-
-func monthIndex(start, ym string) (int, error) {
-	s, err := time.Parse("2006-01", start)
-	if err != nil {
-		return 0, err
-	}
-	t, err := time.Parse("2006-01", ym)
-	if err != nil {
-		return 0, fmt.Errorf("month must be YYYY-MM, got %q", ym)
-	}
-	i := (t.Year()-s.Year())*12 + int(t.Month()-s.Month())
-	if i < 0 {
-		return 0, fmt.Errorf("%s is before the budget starts (%s)", ym, start)
-	}
-	return i, nil
+	return &budget.ScheduleSpec{Every: in.Every, Starts: in.Starts, Ends: in.Ends}
 }
 
 func sum(v *app.View, err error) (any, error) {
