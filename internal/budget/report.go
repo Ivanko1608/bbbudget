@@ -41,9 +41,14 @@ type Report struct {
 	Months     []Month       `json:"months"`
 	Items      []ItemReport  `json:"items"`
 	Debts      []DebtSummary `json:"debts"`
-	Goals      []GoalStatus  `json:"goals"`
-	Totals     Totals        `json:"totals"`
-	Insights   []Insight     `json:"insights"`
+	// Pots are the savings pots; Goals repeats the ones with a target.
+	Pots  []PotSummary `json:"pots"`
+	Goals []GoalStatus `json:"goals"`
+	// Shortfalls are the months that fall short, each with the pots that
+	// could cover it. Nothing is taken from savings until a withdrawal says so.
+	Shortfalls []Shortfall `json:"shortfalls"`
+	Totals     Totals      `json:"totals"`
+	Insights   []Insight   `json:"insights"`
 	// Currencies lists each foreign currency with what one unit is worth.
 	Currencies []CurrencyReport `json:"currencies"`
 }
@@ -79,8 +84,9 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	p := pr.Plan
 	r = &Report{
 		Name: p.Doc.Name, BaseCurrency: p.Base.Code, StartMonth: p.Doc.StartMonth, Months: pr.Months,
-		Debts: pr.DebtSummaries(), Goals: pr.GoalStatuses(), Insights: Insights(pr, DefaultRules),
-		Items: []ItemReport{},
+		Debts: pr.DebtSummaries(), Pots: pr.PotSummaries(), Goals: pr.GoalStatuses(), Shortfalls: pr.Shortfalls(),
+		Items:    []ItemReport{},
+		Insights: Insights(pr, DefaultRules),
 	}
 	for _, l := range p.Items {
 		per := p.PayCost(l.Amt, roundPay)

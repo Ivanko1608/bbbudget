@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"bbbudget/internal/money"
 )
@@ -30,7 +31,98 @@ type ItemPatch struct {
 	Amount   *money.Decimal `json:"amount,omitempty"`
 	Currency *string        `json:"currency,omitempty"`
 	Category *string        `json:"category,omitempty"`
-	Schedule *Schedule      `json:"schedule,omitempty"`
+	Schedule *ScheduleSpec  `json:"schedule,omitempty"`
+	// Pot routes the item through a pot; "" puts it back in the month's budget.
+	Pot *string `json:"pot,omitempty"`
+}
+
+// ItemInput is the value of add_item: an Item whose schedule is a ScheduleSpec.
+// An omitted schedule means monthly from the first month.
+type ItemInput struct {
+	ID       string        `json:"id,omitempty"`
+	Name     string        `json:"name"`
+	Amount   money.Decimal `json:"amount"`
+	Currency string        `json:"currency,omitempty"`
+	Category string        `json:"category"`
+	Schedule *ScheduleSpec `json:"schedule,omitempty"`
+	Pot      string        `json:"pot,omitempty"`
+}
+
+// ScheduleSpec is a schedule as ops describe it, in one of two forms:
+//
+//   - by calendar month (preferred): {"starts":"2026-03","ends":"2026-12","every":1}.
+//     Months are resolved against the budget's start_month when the op is
+//     applied, so a stored scenario keeps pointing at the same calendar months.
+//     Omitted fields keep the item's current values (monthly from the first
+//     month for a new item), and "ends": "" removes the end. A spec with only
+//     "every" is in this form too.
+//   - by month index from start_month, whenever start or end is given:
+//     {"start":2,"every":0,"end":5}. This is the stored form; omitted fields
+//     are 0 (so no every means one-off) and the whole schedule is replaced.
+//
+// Mixing the two forms is an error, never a guess.
+type ScheduleSpec struct {
+	Start  *int    `json:"start,omitempty"`
+	Every  *int    `json:"every,omitempty"`
+	End    *int    `json:"end,omitempty"`
+	Starts string  `json:"starts,omitempty"`
+	Ends   *string `json:"ends,omitempty"`
+}
+
+// resolve turns the spec into a Schedule for a budget starting at startMonth.
+// cur is the schedule being edited (set_item), nil for a new item.
+func (s ScheduleSpec) resolve(startMonth string, cur *Schedule) (Schedule, error) {
+	byIndex := s.Start != nil || s.End != nil
+	if byIndex && (s.Starts != "" || s.Ends != nil) {
+		return Schedule{}, fmt.Errorf("schedule: use either starts/ends (YYYY-MM) or start/end (month indexes), not both")
+	}
+	if byIndex {
+		out := Schedule{End: s.End}
+		setIf(&out.Start, s.Start)
+		setIf(&out.Every, s.Every)
+		return out, nil
+	}
+	out := Monthly()
+	if cur != nil {
+		out = *cur
+	}
+	setIf(&out.Every, s.Every)
+	if s.Starts != "" {
+		i, err := MonthIndex(startMonth, s.Starts)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("schedule.starts: %w", err)
+		}
+		out.Start = i
+	}
+	if s.Ends != nil {
+		out.End = nil
+		if *s.Ends != "" {
+			i, err := MonthIndex(startMonth, *s.Ends)
+			if err != nil {
+				return Schedule{}, fmt.Errorf("schedule.ends: %w", err)
+			}
+			out.End = &i
+		}
+	}
+	return out, nil
+}
+
+// MonthIndex is the 0-based index of month ym ("YYYY-MM") in a budget that
+// starts in startMonth. Months before the start are an error.
+func MonthIndex(startMonth, ym string) (int, error) {
+	s, err := time.Parse("2006-01", startMonth)
+	if err != nil {
+		return 0, fmt.Errorf("budget start_month %q is not YYYY-MM", startMonth)
+	}
+	t, err := time.Parse("2006-01", strings.TrimSpace(ym))
+	if err != nil {
+		return 0, fmt.Errorf("month must be YYYY-MM, got %q", ym)
+	}
+	i := (t.Year()-s.Year())*12 + int(t.Month()-s.Month())
+	if i < 0 {
+		return 0, fmt.Errorf("%s is before the budget starts (%s)", ym, startMonth)
+	}
+	return i, nil
 }
 
 // CurrencyPatch edits a currency. Setting per_base without a source makes the
@@ -61,11 +153,14 @@ func (v CurrencyPatch) apply(c *CurrencyRate) {
 }
 
 type SettingsPatch struct {
-	Name           *string        `json:"name,omitempty"`
-	Description    *string        `json:"description,omitempty"`
-	StartMonth     *string        `json:"start_month,omitempty"`
-	Months         *int           `json:"months,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	StartMonth  *string `json:"start_month,omitempty"`
+	Months      *int    `json:"months,omitempty"`
+	// SavingsStart is the old single savings balance: it sets the balance of
+	// the default pot (the first general one).
 	SavingsStart   *money.Decimal `json:"savings_start,omitempty"`
+	OverdraftStart *money.Decimal `json:"overdraft_start,omitempty"`
 	ExtraToDebtPct *money.Decimal `json:"extra_to_debt_pct,omitempty"`
 	DebtStrategy   *string        `json:"debt_strategy,omitempty"`
 }
@@ -76,11 +171,30 @@ type DebtPatch struct {
 	Balance    *money.Decimal `json:"balance,omitempty"`
 	APRPct     *money.Decimal `json:"apr_pct,omitempty"`
 	MinPayment *money.Decimal `json:"min_payment,omitempty"`
+	// PayoffMonth sets the month to pay the debt off in full; -1 removes the payoff.
+	PayoffMonth *int `json:"payoff_month,omitempty"`
+	// PayoffFrom names the pot that pays it off; "" pays it from the month's own money.
+	PayoffFrom *string `json:"payoff_from,omitempty"`
 }
 
 type GoalPatch struct {
 	Name   *string        `json:"name,omitempty"`
 	Target *money.Decimal `json:"target,omitempty"`
+}
+
+type PotPatch struct {
+	Name    *string        `json:"name,omitempty"`
+	Kind    *string        `json:"kind,omitempty"`
+	Balance *money.Decimal `json:"balance,omitempty"`
+	Target  *money.Decimal `json:"target,omitempty"`
+	Monthly *money.Decimal `json:"monthly,omitempty"`
+}
+
+type WithdrawalPatch struct {
+	Name     *string        `json:"name,omitempty"`
+	Pot      *string        `json:"pot,omitempty"`
+	Amount   *money.Decimal `json:"amount,omitempty"`
+	Schedule *Schedule      `json:"schedule,omitempty"`
 }
 
 type CategoryPatch struct {
@@ -91,21 +205,27 @@ type CategoryPatch struct {
 
 // OpKinds documents every supported op and its value type.
 var OpKinds = map[string]string{
-	"set_settings":    "value: SettingsPatch (no target)",
-	"set_currency":    "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
-	"remove_currency": "target: code (must be unused)",
-	"add_category":    "value: Category",
-	"set_category":    "target: category; value: CategoryPatch",
-	"remove_category": "target: category (must be unused)",
-	"add_item":        "value: Item (id optional)",
-	"set_item":        "target: item; value: ItemPatch",
-	"remove_item":     "target: item",
-	"add_debt":        "value: Debt (id optional)",
-	"set_debt":        "target: debt; value: DebtPatch",
-	"remove_debt":     "target: debt",
-	"add_goal":        "value: Goal (id optional)",
-	"set_goal":        "target: goal; value: GoalPatch",
-	"remove_goal":     "target: goal",
+	"set_settings":      "value: SettingsPatch (no target)",
+	"set_currency":      "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
+	"remove_currency":   "target: code (must be unused)",
+	"add_category":      "value: Category",
+	"set_category":      "target: category; value: CategoryPatch",
+	"remove_category":   "target: category (must be unused)",
+	"add_item":          "value: Item (id optional; schedule optional, default monthly)",
+	"set_item":          "target: item; value: ItemPatch (schedule: only the given fields change when using starts/ends)",
+	"remove_item":       "target: item",
+	"add_debt":          "value: Debt (id optional; payoff_month + payoff_from pot pay it off in full that month)",
+	"set_debt":          "target: debt; value: DebtPatch (payoff_month -1 removes the payoff; payoff_from \"\" pays it from the month's own money)",
+	"remove_debt":       "target: debt",
+	"add_pot":           "value: Pot (id optional; kind general|sinking|emergency, default general)",
+	"set_pot":           "target: pot; value: PotPatch",
+	"remove_pot":        "target: pot (must have no withdrawals; keep at least one pot)",
+	"add_withdrawal":    "value: Withdrawal{name, pot, amount, schedule} (id optional; base currency; schedule defaults to once in month 0)",
+	"set_withdrawal":    "target: withdrawal; value: WithdrawalPatch",
+	"remove_withdrawal": "target: withdrawal",
+	"add_goal":          "value: Goal{name, target}: same as add_pot with kind sinking (kept for older clients)",
+	"set_goal":          "target: pot; value: GoalPatch (kept for older clients)",
+	"remove_goal":       "target: pot (kept for older clients)",
 }
 
 // NewOp builds an Op from a typed value.
@@ -179,7 +299,14 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&b.Description, v.Description)
 		setIf(&b.StartMonth, v.StartMonth)
 		setIf(&b.Months, v.Months)
-		setIf(&b.SavingsStart, v.SavingsStart)
+		setIf(&b.OverdraftStart, v.OverdraftStart)
+		if v.SavingsStart != nil {
+			i := defaultPot(b)
+			if i < 0 {
+				return fmt.Errorf("savings_start needs a savings pot; add one with add_pot")
+			}
+			b.Pots[i].Balance = *v.SavingsStart
+		}
 		setIf(&b.ExtraToDebtPct, v.ExtraToDebtPct)
 		setIf(&b.DebtStrategy, v.DebtStrategy)
 
@@ -259,9 +386,17 @@ func applyOne(b *Budget, op Op) error {
 		b.Categories = remove(b.Categories, i)
 
 	case "add_item":
-		var v Item // an omitted schedule decodes as monthly (see Item.UnmarshalJSON)
-		if err := decodeStrict(op.Value, &v); err != nil {
+		var in ItemInput
+		if err := decodeStrict(op.Value, &in); err != nil {
 			return err
+		}
+		v := Item{ID: in.ID, Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: Monthly(), Pot: in.Pot}
+		if in.Schedule != nil {
+			s, err := in.Schedule.resolve(b.StartMonth, nil)
+			if err != nil {
+				return err
+			}
+			v.Schedule = s
 		}
 		if v.ID == "" {
 			v.ID = uniqueID(v.Name, ids(b.Items, itemKey))
@@ -271,6 +406,13 @@ func applyOne(b *Budget, op Op) error {
 		}
 		if v.Category == "" {
 			return fmt.Errorf("category is required")
+		}
+		if v.Pot != "" {
+			id, err := potRef(b, v.Pot)
+			if err != nil {
+				return err
+			}
+			v.Pot = id
 		}
 		b.Items = append(b.Items, v)
 
@@ -288,7 +430,22 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&l.Amount, v.Amount)
 		setIf(&l.Currency, v.Currency)
 		setIf(&l.Category, v.Category)
-		setIf(&l.Schedule, v.Schedule)
+		if v.Schedule != nil {
+			s, err := v.Schedule.resolve(b.StartMonth, &l.Schedule)
+			if err != nil {
+				return err
+			}
+			l.Schedule = s
+		}
+		if v.Pot != nil {
+			id := ""
+			if *v.Pot != "" {
+				if id, err = potRef(b, *v.Pot); err != nil {
+					return err
+				}
+			}
+			l.Pot = id
+		}
 
 	case "remove_item":
 		i, err := find("item", op.Target, ids(b.Items, itemKey))
@@ -308,6 +465,13 @@ func applyOne(b *Budget, op Op) error {
 		if v.Currency == "" {
 			v.Currency = b.BaseCurrency
 		}
+		if v.PayoffFrom != "" {
+			id, err := potRef(b, v.PayoffFrom)
+			if err != nil {
+				return err
+			}
+			v.PayoffFrom = id
+		}
 		b.Debts = append(b.Debts, v)
 
 	case "set_debt":
@@ -325,6 +489,23 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&d.Balance, v.Balance)
 		setIf(&d.APRPct, v.APRPct)
 		setIf(&d.MinPayment, v.MinPayment)
+		if v.PayoffFrom != nil {
+			id := ""
+			if *v.PayoffFrom != "" {
+				if id, err = potRef(b, *v.PayoffFrom); err != nil {
+					return err
+				}
+			}
+			d.PayoffFrom = id
+		}
+		if v.PayoffMonth != nil {
+			if *v.PayoffMonth < 0 {
+				d.PayoffMonth, d.PayoffFrom = nil, ""
+			} else {
+				d.PayoffMonth = new(int)
+				*d.PayoffMonth = *v.PayoffMonth
+			}
+		}
 
 	case "remove_debt":
 		i, err := find("debt", op.Target, ids(b.Debts, debtKey))
@@ -333,34 +514,111 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Debts = remove(b.Debts, i)
 
-	case "add_goal":
-		var v Goal
-		if err := decodeStrict(op.Value, &v); err != nil {
+	case "add_pot", "add_goal":
+		v := Pot{Kind: PotGeneral}
+		if op.Op == "add_goal" {
+			var g Goal
+			if err := decodeStrict(op.Value, &g); err != nil {
+				return err
+			}
+			v = Pot{ID: g.ID, Name: g.Name, Kind: PotSinking, Target: g.Target}
+		} else if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
 		if v.ID == "" {
-			v.ID = uniqueID(v.Name, ids(b.Goals, goalKey))
+			v.ID = uniqueID(v.Name, ids(b.Pots, potKey))
 		}
-		b.Goals = append(b.Goals, v)
+		if v.Kind == "" {
+			v.Kind = PotGeneral
+		}
+		b.Pots = append(b.Pots, v)
 
-	case "set_goal":
-		var v GoalPatch
+	case "set_pot", "set_goal":
+		var v PotPatch
+		if op.Op == "set_goal" {
+			var g GoalPatch
+			if err := decodeStrict(op.Value, &g); err != nil {
+				return err
+			}
+			v = PotPatch{Name: g.Name, Target: g.Target}
+		} else if err := decodeStrict(op.Value, &v); err != nil {
+			return err
+		}
+		i, err := find("pot", op.Target, ids(b.Pots, potKey))
+		if err != nil {
+			return err
+		}
+		pt := &b.Pots[i]
+		setIf(&pt.Name, v.Name)
+		setIf(&pt.Kind, v.Kind)
+		setIf(&pt.Balance, v.Balance)
+		setIf(&pt.Target, v.Target)
+		setIf(&pt.Monthly, v.Monthly)
+
+	case "remove_pot", "remove_goal":
+		i, err := find("pot", op.Target, ids(b.Pots, potKey))
+		if err != nil {
+			return err
+		}
+		for _, w := range b.Withdrawals {
+			if w.Pot == b.Pots[i].ID {
+				return fmt.Errorf("pot %q is used by the transfer %q; remove that first", b.Pots[i].Name, w.Name)
+			}
+		}
+		for _, d := range b.Debts {
+			if d.PayoffFrom == b.Pots[i].ID {
+				return fmt.Errorf("pot %q pays off the debt %q; change that first", b.Pots[i].Name, d.Name)
+			}
+		}
+		for _, l := range b.Items {
+			if l.Pot == b.Pots[i].ID {
+				return fmt.Errorf("pot %q is used by the item %q; route that item elsewhere first", b.Pots[i].Name, l.Name)
+			}
+		}
+		b.Pots = remove(b.Pots, i)
+
+	case "add_withdrawal":
+		var v Withdrawal
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
 		}
-		i, err := find("goal", op.Target, ids(b.Goals, goalKey))
+		i, err := find("pot", v.Pot, ids(b.Pots, potKey))
 		if err != nil {
 			return err
 		}
-		setIf(&b.Goals[i].Name, v.Name)
-		setIf(&b.Goals[i].Target, v.Target)
+		v.Pot = b.Pots[i].ID
+		if v.ID == "" {
+			v.ID = uniqueID(v.Name, ids(b.Withdrawals, withdrawalKey))
+		}
+		b.Withdrawals = append(b.Withdrawals, v)
 
-	case "remove_goal":
-		i, err := find("goal", op.Target, ids(b.Goals, goalKey))
+	case "set_withdrawal":
+		var v WithdrawalPatch
+		if err := decodeStrict(op.Value, &v); err != nil {
+			return err
+		}
+		i, err := find("withdrawal", op.Target, ids(b.Withdrawals, withdrawalKey))
 		if err != nil {
 			return err
 		}
-		b.Goals = remove(b.Goals, i)
+		w := &b.Withdrawals[i]
+		if v.Pot != nil {
+			k, err := find("pot", *v.Pot, ids(b.Pots, potKey))
+			if err != nil {
+				return err
+			}
+			w.Pot = b.Pots[k].ID
+		}
+		setIf(&w.Name, v.Name)
+		setIf(&w.Amount, v.Amount)
+		setIf(&w.Schedule, v.Schedule)
+
+	case "remove_withdrawal":
+		i, err := find("withdrawal", op.Target, ids(b.Withdrawals, withdrawalKey))
+		if err != nil {
+			return err
+		}
+		b.Withdrawals = remove(b.Withdrawals, i)
 
 	default:
 		return fmt.Errorf("unknown op %q", op.Op)
@@ -395,9 +653,30 @@ func ids[T any](s []T, key func(T) (string, string)) []idName {
 	return out
 }
 
-func itemKey(l Item) (string, string) { return l.ID, l.Name }
-func debtKey(d Debt) (string, string) { return d.ID, d.Name }
-func goalKey(g Goal) (string, string) { return g.ID, g.Name }
+func itemKey(l Item) (id, name string)             { return l.ID, l.Name }
+func debtKey(d Debt) (id, name string)             { return d.ID, d.Name }
+func potKey(p Pot) (id, name string)               { return p.ID, p.Name }
+func withdrawalKey(w Withdrawal) (id, name string) { return w.ID, w.Name }
+
+// potRef resolves a pot reference (id or name) to its id.
+func potRef(b *Budget, ref string) (string, error) {
+	i, err := find("pot", ref, ids(b.Pots, potKey))
+	if err != nil {
+		return "", err
+	}
+	return b.Pots[i].ID, nil
+}
+
+// defaultPot is the index of the pot that receives unassigned leftover: the
+// first general pot, else the last pot, or -1 when there are none.
+func defaultPot(b *Budget) int {
+	for i, p := range b.Pots {
+		if p.Kind == PotGeneral {
+			return i
+		}
+	}
+	return len(b.Pots) - 1
+}
 
 // find resolves a reference: exact id, then exact name, then a unique
 // substring of a name (all case-insensitive). Ambiguity is an error rather

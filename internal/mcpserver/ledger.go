@@ -2,7 +2,9 @@ package mcpserver
 
 import (
 	"context"
-	"sort"
+	"errors"
+	"maps"
+	"slices"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -62,14 +64,14 @@ func txRows(txs []budget.Transaction) []txRow {
 }
 
 type statusRow struct {
-	Category  string `json:"category"`
-	Label     string `json:"label"`
-	Kind      string `json:"kind"`
-	State     string `json:"state"`
-	Planned   string `json:"planned"`
-	Actual    string `json:"actual"`
-	Remaining string `json:"remaining"`
-	Projected string `json:"projected,omitempty"`
+	Category  string            `json:"category"`
+	Label     string            `json:"label"`
+	Kind      string            `json:"kind"`
+	State     budget.SpendState `json:"state"`
+	Planned   string            `json:"planned"`
+	Actual    string            `json:"actual"`
+	Remaining string            `json:"remaining"`
+	Projected string            `json:"projected,omitempty"`
 }
 
 type statusOut struct {
@@ -87,20 +89,76 @@ type statusOut struct {
 }
 
 func statusResult(s *budget.MonthStatus) statusOut {
-	out := statusOut{Month: s.Month, Currency: s.Spent.Currency().Code, Days: s.Days, Elapsed: s.Elapsed,
-		PlannedSpend: s.Planned.String(), Spent: s.Spent.String(), PlannedIncome: s.IncomePlan.String(), Income: s.Income.String(),
-		Transactions: s.Transactions, Categories: []statusRow{}, Flags: []string{}}
+	out := statusOut{
+		Month:         s.Month,
+		Currency:      s.Spent.Currency().Code,
+		Days:          s.Days,
+		Elapsed:       s.Elapsed,
+		PlannedSpend:  s.Planned.String(),
+		Spent:         s.Spent.String(),
+		PlannedIncome: s.IncomePlan.String(),
+		Income:        s.Income.String(),
+		Transactions:  s.Transactions,
+		Categories:    []statusRow{},
+		Flags:         []string{},
+	}
 	for _, c := range s.Categories {
-		r := statusRow{c.Category, c.Label, c.Kind, c.State, c.Planned.String(), c.Actual.String(), c.Remaining.String(), ""}
-		if c.Projected != nil {
-			r.Projected = c.Projected.String()
-		}
-		out.Categories = append(out.Categories, r)
+		out.Categories = append(out.Categories, newStatusRow(c))
 	}
 	for _, f := range s.Flags {
 		out.Flags = append(out.Flags, plain(f.Text))
 	}
 	return out
+}
+
+func newStatusRow(c budget.CategoryStatus) statusRow {
+	row := statusRow{
+		Category:  c.Category,
+		Label:     c.Label,
+		Kind:      c.Kind,
+		State:     c.State,
+		Planned:   c.Planned.String(),
+		Actual:    c.Actual.String(),
+		Remaining: c.Remaining.String(),
+	}
+	if c.Projected != nil {
+		row.Projected = c.Projected.String()
+	}
+	return row
+}
+
+// monthStatus is a month's status with its flags in the user's language.
+func (h *handlers) monthStatus(ctx context.Context, id, month string) (*budget.MonthStatus, error) {
+	status, err := h.app.MonthStatus(ctx, id, month)
+	if err != nil {
+		return nil, err
+	}
+	status.Localize(h.reader())
+	return status, nil
+}
+
+// flagsByMonth are the flags of every month the transactions fall in.
+func (h *handlers) flagsByMonth(
+	ctx context.Context, id string, txs []budget.Transaction,
+) (map[string][]string, error) {
+	months := map[string]bool{}
+	for _, t := range txs {
+		months[t.Date[:len("YYYY-MM")]] = true
+	}
+	flags := map[string][]string{}
+	for _, month := range slices.Sorted(maps.Keys(months)) {
+		status, err := h.monthStatus(ctx, id, month)
+		if errors.Is(err, app.ErrBadInput) {
+			continue // a month outside the budget's window has no plan to compare with
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(status.Flags) > 0 {
+			flags[month] = statusResult(status).Flags
+		}
+	}
+	return flags, nil
 }
 
 func (h *handlers) registerLedger(s *mcp.Server) {
@@ -110,19 +168,13 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			res, err := h.app.LogTransactions(ctx, id, in.Transactions)
+			res, err := h.app.LogTransactions(ctx, fromAssistant, id, in.Transactions)
 			if err != nil {
 				return nil, err
 			}
-			months := map[string]bool{}
-			for _, t := range res.Logged {
-				months[t.Date[:7]] = true
-			}
-			flags := map[string][]string{}
-			for _, m := range sortedKeys(months) {
-				if st, err := h.app.MonthStatus(ctx, id, m); err == nil && len(st.Flags) > 0 {
-					flags[m] = statusResult(st).Flags
-				}
+			flags, err := h.flagsByMonth(ctx, id, res.Logged)
+			if err != nil {
+				return nil, err
 			}
 			out := map[string]any{"batch": res.Batch, "logged": txRows(res.Logged)}
 			if len(res.Skipped) > 0 {
@@ -142,7 +194,14 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if in.Limit <= 0 {
 				in.Limit = 50
 			}
-			txs, err := h.app.ListTransactions(ctx, id, app.TxFilter{From: in.From, To: in.To, Category: in.Category, Batch: in.Batch, Limit: in.Limit})
+			filter := app.TxFilter{
+				From:     in.From,
+				To:       in.To,
+				Category: in.Category,
+				Batch:    in.Batch,
+				Limit:    in.Limit,
+			}
+			txs, err := h.app.ListTransactions(ctx, id, filter)
 			if err != nil {
 				return nil, err
 			}
@@ -166,7 +225,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			n, err := h.app.DeleteTransactions(ctx, id, in.IDs, in.Batch)
+			n, err := h.deleteTransactions(ctx, id, in)
 			if err != nil {
 				return nil, err
 			}
@@ -178,7 +237,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			st, err := h.app.MonthStatus(ctx, id, in.Month)
+			st, err := h.monthStatus(ctx, id, in.Month)
 			if err != nil {
 				return nil, err
 			}
@@ -186,11 +245,15 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 		})
 }
 
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+// deleteTransactions removes the ids or the batch in, whichever it names.
+func (h *handlers) deleteTransactions(ctx context.Context, id string, in DeleteTxIn) (int, error) {
+	byIDs := len(in.IDs) > 0
+	byBatch := in.Batch != ""
+	switch {
+	case byIDs == byBatch:
+		return 0, errors.New("give either ids or a batch")
+	case byBatch:
+		return h.app.DeleteBatch(ctx, id, in.Batch)
 	}
-	sort.Strings(out)
-	return out
+	return h.app.DeleteTransactions(ctx, id, in.IDs)
 }

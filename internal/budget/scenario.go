@@ -27,7 +27,7 @@ func AddScenario(b Budget, name, description string, ops []Op) (Budget, Scenario
 	return nb, s, nil
 }
 
-func scenarioKey(s Scenario) (string, string) { return s.ID, s.Name }
+func scenarioKey(s Scenario) (id, name string) { return s.ID, s.Name }
 
 // FindScenario resolves a scenario reference.
 func FindScenario(b Budget, ref string) (Scenario, int, error) {
@@ -94,7 +94,7 @@ func Compare(b Budget, refs []string, l *i18n.Localizer) ([]Outcome, error) {
 		return nil, err
 	}
 	baseRep.Localize(l)
-	baseline := outcome("baseline", l.Text("compare.baseline", nil), baseRep, nil)
+	baseline := outcome("baseline", l.Render(msg("compare.baseline", nil)), baseRep, nil)
 	out := []Outcome{baseline}
 
 	var scen []Scenario

@@ -70,8 +70,8 @@ commands:
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
   log      record money spent or received:  bbbudget log home 40 home [-date 2026-10-03] [-currency USD] [-note "Lidl"]
   status   this month's plan versus actual:  bbbudget status home [-month 2026-10]
-  history  list recent changes and who made them:  bbbudget history home [-n 20]
-  undo     undo a change:  bbbudget undo home [-change REV] [-force]
+  history  list recent changes and who made them:  bbbudget history home [-limit 20]
+  undo     undo a change:  bbbudget undo home [-revision REV] [-force]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
@@ -79,13 +79,15 @@ Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates
 App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
 `
 
+// fromCLI is the origin of every write made by a command.
+var fromCLI = store.Origin{Source: store.SourceCLI}
+
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return errors.New("missing command")
 	}
 	cmd, args := args[0], args[1:]
-	ctx = store.WithChange(ctx, store.Change{Source: "cli"}) // serve and mcp relabel their own writes
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", store.DefaultDir(), "data directory")
@@ -149,7 +151,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "init":
 		template := fs.String("template", "blank", "template name (see: bbbudget templates)")
 		name := fs.String("name", "", "display name (default: the id)")
-		id, err := parseWithID(fs, args, "init <id> [-template name] [-name display-name]")
+		id, err := parseFlagsAndID(fs, args, "init <id> [-template name] [-name display-name]")
 		if err != nil {
 			return err
 		}
@@ -157,7 +159,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, a.Localizer(""), id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -204,7 +206,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if b.Name == "" {
 			b.Name = id
 		}
-		v, err := a.Import(ctx, id, b)
+		v, err := a.Import(ctx, fromCLI, id, b)
 		if err != nil {
 			return err
 		}
@@ -232,7 +234,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "report":
 		scenario := fs.String("scenario", "", "show a saved scenario instead of the budget")
-		id, err := parseWithID(fs, args, "report <id> [-scenario name]")
+		id, err := parseFlagsAndID(fs, args, "report <id> [-scenario name]")
 		if err != nil {
 			return err
 		}
@@ -252,13 +254,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		printReport(stdout, rep, a.Localizer(ctx))
+		reader := a.Localizer("")
+		rep.Localize(reader)
+		printReport(stdout, rep, reader)
 		return nil
 
 	case "rates":
 		only := fs.String("only", "", "comma-separated currencies to refresh (default: all whose source isn't manual)")
 		dry := fs.Bool("dry-run", false, "show current rates without saving")
-		id, err := parseWithID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
+		id, err := parseFlagsAndID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
 		if err != nil {
 			return err
 		}
@@ -274,7 +278,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if *dry {
 			updates, err = a.PreviewRates(ctx, id, codes)
 		} else {
-			_, updates, err = a.RefreshRates(ctx, id, codes)
+			_, updates, err = a.RefreshRates(ctx, fromCLI, id, codes)
 		}
 		printRates(stdout, updates)
 		if err == nil && len(updates) == 0 {
@@ -284,14 +288,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "log":
 		date := fs.String("date", "", "day it happened, YYYY-MM-DD (default today)")
-		cur := fs.String("currency", "", "currency (default the base currency)")
+		currency := fs.String("currency", "", "currency (default the base currency)")
 		note := fs.String("note", "", "a note")
 		item := fs.String("item", "", "the planned item it pays (id or name)")
-		pos, err := parseArgs(fs, args, 3, "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]")
+		usage := "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]"
+		pos, err := parseArgs(fs, args, 3, usage)
 		if err != nil {
 			return err
 		}
-		amt, err := money.ParseDecimal(pos[1])
+		amount, err := money.ParseDecimal(pos[1])
 		if err != nil {
 			return fmt.Errorf("amount: %w", err)
 		}
@@ -300,29 +305,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		if *date == "" {
-			*date = a.Now().Format("2006-01-02")
+			*date = a.Now().Format(time.DateOnly)
 		}
-		res, err := a.LogTransactions(ctx, pos[0], []budget.TransactionInput{{Date: *date, Amount: amt, Currency: *cur, Category: pos[2], Note: *note, Item: *item}})
-		if err != nil {
-			return err
+		in := budget.TransactionInput{
+			Date:     *date,
+			Amount:   amount,
+			Currency: *currency,
+			Category: pos[2],
+			Note:     *note,
+			Item:     *item,
 		}
-		t := res.Logged[0]
-		out := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
-		st, err := a.MonthStatus(ctx, pos[0], t.Date[:7])
-		if err == nil && t.Currency != st.Spent.Currency().Code {
-			out += fmt.Sprintf("  → %s %s", t.Base, st.Spent.Currency().Code)
-		}
-		fmt.Fprintln(stdout, out)
-		if err == nil {
-			for _, f := range st.Flags {
-				fmt.Fprintf(stdout, "! %s\n", strings.ReplaceAll(f.Text, "**", ""))
-			}
-		}
-		return nil
+		return logOne(ctx, stdout, a, pos[0], in)
 
 	case "status":
 		month := fs.String("month", "", "YYYY-MM (default this month)")
-		id, err := parseWithID(fs, args, "status <id> [-month YYYY-MM]")
+		id, err := parseFlagsAndID(fs, args, "status <id> [-month YYYY-MM]")
 		if err != nil {
 			return err
 		}
@@ -330,29 +327,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		st, err := a.MonthStatus(ctx, id, *month)
+		status, err := a.MonthStatus(ctx, id, *month)
 		if err != nil {
 			return err
 		}
-		l := a.Localizer(ctx)
-		fmt.Fprintf(stdout, "%s · %d/%d\n\n", l.Month(st.Month), st.Elapsed, st.Days)
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', tabwriter.AlignRight)
-		fmt.Fprintln(tw, l.Text("cli.status.header", nil))
-		for _, c := range st.Categories {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t\n", c.Label, l.MoneyExact(c.Planned), l.MoneyExact(c.Actual), l.MoneyExact(c.Remaining), c.State)
-		}
-		tw.Flush()
-		for _, f := range st.Flags {
-			fmt.Fprintf(stdout, "\n! %s", strings.ReplaceAll(f.Text, "**", ""))
-		}
-		if len(st.Flags) > 0 {
-			fmt.Fprintln(stdout)
-		}
+		reader := a.Localizer("")
+		status.Localize(reader)
+		printStatus(stdout, status, reader)
 		return nil
 
 	case "history":
-		n := fs.Int("n", 20, "how many changes to show (0 for all kept)")
-		id, err := parseWithID(fs, args, "history <id> [-n 20]")
+		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
+		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
 		if err != nil {
 			return err
 		}
@@ -360,21 +346,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		h, err := a.History(ctx, id, *n)
+		h, err := a.History(ctx, id, *limit)
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
 		for _, e := range h {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, e.At.Local().Format("2006-01-02 15:04"), e.Source, e.Summary)
+			when := e.At.Local().Format("2006-01-02 15:04")
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
 		}
 		return tw.Flush()
 
 	case "undo":
-		change := fs.Int64("change", 0, "revision of the change to undo (default: the latest)")
+		revision := fs.Int64("revision", 0, "revision of the change to undo (default: the latest)")
 		force := fs.Bool("force", false, "also undo every change made after it")
-		id, err := parseWithID(fs, args, "undo <id> [-change REV] [-force]")
+		id, err := parseFlagsAndID(fs, args, "undo <id> [-revision REV] [-force]")
 		if err != nil {
 			return err
 		}
@@ -382,7 +370,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Undo(ctx, id, *change, *force)
+		v, err := a.Undo(ctx, fromCLI, id, app.UndoRequest{Revision: *revision, Force: *force})
 		if err != nil {
 			return err
 		}
@@ -390,6 +378,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		app.LocalizeHistory(h, a.Localizer(""))
 		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
 		return nil
 
@@ -429,7 +418,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			locale = settings.LocaleAuto
 		}
 		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
-			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.Locale(ctx), strings.Join(i18n.Locales(), ", "))
+			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 
@@ -466,7 +455,9 @@ func parseArgs(fs *flag.FlagSet, args []string, want int, usage string) ([]strin
 	return pos, nil
 }
 
-func parseWithID(fs *flag.FlagSet, args []string, usage string) (string, error) {
+// parseFlagsAndID parses a command's flags and its one positional argument,
+// the budget id ("home" in `bbbudget report home`).
+func parseFlagsAndID(fs *flag.FlagSet, args []string, usage string) (string, error) {
 	pos, err := parseArgs(fs, args, 1, usage)
 	if err != nil {
 		return "", err
@@ -543,7 +534,7 @@ func printRates(w io.Writer, updates []app.RateUpdate) {
 func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	fmt.Fprintf(w, "%s (%s)\n\n", r.Name, r.BaseCurrency)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, l.Text("cli.report.header", nil))
+	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.report.header"}))
 	f := l.MoneyExact
 	for _, m := range r.Months {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n", m.Label, f(m.Income), f(m.Expenses), f(m.DebtPayments), f(m.Left), f(m.Saved), f(m.Savings))
@@ -558,3 +549,52 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 		fmt.Fprintf(w, "%s %s\n", mark, strings.ReplaceAll(in.Text, "**", ""))
 	}
 }
+
+// logOne logs one transaction and prints it, with its base value when it
+// was in another currency, and the flags of its month.
+func logOne(ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput) error {
+	result, err := a.LogTransactions(ctx, fromCLI, id, []budget.TransactionInput{in})
+	if err != nil {
+		return err
+	}
+	t := result.Logged[0]
+	line := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
+	status, err := a.MonthStatus(ctx, id, t.Date[:len("YYYY-MM")])
+	if errors.Is(err, app.ErrBadInput) {
+		fmt.Fprintln(w, line) // a month outside the budget's window has no status
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	base := status.Spent.Currency().Code
+	if t.Currency != base {
+		line += fmt.Sprintf("  → %s %s", t.Base, base)
+	}
+	fmt.Fprintln(w, line)
+	status.Localize(a.Localizer(""))
+	for _, f := range status.Flags {
+		fmt.Fprintf(w, "! %s\n", plain(f.Text))
+	}
+	return nil
+}
+
+func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
+	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.Elapsed, status.Days)
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
+	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.status.header"}))
+	for _, c := range status.Categories {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t\n",
+			c.Label, l.MoneyExact(c.Planned), l.MoneyExact(c.Actual), l.MoneyExact(c.Remaining), c.State)
+	}
+	tw.Flush()
+	for _, f := range status.Flags {
+		fmt.Fprintf(w, "\n! %s", plain(f.Text))
+	}
+	if len(status.Flags) > 0 {
+		fmt.Fprintln(w)
+	}
+}
+
+// plain drops the bold markers from insight text.
+func plain(s string) string { return strings.ReplaceAll(s, "**", "") }

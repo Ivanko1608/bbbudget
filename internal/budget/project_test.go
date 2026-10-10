@@ -39,8 +39,9 @@ func fixture(t *testing.T) Budget {
 func blank() Budget {
 	b := Budget{
 		Name: "Test", BaseCurrency: "EUR", StartMonth: "2026-10", Months: 12,
-		SavingsStart: d("0"), ExtraToDebtPct: d("0"),
-		Categories: []Category{{ID: "income", Label: "Income", Kind: KindIncome}, {ID: "living", Label: "Living", Kind: KindExpense}},
+		ExtraToDebtPct: d("0"),
+		Pots:           []Pot{{ID: "savings", Name: "General savings", Kind: PotGeneral, Balance: d("0")}},
+		Categories:     []Category{{ID: "income", Label: "Income", Kind: KindIncome}, {ID: "living", Label: "Living", Kind: KindExpense}},
 	}
 	Normalize(&b)
 	return b
@@ -213,7 +214,24 @@ func randomBudget(rng *rand.Rand) Budget {
 	}
 	b := blank()
 	b.Months = 1 + rng.IntN(36)
-	b.SavingsStart = dec(2000, 2)
+	b.Pots[0].Balance = dec(2000, 2)
+	if rng.IntN(2) == 0 {
+		b.OverdraftStart = dec(500, 2)
+	}
+	for i := range rng.IntN(3) {
+		pt := Pot{ID: fmt.Sprintf("p%d", i), Name: "P", Kind: PotKinds[rng.IntN(3)], Balance: dec(1500, 2)}
+		if rng.IntN(2) == 0 {
+			pt.Target = dec(4000, 2)
+		}
+		if rng.IntN(2) == 0 {
+			pt.Monthly = dec(300, 2)
+		}
+		b.Pots = append(b.Pots, pt)
+	}
+	for i := range rng.IntN(3) {
+		b.Withdrawals = append(b.Withdrawals, Withdrawal{ID: fmt.Sprintf("w%d", i), Name: "W",
+			Pot: b.Pots[rng.IntN(len(b.Pots))].ID, Amount: dec(900, 2), Schedule: Schedule{Start: rng.IntN(4), Every: rng.IntN(3)}})
+	}
 	b.ExtraToDebtPct = money.DecimalFromInt(rng.Int64N(101))
 	b.DebtStrategy = []string{StrategyAvalanche, StrategySnowball, StrategyListed}[rng.IntN(3)]
 	b.Currencies = []CurrencyRate{
@@ -235,16 +253,29 @@ func randomBudget(rng *rand.Rand) Budget {
 		s := Schedule{Start: rng.IntN(4), Every: rng.IntN(4)}
 		b.Items = append(b.Items, Item{ID: fmt.Sprintf("l%d", i), Name: "L", Amount: amt, Currency: code, Category: cat, Schedule: s})
 	}
+	for i := range b.Items {
+		if rng.IntN(4) == 0 {
+			b.Items[i].Pot = b.Pots[rng.IntN(len(b.Pots))].ID
+		}
+	}
 	for i := range rng.IntN(4) {
 		code := codes[rng.IntN(3)]
 		b.Debts = append(b.Debts, Debt{ID: fmt.Sprintf("d%d", i), Name: "D", Currency: code,
 			Balance: dec(15000, 2), APRPct: dec(60, 2), MinPayment: dec(700, 2)})
+		if rng.IntN(2) == 0 {
+			m := rng.IntN(b.Months + 2) // sometimes after the window
+			b.Debts[i].PayoffMonth = &m
+			if rng.IntN(3) > 0 {
+				b.Debts[i].PayoffFrom = b.Pots[rng.IntN(len(b.Pots))].ID
+			}
+		}
 	}
 	return b
 }
 
 func TestInvariantsHoldExactly(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
+	var fromPot, partial, fromMonth int
 	for n := range 400 {
 		b := randomBudget(rng)
 		p, err := Compile(b)
@@ -255,22 +286,67 @@ func TestInvariantsHoldExactly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("case %d: %v", n, err)
 		}
-		prevSav := p.SavingsStart
+		prevSav := money.Zero(p.Base)
+		prevPot := make([]money.Money, len(p.Pots))
+		for k, pt := range p.Pots {
+			prevSav, prevPot[k] = prevSav.Add(pt.Bal), pt.Bal
+		}
+		prevOwed := p.OverdraftStart
 		prevBal := make([]money.Money, len(p.Debts))
 		for i, d := range p.Debts {
 			prevBal[i] = d.Bal
 		}
 		for _, m := range pr.Months {
 			fail := func(f string, a ...any) { t.Fatalf("case %d month %d: "+f, append([]any{n, m.Index}, a...)...) }
-			if !m.Left.Sub(m.Income.Sub(m.Expenses).Sub(m.DebtMinCost)).IsZero() {
-				fail("left != income - expenses - min")
+			if !m.Left.Sub(m.Income.Sub(m.IncomeToPots).Sub(m.Expenses.Sub(m.PaidFromPots)).Sub(m.DebtMinCost).Sub(m.Payoff.Sub(m.PayoffFromPots))).IsZero() {
+				fail("left != income - routed income - (expenses - paid from pots) - min - (payoff - payoff from pots)")
 			}
-			if !m.Saved.Sub(m.Left.Sub(m.ExtraCost)).IsZero() {
-				fail("saved != left - extra")
+			if !m.FromSavings.Sub(m.Transfers.Add(m.PaidFromPots).Add(m.PayoffFromPots)).IsZero() {
+				fail("from savings != transfers + paid from pots + payoff from pots")
+			}
+			if m.PayoffFromPots.Cmp(m.Payoff) > 0 {
+				fail("payoff from pots %s > payoff %s", m.PayoffFromPots, m.Payoff)
+			}
+			// Cash reconciles: what came in pays debts and savings, the rest is owed.
+			if !m.Left.Add(m.Transfers).Add(m.Overdraft.Sub(prevOwed)).Sub(m.ExtraCost.Add(m.ToSavings.Sub(m.IncomeToPots))).IsZero() {
+				fail("cash does not reconcile")
+			}
+			if !m.Saved.Sub(m.ToSavings.Sub(m.FromSavings)).IsZero() {
+				fail("saved != to - from")
 			}
 			if !m.Savings.Sub(prevSav.Add(m.Saved)).IsZero() {
 				fail("savings not cumulative")
 			}
+			// Savings are never spent silently: a pot only goes down by a planned withdrawal.
+			sum := money.Zero(p.Base)
+			for k, pm := range m.Pots {
+				if pm.Balance.IsNegative() {
+					fail("pot %s negative", pm.ID)
+				}
+				if !prevPot[k].Add(pm.In).Sub(pm.Out).Sub(pm.Balance).IsZero() {
+					fail("pot %s does not reconcile", pm.ID)
+				}
+				sum, prevPot[k] = sum.Add(pm.Balance), pm.Balance
+			}
+			if sum.Cmp(m.Savings) != 0 {
+				fail("pots %s != savings %s", sum, m.Savings)
+			}
+			taken := money.Zero(p.Base)
+			for _, wm := range m.Withdrawals {
+				taken = taken.Add(wm.Taken)
+			}
+			if taken.Cmp(m.Transfers) != 0 {
+				fail("withdrawals %s != transfers %s", taken, m.Transfers)
+			}
+			// A short month is owed. While anything is owed no leftover is saved or sent
+			// to debts (income routed to a pot still goes there: that was the choice).
+			if left := m.ToSavings.Sub(m.IncomeToPots); m.Overdraft.IsNegative() || (m.Overdraft.IsPositive() && (left.IsPositive() || m.ExtraCost.IsPositive())) {
+				fail("saved %s / extra %s while %s is owed", left, m.ExtraCost, m.Overdraft)
+			}
+			if flow := m.Left.Add(m.Transfers); flow.IsNegative() != m.Short.IsPositive() || (flow.IsNegative() && m.Short.Cmp(flow.Neg()) != 0) {
+				fail("short %s for flow %s", m.Short, flow)
+			}
+			prevOwed = m.Overdraft
 			cats := money.Zero(p.Base)
 			for _, v := range m.ByCategory {
 				cats = cats.Add(v)
@@ -278,11 +354,8 @@ func TestInvariantsHoldExactly(t *testing.T) {
 			if cats.Cmp(m.Expenses) != 0 {
 				fail("categories %s != expenses %s", cats, m.Expenses)
 			}
-			if m.ExtraCost.IsNegative() || (!m.Left.IsPositive() && !m.ExtraCost.IsZero()) {
-				fail("extra %s with left %s", m.ExtraCost, m.Left)
-			}
-			if m.Left.IsPositive() && m.ExtraCost.Cmp(m.Left.Percent(b.ExtraToDebtPct, money.Floor)) > 0 {
-				fail("extra %s exceeds its budget", m.ExtraCost)
+			if m.ExtraCost.IsNegative() {
+				fail("extra %s negative", m.ExtraCost)
 			}
 			debtCost := money.Zero(p.Base)
 			for i, dm := range m.Debts {
@@ -290,19 +363,39 @@ func TestInvariantsHoldExactly(t *testing.T) {
 				if dm.Balance.IsNegative() {
 					fail("negative balance")
 				}
-				if !prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra).Sub(dm.Balance).IsZero() {
+				if !prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra).Sub(dm.Payoff).Sub(dm.Balance).IsZero() {
 					fail("debt %s does not reconcile", dm.ID)
+				}
+				// A payoff from the month's own money always clears the debt.
+				if d := p.Debts[i]; d.PaysOffIn(m.Index) && d.PotIdx < 0 && dm.Balance.IsPositive() {
+					fail("debt %s not cleared by its payoff", dm.ID)
+				}
+				if dm.Payoff.IsPositive() && !p.Debts[i].PaysOffIn(m.Index) {
+					fail("debt %s paid off outside its payoff month", dm.ID)
+				}
+				if dm.Payoff.IsPositive() {
+					switch {
+					case p.Debts[i].PotIdx < 0:
+						fromMonth++
+					case dm.Balance.IsPositive():
+						partial++
+					default:
+						fromPot++
+					}
 				}
 				prevBal[i] = dm.Balance
 			}
-			if debtCost.Cmp(m.DebtMinCost.Add(m.ExtraCost)) != 0 {
-				fail("debt costs %s != min+extra %s", debtCost, m.DebtMinCost.Add(m.ExtraCost))
+			if debtCost.Cmp(m.DebtPayments) != 0 || m.DebtPayments.Cmp(m.DebtMinCost.Add(m.Payoff).Add(m.ExtraCost)) != 0 {
+				fail("debt costs %s != min+payoff+extra %s", debtCost, m.DebtPayments)
 			}
 			prevSav = m.Savings
 		}
 		if _, err := buildReport(pr); err != nil {
 			t.Fatalf("case %d report: %v", n, err)
 		}
+	}
+	if fromPot == 0 || partial == 0 || fromMonth == 0 {
+		t.Fatalf("random budgets missed a payoff case: from pot %d, partial %d, from the month %d", fromPot, partial, fromMonth)
 	}
 }
 

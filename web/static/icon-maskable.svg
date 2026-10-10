@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#ffd60a"/>
+  <!-- glyph kept inside the central 80% safe zone so any mask shape keeps it -->
+  <text x="236" y="350" text-anchor="middle" font-family="'Golos Text','Helvetica Neue',Arial,sans-serif" font-weight="800" font-size="250" fill="#111111">B</text>
+  <text x="350" y="226" text-anchor="middle" font-family="'Golos Text','Helvetica Neue',Arial,sans-serif" font-weight="800" font-size="114" fill="#111111">3</text>
+</svg>

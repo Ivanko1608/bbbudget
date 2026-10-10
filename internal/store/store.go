@@ -45,6 +45,9 @@ type Meta struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// EditFunc changes a budget for Update. It may edit its argument in place.
+type EditFunc func(budget.Budget) (budget.Budget, error)
+
 // AnyRevision disables the optimistic check in Update.
 const AnyRevision int64 = -1
 
@@ -53,26 +56,32 @@ const AnyRevision int64 = -1
 type Store interface {
 	List(ctx context.Context) ([]Meta, error)
 	Get(ctx context.Context, id string) (Record, error)
-	Create(ctx context.Context, id string, b budget.Budget) (Record, error)
-	// Update reads the current budget, passes it to fn and stores the result.
-	// If expected != AnyRevision and differs from the stored revision, it
-	// returns *ConflictError without calling fn.
-	Update(ctx context.Context, id string, expected int64, fn func(budget.Budget) (budget.Budget, error)) (Record, error)
+	// Create stores a new budget, recording origin in its history.
+	Create(ctx context.Context, origin Origin, id string, b budget.Budget) (Record, error)
+	// Update reads the current budget, passes it to fn and stores the result,
+	// recording origin in its history. If expected != AnyRevision and differs
+	// from the stored revision, it returns *ConflictError without calling fn.
+	Update(
+		ctx context.Context, origin Origin, id string, expected int64, fn EditFunc,
+	) (Record, error)
 	Delete(ctx context.Context, id string) error
 	// History returns a budget's recent writes, newest first, without their
-	// documents. Every Create and Update is recorded with the Change on its
-	// context; limit <= 0 means all that are kept.
+	// documents: at most limit of them, or AllEntries.
 	History(ctx context.Context, id string, limit int) ([]Entry, error)
 	// Snapshot returns the budget as of a revision still in the history, or
 	// ErrNoSnapshot.
 	Snapshot(ctx context.Context, id string, rev int64) (budget.Budget, error)
 	// Ledger returns a budget's logged transactions (empty if none yet).
 	Ledger(ctx context.Context, id string) (Ledger, error)
-	// UpdateLedger passes the current budget and transactions to fn and
+	// UpdateLedger passes the current budget and transactions to edit and
 	// stores the transactions it returns, atomically with respect to every
 	// other write. The budget itself is not changed.
-	UpdateLedger(ctx context.Context, id string, fn func(budget.Budget, []budget.Transaction) ([]budget.Transaction, error)) (Ledger, error)
+	UpdateLedger(ctx context.Context, id string, edit LedgerEditFunc) (Ledger, error)
 }
+
+// LedgerEditFunc gets the current budget and a copy of its transactions,
+// and returns the transactions to store.
+type LedgerEditFunc func(budget.Budget, []budget.Transaction) ([]budget.Transaction, error)
 
 // Ledger is a budget's actual transactions, kept apart from the budget so
 // the plan stays small and an editor saving the whole plan can't drop them.

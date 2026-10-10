@@ -68,10 +68,9 @@ func (s *FileStore) read(id string) (Record, error) {
 	return r, nil
 }
 
+// write saves a record. Callers validate it first (budget.Compile), before
+// recording its history, so an invalid write leaves no trace.
 func (s *FileStore) write(r Record) error {
-	if _, err := budget.Compile(r.Budget); err != nil {
-		return err
-	}
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
@@ -135,7 +134,9 @@ func (s *FileStore) Get(ctx context.Context, id string) (r Record, err error) {
 	return r, err
 }
 
-func (s *FileStore) Create(ctx context.Context, id string, b budget.Budget) (r Record, err error) {
+func (s *FileStore) Create(
+	ctx context.Context, origin Origin, id string, b budget.Budget,
+) (r Record, err error) {
 	if !ValidID(id) {
 		return Record{}, ErrBadID
 	}
@@ -149,7 +150,7 @@ func (s *FileStore) Create(ctx context.Context, id string, b budget.Budget) (r R
 		if _, err := budget.Compile(b); err != nil {
 			return err
 		}
-		if err := s.record(ctx, nil, r); err != nil {
+		if err := s.record(origin, nil, r); err != nil {
 			return err
 		}
 		return s.write(r)
@@ -157,7 +158,9 @@ func (s *FileStore) Create(ctx context.Context, id string, b budget.Budget) (r R
 	return r, err
 }
 
-func (s *FileStore) Update(ctx context.Context, id string, expected int64, fn func(budget.Budget) (budget.Budget, error)) (r Record, err error) {
+func (s *FileStore) Update(
+	ctx context.Context, origin Origin, id string, expected int64, fn EditFunc,
+) (r Record, err error) {
 	err = s.withLock(true, func() error {
 		cur, err := s.read(id)
 		if err != nil {
@@ -178,7 +181,7 @@ func (s *FileStore) Update(ctx context.Context, id string, expected int64, fn fu
 		if _, err := budget.Compile(nb); err != nil {
 			return err // before recording: an invalid write leaves no trace
 		}
-		if err := s.record(ctx, &cur, r); err != nil {
+		if err := s.record(origin, &cur, r); err != nil {
 			return err
 		}
 		return s.write(r)

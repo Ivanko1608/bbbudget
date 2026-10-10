@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"bbbudget/internal/budget"
 )
@@ -32,20 +33,24 @@ func (s *FileStore) readLedger(id string) (Ledger, error) {
 	return l, nil
 }
 
-func (s *FileStore) Ledger(ctx context.Context, id string) (l Ledger, err error) {
-	err = s.withLock(false, func() error {
+func (s *FileStore) Ledger(ctx context.Context, id string) (Ledger, error) {
+	var ledger Ledger
+	readLedger := func() error {
 		if _, err := s.read(id); err != nil {
 			return err
 		}
-		l, err = s.readLedger(id)
+		read, err := s.readLedger(id)
+		ledger = read
 		return err
-	})
-	return l, err
+	}
+	err := s.withLock(false, readLedger)
+	return ledger, err
 }
 
-func (s *FileStore) UpdateLedger(ctx context.Context, id string, fn func(budget.Budget, []budget.Transaction) ([]budget.Transaction, error)) (l Ledger, err error) {
-	err = s.withLock(true, func() error {
-		cur, err := s.read(id)
+func (s *FileStore) UpdateLedger(ctx context.Context, id string, edit LedgerEditFunc) (Ledger, error) {
+	var ledger Ledger
+	writeLedger := func() error {
+		current, err := s.read(id)
 		if err != nil {
 			return err
 		}
@@ -53,19 +58,20 @@ func (s *FileStore) UpdateLedger(ctx context.Context, id string, fn func(budget.
 		if err != nil {
 			return err
 		}
-		txs, err := fn(cur.Budget, append([]budget.Transaction{}, old.Transactions...))
+		txs, err := edit(current.Budget, slices.Clone(old.Transactions))
 		if err != nil {
 			return err
 		}
 		if len(txs) > budget.MaxTransactions {
 			return fmt.Errorf("at most %d transactions per budget", budget.MaxTransactions)
 		}
-		l = Ledger{Revision: old.Revision + 1, UpdatedAt: s.now().UTC(), Transactions: txs}
-		raw, err := json.MarshalIndent(l, "", " ")
+		ledger = Ledger{Revision: old.Revision + 1, UpdatedAt: s.now().UTC(), Transactions: txs}
+		raw, err := json.MarshalIndent(ledger, "", " ")
 		if err != nil {
 			return err
 		}
 		return s.writeFile(s.ledgerPath(id), append(raw, '\n'))
-	})
-	return l, err
+	}
+	err := s.withLock(true, writeLedger)
+	return ledger, err
 }

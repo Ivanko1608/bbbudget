@@ -132,6 +132,7 @@ func TestStdioMCP(t *testing.T) {
 		t.Skip("builds the binary")
 	}
 	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json")) // inherited by the binary
+	t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	bin := filepath.Join(t.TempDir(), "bbbudget")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
@@ -156,8 +157,12 @@ func TestStdioMCP(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("update_item: %v %+v", err, res)
 	}
-	if text := res.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "amount 1150 → 1200") || !strings.Contains(text, `"end_savings"`) {
-		t.Fatalf("update not reflected in the delta: %s", text)
+	text := res.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "amount 1150 → 1200") {
+		t.Errorf("the change is missing: %s", text)
+	}
+	if !strings.Contains(text, `"end_savings"`) {
+		t.Errorf("the effect on end savings is missing: %s", text)
 	}
 	// The change is on disk for every other process (e.g. the web server).
 	out, _ := exec.Command(bin, "report", "home", "-dir", dir).CombinedOutput()

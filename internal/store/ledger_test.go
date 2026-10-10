@@ -9,33 +9,108 @@ import (
 	"bbbudget/internal/money"
 )
 
-func TestLedgerPersistsApartFromTheBudget(t *testing.T) {
+func newStoreWithHome(t *testing.T) *FileStore {
+	t.Helper()
 	s, b := newStore(t)
-	s.Create(ctx, "home", b)
-	if l, err := s.Ledger(ctx, "home"); err != nil || len(l.Transactions) != 0 {
-		t.Fatalf("empty ledger: %+v %v", l, err)
+	if _, err := s.Create(ctx, byCLI, "home", b); err != nil {
+		t.Fatal(err)
 	}
-	add := func(_ budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
-		return append(txs, budget.Transaction{ID: "t1", Date: "2026-10-01", Amount: money.MustDecimal("5"), Currency: "EUR", Category: "home", Base: money.MustDecimal("5")}), nil
+	return s
+}
+
+func logFive(_ budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
+	five := budget.Transaction{
+		ID:       "t1",
+		Date:     "2026-10-01",
+		Amount:   money.MustDecimal("5"),
+		Currency: "EUR",
+		Category: "home",
+		Base:     money.MustDecimal("5"),
 	}
-	if l, err := s.UpdateLedger(ctx, "home", add); err != nil || l.Revision != 1 {
-		t.Fatalf("update: %+v %v", l, err)
+	return append(txs, five), nil
+}
+
+func TestANewBudgetHasAnEmptyLedger(t *testing.T) {
+	s := newStoreWithHome(t)
+
+	ledger, err := s.Ledger(ctx, "home")
+
+	if err != nil {
+		t.Fatal(err)
 	}
-	other, _ := NewFileStore(s.dir) // another process sees it
-	if l, _ := other.Ledger(ctx, "home"); len(l.Transactions) != 1 {
-		t.Fatalf("other process: %+v", l)
+	if len(ledger.Transactions) != 0 {
+		t.Errorf("transactions: %+v", ledger.Transactions)
 	}
-	if r, _ := s.Get(ctx, "home"); r.Revision != 1 {
-		t.Fatal("logging a transaction changed the budget's revision")
+}
+
+func TestTheLedgerIsSharedBetweenProcesses(t *testing.T) {
+	s := newStoreWithHome(t)
+	other, err := NewFileStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if list, _ := s.List(ctx); len(list) != 1 {
-		t.Fatalf("the ledger file was listed as a budget: %+v", list)
+
+	ledger, err := s.UpdateLedger(ctx, "home", logFive)
+
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.UpdateLedger(ctx, "nope", add); !errors.Is(err, ErrNotFound) {
+	if ledger.Revision != 1 {
+		t.Errorf("ledger revision: %d", ledger.Revision)
+	}
+	seen, err := other.Ledger(ctx, "home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen.Transactions) != 1 {
+		t.Errorf("another process sees %d transactions", len(seen.Transactions))
+	}
+}
+
+func TestLoggingLeavesTheBudgetAlone(t *testing.T) {
+	s := newStoreWithHome(t)
+
+	if _, err := s.UpdateLedger(ctx, "home", logFive); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := s.Get(ctx, "home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Revision != 1 {
+		t.Errorf("logging changed the budget's revision to %d", r.Revision)
+	}
+	list, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Errorf("the ledger file was listed as a budget: %+v", list)
+	}
+}
+
+func TestAMissingBudgetHasNoLedger(t *testing.T) {
+	s := newStoreWithHome(t)
+
+	_, err := s.UpdateLedger(ctx, "nope", logFive)
+
+	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ledger of a missing budget: %v", err)
 	}
-	s.Delete(ctx, "home")
+}
+
+func TestDeletingABudgetDeletesItsLedger(t *testing.T) {
+	s := newStoreWithHome(t)
+	if _, err := s.UpdateLedger(ctx, "home", logFive); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Delete(ctx, "home"); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := os.Stat(s.ledgerPath("home")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("deleting the budget left its transactions behind")
+		t.Fatalf("deleting the budget left its transactions behind: %v", err)
 	}
 }

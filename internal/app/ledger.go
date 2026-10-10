@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/money"
@@ -24,101 +25,178 @@ type LogResult struct {
 // LogTransactions validates and stores transactions, all or nothing. Each
 // gets its base-currency value at today's rates, and they share a batch id
 // so they can be removed together.
-func (a *App) LogTransactions(ctx context.Context, id string, ins []budget.TransactionInput) (*LogResult, error) {
-	if len(ins) == 0 {
+func (a *App) LogTransactions(
+	ctx context.Context, origin store.Origin, id string, inputs []budget.TransactionInput,
+) (*LogResult, error) {
+	if len(inputs) == 0 {
 		return nil, fmt.Errorf("%w: no transactions given", ErrBadInput)
 	}
-	var res LogResult
-	_, err := a.Store.UpdateLedger(ctx, id, func(b budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
-		res = LogResult{Logged: []budget.Transaction{}}
-		p, err := budget.Compile(b)
+	stamp := logStamp{at: a.Now().UTC(), source: string(origin.Source)}
+	var result LogResult
+	logBatch := func(b budget.Budget, existing []budget.Transaction) ([]budget.Transaction, error) {
+		plan, err := budget.Compile(b)
 		if err != nil {
 			return nil, err
 		}
-		seen := map[string]bool{}
-		for _, t := range txs {
-			if t.ExternalID != "" {
-				seen[t.ExternalID] = true
-			}
+		result, err = newBatch(plan, existing, inputs, stamp)
+		if err != nil {
+			return nil, err
 		}
-		next, batch := nextIDs(txs)
-		res.Batch = batch
-		var issues []budget.Issue
-		now, source := a.Now().UTC(), store.ChangeFrom(ctx).Source
-		for i, in := range ins {
-			t, iss := p.Value(in, fmt.Sprintf("transactions[%d]", i))
-			if len(iss) > 0 {
-				issues = append(issues, iss...)
-				continue
-			}
-			if t.ExternalID != "" && seen[t.ExternalID] {
-				res.Skipped = append(res.Skipped, t.ExternalID)
-				continue
-			}
-			if t.ExternalID != "" {
-				seen[t.ExternalID] = true
-			}
-			t.ID, t.Batch, t.Source, t.LoggedAt = "t"+strconv.Itoa(next), batch, source, now
-			next++
-			res.Logged = append(res.Logged, t)
-		}
-		if len(issues) > 0 {
-			return nil, &budget.ValidationError{Issues: issues}
-		}
-		return append(txs, res.Logged...), nil
-	})
-	if err != nil {
+		return append(existing, result.Logged...), nil
+	}
+	if _, err := a.Store.UpdateLedger(ctx, id, logBatch); err != nil {
 		return nil, err
 	}
-	return &res, nil
+	return &result, nil
 }
 
-// nextIDs returns the next transaction number and a new batch id.
-func nextIDs(txs []budget.Transaction) (int, string) {
-	maxT, maxB := 0, 0
-	for _, t := range txs {
-		if n, err := strconv.Atoi(strings.TrimPrefix(t.ID, "t")); err == nil && n > maxT {
-			maxT = n
+// logStamp is when and by whom transactions were logged.
+type logStamp struct {
+	at     time.Time
+	source string
+}
+
+// newBatch prices inputs into a new batch after existing, skipping the
+// external ids existing already has. Any invalid input fails the batch.
+func newBatch(
+	plan *budget.Plan, existing []budget.Transaction, inputs []budget.TransactionInput, stamp logStamp,
+) (LogResult, error) {
+	seen := externalIDs(existing)
+	next := nextNumber(existing, transactionID)
+	result := LogResult{Batch: "b" + strconv.Itoa(nextNumber(existing, batchID)), Logged: []budget.Transaction{}}
+	var issues []budget.Issue
+	for i, in := range inputs {
+		t, problems := plan.Price(in, fmt.Sprintf("transactions[%d]", i))
+		if len(problems) > 0 {
+			issues = append(issues, problems...)
+			continue
 		}
-		if n, err := strconv.Atoi(strings.TrimPrefix(t.Batch, "b")); err == nil && n > maxB {
-			maxB = n
+		if t.ExternalID != "" && seen[t.ExternalID] {
+			result.Skipped = append(result.Skipped, t.ExternalID)
+			continue
+		}
+		seen[t.ExternalID] = true
+		t.ID = "t" + strconv.Itoa(next)
+		t.Batch = result.Batch
+		t.Source = stamp.source
+		t.LoggedAt = stamp.at
+		next++
+		result.Logged = append(result.Logged, t)
+	}
+	if len(issues) > 0 {
+		return LogResult{}, &budget.ValidationError{Issues: issues}
+	}
+	return result, nil
+}
+
+func externalIDs(txs []budget.Transaction) map[string]bool {
+	seen := map[string]bool{}
+	for _, t := range txs {
+		if t.ExternalID != "" {
+			seen[t.ExternalID] = true
 		}
 	}
-	return maxT + 1, "b" + strconv.Itoa(maxB+1)
+	return seen
 }
 
-// TxFilter narrows ListTransactions. Dates are inclusive "YYYY-MM-DD"; a
-// "YYYY-MM" month means the whole month.
+func transactionID(t budget.Transaction) string { return strings.TrimPrefix(t.ID, "t") }
+func batchID(t budget.Transaction) string       { return strings.TrimPrefix(t.Batch, "b") }
+
+// nextNumber is one more than the highest number number(t) gives.
+func nextNumber(txs []budget.Transaction, number func(budget.Transaction) string) int {
+	highest := 0
+	for _, t := range txs {
+		if n, err := strconv.Atoi(number(t)); err == nil {
+			highest = max(highest, n)
+		}
+	}
+	return highest + 1
+}
+
+// TxFilter narrows ListTransactions. From and To are inclusive, either a
+// day "YYYY-MM-DD" or a month "YYYY-MM" (the whole month).
 type TxFilter struct {
-	From, To string
+	From     string
+	To       string
 	Category string
 	Batch    string
 	Limit    int
 }
 
 // ListTransactions returns matching transactions, newest first.
-func (a *App) ListTransactions(ctx context.Context, id string, f TxFilter) ([]budget.Transaction, error) {
-	l, err := a.Store.Ledger(ctx, id)
+func (a *App) ListTransactions(
+	ctx context.Context, id string, f TxFilter,
+) ([]budget.Transaction, error) {
+	match, err := f.matcher()
 	if err != nil {
 		return nil, err
 	}
-	from, to := f.From, f.To
-	if len(to) == 7 {
-		to += "-31" // string order: every day of the month is <= DD 31
+	ledger, err := a.Store.Ledger(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	out := []budget.Transaction{}
-	for _, t := range l.Transactions {
-		if (from != "" && t.Date < from) || (to != "" && t.Date > to) ||
-			(f.Category != "" && t.Category != f.Category) || (f.Batch != "" && t.Batch != f.Batch) {
-			continue
+	found := []budget.Transaction{}
+	for _, t := range ledger.Transactions {
+		if match(t) {
+			found = append(found, t)
 		}
-		out = append(out, t)
 	}
-	slices.SortStableFunc(out, func(x, y budget.Transaction) int { return strings.Compare(y.Date, x.Date) })
-	if f.Limit > 0 && len(out) > f.Limit {
-		out = out[:f.Limit]
+	slices.SortStableFunc(found, func(x, y budget.Transaction) int { return strings.Compare(y.Date, x.Date) })
+	if f.Limit > 0 && len(found) > f.Limit {
+		found = found[:f.Limit]
 	}
-	return out, nil
+	return found, nil
+}
+
+// matcher turns the filter into a test for one transaction.
+func (f TxFilter) matcher() (func(budget.Transaction) bool, error) {
+	first, err := firstDay(f.From)
+	if err != nil {
+		return nil, err
+	}
+	last, err := lastDay(f.To)
+	if err != nil {
+		return nil, err
+	}
+	return func(t budget.Transaction) bool {
+		day, err := time.Parse(time.DateOnly, t.Date)
+		inRange := err == nil && !day.Before(first) && !day.After(last)
+		inCategory := f.Category == "" || t.Category == f.Category
+		inBatch := f.Batch == "" || t.Batch == f.Batch
+		return inRange && inCategory && inBatch
+	}, nil
+}
+
+// firstDay is the day a "YYYY-MM-DD" or "YYYY-MM" bound starts at; "" is
+// the beginning of time.
+func firstDay(bound string) (time.Time, error) {
+	if bound == "" {
+		return time.Time{}, nil
+	}
+	if month, err := time.Parse("2006-01", bound); err == nil {
+		return month, nil
+	}
+	return parseDay(bound)
+}
+
+// lastDay is the day a "YYYY-MM-DD" or "YYYY-MM" bound ends at; "" is
+// the end of time.
+func lastDay(bound string) (time.Time, error) {
+	if bound == "" {
+		return time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC), nil
+	}
+	if month, err := time.Parse("2006-01", bound); err == nil {
+		return month.AddDate(0, 1, -1), nil
+	}
+	return parseDay(bound)
+}
+
+func parseDay(bound string) (time.Time, error) {
+	day, err := time.Parse(time.DateOnly, bound)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: dates are YYYY-MM-DD or YYYY-MM, got %q", ErrBadInput, bound)
+	}
+	return day, nil
 }
 
 // TxPatch changes a transaction; nil fields stay as they are.
@@ -131,112 +209,153 @@ type TxPatch struct {
 	Note     *string        `json:"note,omitempty"`
 }
 
+// changesValue reports whether the patch changes what the transaction is
+// worth in the base currency.
+func (p TxPatch) changesValue() bool {
+	return p.Amount != nil || p.Currency != nil || p.Category != nil
+}
+
 // UpdateTransaction changes one transaction. Its base value is worked out
 // again at today's rates when the amount, currency or category changes.
-func (a *App) UpdateTransaction(ctx context.Context, id, txID string, p TxPatch) (*budget.Transaction, error) {
-	var out budget.Transaction
-	_, err := a.Store.UpdateLedger(ctx, id, func(b budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
+func (a *App) UpdateTransaction(
+	ctx context.Context, id, txID string, patch TxPatch,
+) (*budget.Transaction, error) {
+	var updated budget.Transaction
+	replace := func(b budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
 		i := slices.IndexFunc(txs, func(t budget.Transaction) bool { return t.ID == txID })
 		if i < 0 {
 			return nil, fmt.Errorf("%w: no transaction %q", store.ErrNotFound, txID)
 		}
-		t := txs[i]
-		in := budget.TransactionInput{Date: t.Date, Amount: t.Amount, Currency: t.Currency, Category: t.Category, Item: t.Item, Note: t.Note, ExternalID: t.ExternalID}
-		set := func(dst *string, v *string) {
-			if v != nil {
-				*dst = *v
-			}
-		}
-		set(&in.Date, p.Date)
-		set(&in.Currency, p.Currency)
-		set(&in.Category, p.Category)
-		set(&in.Item, p.Item)
-		set(&in.Note, p.Note)
-		if p.Amount != nil {
-			in.Amount = *p.Amount
-		}
-		pl, err := budget.Compile(b)
+		plan, err := budget.Compile(b)
 		if err != nil {
 			return nil, err
 		}
-		nt, issues := pl.Value(in, "transaction")
-		if len(issues) > 0 {
-			return nil, &budget.ValidationError{Issues: issues}
+		updated, err = patched(plan, txs[i], patch)
+		if err != nil {
+			return nil, err
 		}
-		keepBase := p.Amount == nil && p.Currency == nil && p.Category == nil
-		if keepBase {
-			nt.Base = t.Base
-		}
-		nt.ID, nt.Batch, nt.Source, nt.LoggedAt = t.ID, t.Batch, t.Source, t.LoggedAt
-		txs[i], out = nt, nt
+		txs[i] = updated
 		return txs, nil
-	})
-	if err != nil {
+	}
+	if _, err := a.Store.UpdateLedger(ctx, id, replace); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &updated, nil
 }
 
-// DeleteTransactions removes the given transactions, or a whole batch. It
-// returns how many were removed.
-func (a *App) DeleteTransactions(ctx context.Context, id string, ids []string, batch string) (int, error) {
-	if len(ids) == 0 && batch == "" {
-		return 0, fmt.Errorf("%w: give transaction ids or a batch", ErrBadInput)
+// patched is old with patch applied, priced again if its value changed.
+func patched(plan *budget.Plan, old budget.Transaction, patch TxPatch) (budget.Transaction, error) {
+	in := budget.TransactionInput{
+		Date:       valueOr(patch.Date, old.Date),
+		Amount:     valueOr(patch.Amount, old.Amount),
+		Currency:   valueOr(patch.Currency, old.Currency),
+		Category:   valueOr(patch.Category, old.Category),
+		Item:       valueOr(patch.Item, old.Item),
+		Note:       valueOr(patch.Note, old.Note),
+		ExternalID: old.ExternalID,
 	}
-	removed := 0
-	_, err := a.Store.UpdateLedger(ctx, id, func(_ budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
-		removed = 0
-		want := map[string]bool{}
-		for _, x := range ids {
-			want[x] = true
-		}
-		kept := txs[:0]
-		for _, t := range txs {
-			if want[t.ID] || (batch != "" && t.Batch == batch) {
-				removed++
-				delete(want, t.ID)
-				continue
-			}
-			kept = append(kept, t)
-		}
-		if len(want) > 0 {
-			missing := make([]string, 0, len(want))
-			for x := range want {
-				missing = append(missing, x)
-			}
-			slices.Sort(missing)
-			return nil, fmt.Errorf("%w: no transaction %s", store.ErrNotFound, strings.Join(missing, ", "))
-		}
-		if removed == 0 {
-			return nil, fmt.Errorf("%w: no transactions in batch %q", store.ErrNotFound, batch)
-		}
-		return kept, nil
+	t, issues := plan.Price(in, "transaction")
+	if len(issues) > 0 {
+		return budget.Transaction{}, &budget.ValidationError{Issues: issues}
+	}
+	if !patch.changesValue() {
+		t.Base = old.Base
+	}
+	t.ID = old.ID
+	t.Batch = old.Batch
+	t.Source = old.Source
+	t.LoggedAt = old.LoggedAt
+	return t, nil
+}
+
+func valueOr[T any](patch *T, old T) T {
+	if patch == nil {
+		return old
+	}
+	return *patch
+}
+
+// DeleteTransactions removes the transactions with the given ids, all or
+// none: an unknown id is an error.
+func (a *App) DeleteTransactions(ctx context.Context, id string, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, fmt.Errorf("%w: give the ids of the transactions to delete", ErrBadInput)
+	}
+	return a.removeTransactions(ctx, id, func(txs []budget.Transaction) ([]budget.Transaction, error) {
+		return withoutIDs(txs, ids)
 	})
+}
+
+// DeleteBatch removes every transaction logged in batch.
+func (a *App) DeleteBatch(ctx context.Context, id, batch string) (int, error) {
+	if batch == "" {
+		return 0, fmt.Errorf("%w: give the batch to delete", ErrBadInput)
+	}
+	return a.removeTransactions(ctx, id, func(txs []budget.Transaction) ([]budget.Transaction, error) {
+		return withoutBatch(txs, batch)
+	})
+}
+
+// removeTransactions stores what remove keeps, and returns how many it
+// took out.
+func (a *App) removeTransactions(
+	ctx context.Context, id string,
+	remove func([]budget.Transaction) ([]budget.Transaction, error),
+) (int, error) {
+	var removed int
+	keep := func(_ budget.Budget, txs []budget.Transaction) ([]budget.Transaction, error) {
+		kept, err := remove(txs)
+		removed = len(txs) - len(kept)
+		return kept, err
+	}
+	_, err := a.Store.UpdateLedger(ctx, id, keep)
 	return removed, err
 }
 
+func withoutIDs(txs []budget.Transaction, ids []string) ([]budget.Transaction, error) {
+	var missing []string
+	for _, txID := range ids {
+		if !slices.ContainsFunc(txs, func(t budget.Transaction) bool { return t.ID == txID }) {
+			missing = append(missing, txID)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: no transaction %s", store.ErrNotFound, strings.Join(missing, ", "))
+	}
+	named := func(t budget.Transaction) bool { return slices.Contains(ids, t.ID) }
+	return slices.DeleteFunc(slices.Clone(txs), named), nil
+}
+
+func withoutBatch(txs []budget.Transaction, batch string) ([]budget.Transaction, error) {
+	inBatch := func(t budget.Transaction) bool { return t.Batch == batch }
+	kept := slices.DeleteFunc(slices.Clone(txs), inBatch)
+	if len(kept) == len(txs) {
+		return nil, fmt.Errorf("%w: no transactions in batch %q", store.ErrNotFound, batch)
+	}
+	return kept, nil
+}
+
 // MonthStatus is plan versus actual for a month ("YYYY-MM"; "" for the
-// current one), with its flags in the caller's language.
+// current one), with its flags in English.
 func (a *App) MonthStatus(ctx context.Context, id, month string) (*budget.MonthStatus, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	l, err := a.Store.Ledger(ctx, id)
+	ledger, err := a.Store.Ledger(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	p, err := budget.Compile(r.Budget)
+	plan, err := budget.Compile(r.Budget)
 	if err != nil {
 		return nil, err
 	}
 	if month == "" {
 		month = a.Now().Format("2006-01")
 	}
-	st, err := p.Status(month, l.Transactions, a.Now())
+	status, err := plan.Status(month, ledger.Transactions, a.Now())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
 	}
-	st.Localize(a.Localizer(ctx))
-	return st, nil
+	return status, nil
 }
