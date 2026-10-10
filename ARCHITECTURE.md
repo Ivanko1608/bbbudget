@@ -30,7 +30,9 @@ flowchart TB
     APP --> BUDGET
     APP --> RATES["internal/rates<br/>exchange-rate providers"]
     STORE --> BUDGET["internal/budget<br/>the model and ALL the maths"]
+    BUDGET --> I18N["internal/i18n<br/>message catalogs, plurals, number formats"]
     BUDGET --> MONEY["internal/money<br/>exact amounts and rounding"]
+    I18N --> MONEY
 ```
 
 Arrows mean "imports". They only ever point **down**: `money` knows nothing
@@ -200,6 +202,7 @@ back to them when you want to see exactly what something guarantees.
 | Package | Owns | Start with | Never does |
 |---|---|---|---|
 | `internal/money` | Amounts, decimals, currencies, rounding | `money.go` (the `Money` type), `currency.go` (the currency table) | know what a budget is |
+| `internal/i18n` | Message catalogs (English, Russian), plural rules, number and month formats | `i18n.go`, then `locales/en.json` | know what a budget is |
 | `internal/budget` | The document model, validation, projection, insights, ops, scenarios | `model.go` → `ops.go` → `plan.go` → `project.go` → `report.go` | touch files or the network |
 | `internal/store` | Saving budgets: one JSON file each, lock, atomic writes, revisions | `store.go` (the small interface), then `file.go` | calculate anything |
 | `internal/app` | Use cases every door shares: create, get, apply, what-if, scenarios, rate refresh, settings | `app.go` (short, read it whole), then `rates.go` | know about HTTP or MCP |
