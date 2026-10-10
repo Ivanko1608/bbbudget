@@ -111,9 +111,6 @@ func (s *server) guard(next http.Handler) http.Handler {
 			}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
-		// Writes through the API are recorded as made in the browser; the
-		// MCP endpoint relabels its own as "mcp".
-		r = r.WithContext(store.WithChange(r.Context(), store.Change{Source: store.SourceWeb}))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
@@ -157,16 +154,12 @@ func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Iss
 // fail maps domain errors to HTTP statuses. Anything unrecognised is a 500
 // and is logged, with a generic message to the client.
 func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
-	// One variable per error type the API answers with its own status code.
 	var (
 		invalid    *budget.ValidationError
 		conflict   *store.ConflictError
 		badOp      *budget.OpError
 		noMatch    *budget.NoMatchError
-		overflow   *money.ArithmeticError
 		tooLarge   *http.MaxBytesError
-		badJSON    *json.SyntaxError
-		wrongType  *json.UnmarshalTypeError
 		rateFailed *app.RateError
 		undoLater  *app.UndoConflictError
 	)
@@ -176,11 +169,13 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &invalid):
 		writeErr(w, http.StatusUnprocessableEntity, err.Error(), invalid.Issues)
 	case errors.As(err, &undoLater):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "later": undoLater.Later})
+		body := map[string]any{"error": err.Error(), "later": undoLater.Later}
+		writeJSON(w, http.StatusConflict, body)
 	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.As(err, &conflict):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "revision": conflict.Actual})
+		body := map[string]any{"error": err.Error(), "revision": conflict.Actual}
+		writeJSON(w, http.StatusConflict, body)
 	case errors.Is(err, store.ErrNotFound), errors.As(err, &noMatch):
 		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrExists):
@@ -191,7 +186,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
 	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
-	case errors.Is(err, store.ErrBadID), errors.As(err, &overflow), errors.As(err, &badJSON), errors.As(err, &wrongType), errors.Is(err, errBadRequest), errors.Is(err, app.ErrBadInput):
+	case isBadRequest(err):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
@@ -200,6 +195,20 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 var errBadRequest = errors.New("bad request")
+
+func isBadRequest(err error) bool {
+	var (
+		overflow  *money.ArithmeticError
+		badJSON   *json.SyntaxError
+		wrongType *json.UnmarshalTypeError
+	)
+	return errors.Is(err, store.ErrBadID) ||
+		errors.Is(err, errBadRequest) ||
+		errors.Is(err, app.ErrBadInput) ||
+		errors.As(err, &overflow) ||
+		errors.As(err, &badJSON) ||
+		errors.As(err, &wrongType)
+}
 
 func decode(r *http.Request, v any) error {
 	d := json.NewDecoder(r.Body)
@@ -215,6 +224,13 @@ func decode(r *http.Request, v any) error {
 }
 
 // --- handlers ---
+
+// Writes through the API are made in the browser. The editor saves as you
+// type, and those saves merge into one history entry.
+var (
+	fromBrowser = store.Origin{Source: store.SourceWeb}
+	editorSave  = store.Origin{Source: store.SourceWeb, Autosave: true}
+)
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	digits := map[string]int{}
@@ -256,9 +272,9 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		err error
 	)
 	if in.Budget != nil {
-		v, err = s.app.Import(r.Context(), in.ID, *in.Budget)
+		v, err = s.app.Import(r.Context(), fromBrowser, in.ID, *in.Budget)
 	} else {
-		v, err = s.app.Create(r.Context(), in.ID, in.Name, in.Template)
+		v, err = s.app.Create(r.Context(), fromBrowser, in.ID, in.Name, in.Template)
 	}
 	if err != nil {
 		s.fail(w, r, err)
@@ -289,9 +305,7 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "revision is required (the revision you loaded)", nil)
 		return
 	}
-	// The editor saves as you type; its saves merge into one history entry.
-	ctx := store.WithChange(r.Context(), store.Change{Source: store.SourceWeb, Autosave: true})
-	v, err := s.app.Replace(ctx, r.PathValue("id"), *in.Revision, in.Budget)
+	v, err := s.app.Replace(r.Context(), editorSave, r.PathValue("id"), *in.Revision, in.Budget)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -332,13 +346,14 @@ func (s *server) undo(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Revision int64 `json:"revision"`
 		Force    bool  `json:"force"`
-		Latest   int64 `json:"latest"` // the newest revision the caller saw
+		Seen     int64 `json:"seen"`
 	}
 	if err := decode(r, &in); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	v, err := s.app.Undo(r.Context(), r.PathValue("id"), app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Latest})
+	req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
+	v, err := s.app.Undo(r.Context(), fromBrowser, r.PathValue("id"), req)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -359,7 +374,7 @@ func (s *server) ops(w http.ResponseWriter, r *http.Request) {
 	if in.Revision != nil {
 		rev = *in.Revision
 	}
-	v, err := s.app.Apply(r.Context(), r.PathValue("id"), rev, in.Ops)
+	v, err := s.app.Apply(r.Context(), fromBrowser, r.PathValue("id"), rev, in.Ops)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -451,7 +466,7 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	v, updates, err := s.app.RefreshRates(r.Context(), r.PathValue("id"), in.Codes)
+	v, updates, err := s.app.RefreshRates(r.Context(), fromBrowser, r.PathValue("id"), in.Codes)
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
@@ -486,7 +501,9 @@ func (s *server) saveScenario(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	sc, err := s.app.SaveScenario(r.Context(), r.PathValue("id"), in.Name, in.Description, in.Ops)
+	sc, err := s.app.SaveScenario(
+		r.Context(), fromBrowser, r.PathValue("id"), in.Name, in.Description, in.Ops,
+	)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -504,7 +521,7 @@ func (s *server) scenarioReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
-	v, err := s.app.AdoptScenario(r.Context(), r.PathValue("id"), r.PathValue("sid"))
+	v, err := s.app.AdoptScenario(r.Context(), fromBrowser, r.PathValue("id"), r.PathValue("sid"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -513,7 +530,8 @@ func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteScenario(w http.ResponseWriter, r *http.Request) {
-	if err := s.app.DeleteScenario(r.Context(), r.PathValue("id"), r.PathValue("sid")); err != nil {
+	err := s.app.DeleteScenario(r.Context(), fromBrowser, r.PathValue("id"), r.PathValue("sid"))
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}

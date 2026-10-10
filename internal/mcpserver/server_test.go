@@ -40,7 +40,8 @@ func setup(t *testing.T) *harness {
 	if _, err := a.UpdateSettings(settings.Patch{FetchRates: &on}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Create(ctx, "home", "Home", "example"); err != nil {
+	fromCLI := store.Origin{Source: store.SourceCLI}
+	if _, err := a.Create(ctx, fromCLI, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, Options{DefaultBudget: "home", Version: "test"})
@@ -102,8 +103,13 @@ func TestToolsAreListedWithStringAmounts(t *testing.T) {
 	for _, tl := range res.Tools {
 		names[tl.Name] = tl
 	}
-	for _, want := range []string{"list_budgets", "create_budget", "get_budget", "add_item", "update_item", "remove_item", "set_currency",
-		"update_settings", "set_debt", "list_templates", "apply_ops", "what_if", "save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario", "refresh_rates", "history", "undo"} {
+	wantTools := []string{
+		"list_budgets", "create_budget", "get_budget", "list_templates",
+		"add_item", "update_item", "remove_item", "set_currency", "update_settings", "set_debt",
+		"apply_ops", "what_if", "refresh_rates", "history", "undo",
+		"save_scenario", "compare_scenarios", "adopt_scenario", "delete_scenario",
+	}
+	for _, want := range wantTools {
 		if names[want] == nil {
 			t.Errorf("missing tool %s", want)
 		}
@@ -313,26 +319,49 @@ func TestRatesWhenOffline(t *testing.T) {
 	h.call("set_currency", map[string]any{"code": "BTC", "per_base": "0.00001"}, false)
 }
 
-func TestHistoryAndUndoTools(t *testing.T) {
+func TestHistoryListsTheAssistantsChange(t *testing.T) {
 	h := setup(t)
 	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
-	hist := h.call("history", map[string]any{}, false)["items"].([]any)
-	last := hist[0].(map[string]any)
-	if last["source"] != "mcp" || !strings.Contains(last["summary"].(string), "1150 → 1200") {
-		t.Fatalf("history: %v", last)
+
+	history := h.call("history", map[string]any{}, false)["items"].([]any)
+
+	newest := history[0].(map[string]any)
+	if newest["source"] != "mcp" {
+		t.Errorf("source: %v", newest["source"])
 	}
-	s := h.call("undo", map[string]any{}, false)
-	if item(s, "rent")["amount"] != "1150.00" {
-		t.Fatalf("undo: %v", item(s, "rent"))
+	if summary := newest["summary"].(string); !strings.Contains(summary, "1150 → 1200") {
+		t.Errorf("summary: %q", summary)
 	}
-	// Someone else edits after the assistant: undoing the assistant's change
-	// is refused, and the error names the other change.
-	h.call("update_item", map[string]any{"item": "rent", "amount": "1300"}, false) // r4
-	ctx := store.WithChange(context.Background(), store.Change{Source: "web"})
-	a := money.MustDecimal("1350")
-	h.app.Apply(ctx, "home", store.AnyRevision, []budget.Op{budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &a})})
-	if e := h.call("undo", map[string]any{"revision": 4}, true)["error"].(string); !strings.Contains(e, "(web)") {
-		t.Fatalf("conflict error: %s", e)
+}
+
+func TestUndoRevertsTheAssistantsChange(t *testing.T) {
+	h := setup(t)
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
+
+	summary := h.call("undo", map[string]any{}, false)
+
+	if amount := item(summary, "rent")["amount"]; amount != "1150.00" {
+		t.Errorf("rent after undo: %v", amount)
+	}
+}
+
+// Someone else edits after the assistant: undoing the assistant's change is
+// refused, and the error names the other change.
+func TestUndoNamesChangesSomeoneElseMadeSince(t *testing.T) {
+	h := setup(t)
+	h.call("update_item", map[string]any{"item": "rent", "amount": "1300"}, false) // r2
+	amount := money.MustDecimal("1350")
+	webEdit := budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &amount})
+	web := store.Origin{Source: store.SourceWeb}
+	ops := []budget.Op{webEdit}
+	if _, err := h.app.Apply(context.Background(), web, "home", store.AnyRevision, ops); err != nil {
+		t.Fatal(err)
+	}
+
+	refusal := h.call("undo", map[string]any{"revision": 2}, true)["error"].(string)
+
+	if !strings.Contains(refusal, "r3 (web)") {
+		t.Errorf("refusal doesn't name the web change: %s", refusal)
 	}
 }
 

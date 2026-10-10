@@ -1226,7 +1226,13 @@ async function saveWhatIf() {
 // ---------- activity ----------
 
 // Who made a change, as the history records it (see store.Change).
-const SOURCES = { web: "You (browser)", mcp: "AI assistant", cli: "Command line", "auto-refresh": "Rate refresh", earlier: "Earlier" };
+const SOURCES = {
+  web: "You (browser)",
+  mcp: "AI assistant",
+  cli: "Command line",
+  "auto-refresh": "Rate refresh",
+  earlier: "Earlier",
+};
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -1253,9 +1259,7 @@ async function loadActivity() {
 function activityRow(e, i) {
   const who = SOURCES[e.source] || e.source || "Unknown";
   const when = `r${e.revision} · ${ago(e.at)}`;
-  const undo = e.undoable
-    ? `<button type="button" class="linkish" data-action="undo" data-rev="${e.revision}" data-i="${i}">Undo</button>`
-    : "<span></span>";
+  const undo = e.undoable ? undoButton(e.revision, i) : "<span></span>";
   return `<li class="act ${esc(e.source)}">
       <span class="who">${esc(who)}</span>
       <span class="what">${esc(e.summary)}</span>
@@ -1264,17 +1268,24 @@ function activityRow(e, i) {
     </li>`;
 }
 
+function undoButton(revision, i) {
+  const data = `data-action="undo" data-rev="${revision}" data-i="${i}"`;
+  return `<button type="button" class="linkish" ${data}>Undo</button>`;
+}
+
+function confirmUndoingLater(later) {
+  const changes = later.map((e) => `• ${e.summary}`).join("\n");
+  const count = later.length === 1 ? "1 later change" : `${later.length} later changes`;
+  return confirm(`This also undoes ${count}:\n\n${changes}\n\nUndo them all?`);
+}
+
 async function undoChange(i, el) {
   const rev = Number(el.dataset.rev);
   const later = S.history.slice(0, i);
-  if (later.length) {
-    const changes = later.map((e) => `• ${e.summary}`).join("\n");
-    const question = `This also undoes ${later.length} later change${later.length === 1 ? "" : "s"}:\n\n${changes}\n\nUndo them all?`;
-    if (!confirm(question)) return;
-  }
-  // latest is the newest change the person was shown: if more came in since,
+  if (later.length && !confirmUndoingLater(later)) return;
+  // seen is the newest change the person was shown: if more came in since,
   // the server refuses again instead of undoing something nobody saw.
-  const req = { revision: rev, force: later.length > 0, latest: S.history[0].revision };
+  const req = { revision: rev, force: later.length > 0, seen: S.history[0].revision };
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/undo`, req));
   loadActivity(); // also after a refusal, so the list shows what came in
 }

@@ -26,7 +26,7 @@ func AddScenario(b Budget, name, description string, ops []Op) (Budget, Scenario
 	return nb, s, nil
 }
 
-func scenarioKey(s Scenario) (string, string) { return s.ID, s.Name }
+func scenarioKey(s Scenario) (id, name string) { return s.ID, s.Name }
 
 // FindScenario resolves a scenario reference.
 func FindScenario(b Budget, ref string) (Scenario, int, error) {

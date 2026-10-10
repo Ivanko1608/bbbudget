@@ -653,10 +653,10 @@ func ids[T any](s []T, key func(T) (string, string)) []idName {
 	return out
 }
 
-func itemKey(l Item) (string, string)             { return l.ID, l.Name }
-func debtKey(d Debt) (string, string)             { return d.ID, d.Name }
-func potKey(p Pot) (string, string)               { return p.ID, p.Name }
-func withdrawalKey(w Withdrawal) (string, string) { return w.ID, w.Name }
+func itemKey(l Item) (id, name string)             { return l.ID, l.Name }
+func debtKey(d Debt) (id, name string)             { return d.ID, d.Name }
+func potKey(p Pot) (id, name string)               { return p.ID, p.Name }
+func withdrawalKey(w Withdrawal) (id, name string) { return w.ID, w.Name }
 
 // potRef resolves a pot reference (id or name) to its id.
 func potRef(b *Budget, ref string) (string, error) {

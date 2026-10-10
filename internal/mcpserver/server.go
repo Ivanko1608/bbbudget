@@ -21,14 +21,51 @@ import (
 
 const instructions = `bbbudget: multi-currency household budgets with exact money.
 
-Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...) with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct lost when income in it is converted to base, categories (income|expense), items (amount in any configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), savings pots and planned withdrawals.
-Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}. Savings are balances, never income. Each month's leftover first repays any overdraft, then pays fixed monthly contributions, then the debt share, then fills pots that have a target (in order), then goes to the first general pot. A month that falls short is NOT covered from savings automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the user agrees. An item can also have a pot: income on it (a sale, a bonus) goes straight into that pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds were saved for. A debt can be paid off in full in one month: payoff_month (0-based) and payoff_from (a pot, or "" for that month's own money). The whole balance, that month's interest included, is paid after income routed to pots has landed, so a sale routed to a pot can pay off a debt in the same month; a pot that holds less pays what it can and the rest stays owed. set_debt with payoff_month -1 removes it. Offer general savings first, then sinking funds (say which planned cost it delays), and the emergency fund only as a last resort.
-Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
-Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
-Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates fetches current rates; set_currency fetches automatically when adding a currency without per_base. Never invent a rate: fetch it.
+Model: a budget has a fiat base currency, other currencies including crypto (BTC, ETH, USDT, ...)
+with a per_base rate, transfer_fee_pct lost on every payment in that currency and cash_out_fee_pct
+lost when income in it is converted to base, categories (income|expense), items (amount in any
+configured currency, with a schedule), debts (balance, APR, minimum payment; a share of each
+month's leftover, extra_to_debt_pct, goes to debts by strategy avalanche|snowball|listed), savings
+pots and planned withdrawals.
 
-Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change, then state what changed and that it can be undone.
-Every write is recorded in the budget's history with who made it (mcp = you, web = the person in the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person says "undo that", undo your own last change; if someone else changed the budget since, undo refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios to explore alternatives side by side. Items/debts/pots/withdrawals can be referenced by id, exact name, or an unambiguous part of a name.`
+Savings: savings live in pots {name, kind general|sinking|emergency, balance, target?, monthly?}.
+Savings are balances, never income. Each month's leftover first repays any overdraft, then pays
+fixed monthly contributions, then the debt share, then fills pots that have a target (in order),
+then goes to the first general pot. A month that falls short is NOT covered from savings
+automatically: it is owed (overdraft) and listed under shortfalls with the pots that could cover
+it. To use savings, add a withdrawal {name, pot, amount, schedule} (base currency) only when the
+user agrees. An item can also have a pot: income on it (a sale, a bonus) goes straight into that
+pot, not into the month's leftover, so no debt share applies; a cost on it is paid from that pot
+as far as it holds. Use this for windfalls the user wants saved and for costs that sinking funds
+were saved for. A debt can be paid off in full in one month: payoff_month (0-based) and
+payoff_from (a pot, or "" for that month's own money). The whole balance, that month's interest
+included, is paid after income routed to pots has landed, so a sale routed to a pot can pay off a
+debt in the same month; a pot that holds less pays what it can and the rest stays owed. set_debt
+with payoff_month -1 removes it. Offer general savings first, then sinking funds (say which
+planned cost it delays), and the emergency fund only as a last resort.
+
+Amounts are exact decimal STRINGS ("1150", "12.50"); never send floats. Months are "YYYY-MM".
+
+Rounding is pessimistic: costs round up, income/receipts round down, to the minor unit.
+
+Rates: a currency's source is "manual" (typed) or a provider (auto = official ECB rate, falling
+back to currency-api for crypto and other currencies; ecb; currency-api; coingecko). refresh_rates
+fetches current rates; set_currency fetches automatically when adding a currency without per_base.
+Never invent a rate: fetch it.
+
+Workflow: call list_budgets, then get_budget before answering about numbers. Use what_if for
+hypotheticals (nothing is saved). Only use mutating tools when the user clearly asks for a change,
+then state what changed and that it can be undone.
+
+Every write is recorded in the budget's history with who made it (mcp = you, web = the person in
+the browser, cli, auto-refresh). history lists recent changes; undo reverts one. If the person
+says "undo that", undo your own last change; if someone else changed the budget since, undo
+refuses and lists their changes, so ask before forcing it. Use save_scenario + compare_scenarios
+to explore alternatives side by side. Items/debts/pots/withdrawals can be referenced by id, exact
+name, or an unambiguous part of a name.`
+
+// fromAssistant is the origin of every write made through MCP.
+var fromAssistant = store.Origin{Source: store.SourceMCP}
 
 // Options configures the server.
 type Options struct {
@@ -68,7 +105,7 @@ func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-			out, err := fn(store.WithChange(ctx, store.Change{Source: store.SourceMCP}), in)
+			out, err := fn(ctx, in)
 			if err != nil {
 				return nil, nil, err // reported to the model as a tool error
 			}
@@ -183,14 +220,14 @@ type CompareIn struct {
 
 type HistoryIn struct {
 	Ref
-	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20 (store.DefaultHistoryPage)"`
+	Limit int `json:"limit,omitempty" jsonschema:"how many recent changes to list; default 20"`
 }
 
 type UndoIn struct {
 	Ref
 	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
 	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
-	Latest   int64 `json:"latest,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
+	Seen     int64 `json:"seen,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
 }
 
 type ScenarioRef struct {
@@ -221,7 +258,7 @@ func (h *handlers) register(s *mcp.Server) {
 		return h.app.Templates.List(), nil
 	})
 	tool(s, "create_budget", "Create a budget from a template (see list_templates).", func(ctx context.Context, in CreateIn) (any, error) {
-		v, err := h.app.Create(ctx, in.ID, in.Name, in.Template)
+		v, err := h.app.Create(ctx, fromAssistant, in.ID, in.Name, in.Template)
 		return sum(v, err)
 	})
 	tool(s, "get_budget", "The full budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first.",
@@ -250,7 +287,13 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.SetCurrency(ctx, id, in.Code, budget.CurrencyPatch{PerBase: in.PerBase, Source: in.Source, TransferFeePct: in.TransferFeePct, CashOutFeePct: in.CashOutFeePct}))
+			patch := budget.CurrencyPatch{
+				PerBase:        in.PerBase,
+				Source:         in.Source,
+				TransferFeePct: in.TransferFeePct,
+				CashOutFeePct:  in.CashOutFeePct,
+			}
+			return sum(h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch))
 		})
 	tool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
 		func(ctx context.Context, in RatesIn) (any, error) {
@@ -258,7 +301,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			v, updates, err := h.app.RefreshRates(ctx, id, in.Codes)
+			v, updates, err := h.app.RefreshRates(ctx, fromAssistant, id, in.Codes)
 			if err != nil {
 				if len(updates) > 0 {
 					return nil, fmt.Errorf("%w; per currency: %+v", err, updates)
@@ -277,7 +320,15 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.SetDebt(ctx, id, in.Debt, budget.DebtPatch{Currency: in.Currency, Balance: in.Balance, APRPct: in.APRPct, MinPayment: in.MinPayment, PayoffMonth: in.PayoffMonth, PayoffFrom: in.PayoffFrom}))
+			patch := budget.DebtPatch{
+				Currency:    in.Currency,
+				Balance:     in.Balance,
+				APRPct:      in.APRPct,
+				MinPayment:  in.MinPayment,
+				PayoffMonth: in.PayoffMonth,
+				PayoffFrom:  in.PayoffFrom,
+			}
+			return sum(h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch))
 		})
 	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
@@ -307,7 +358,7 @@ func (h *handlers) register(s *mcp.Server) {
 		if err != nil {
 			return nil, err
 		}
-		return h.app.SaveScenario(ctx, id, in.Name, in.Description, in.Ops)
+		return h.app.SaveScenario(ctx, fromAssistant, id, in.Name, in.Description, in.Ops)
 	})
 	tool(s, "compare_scenarios", "Compare the current budget against saved scenarios: savings, goal dates, debt payoff, interest.", func(ctx context.Context, in CompareIn) (any, error) {
 		id, err := h.id(in.Budget)
@@ -325,14 +376,14 @@ func (h *handlers) register(s *mcp.Server) {
 		if err != nil {
 			return nil, err
 		}
-		return sum(h.app.AdoptScenario(ctx, id, in.Scenario))
+		return sum(h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario))
 	})
 	tool(s, "delete_scenario", "Delete a saved scenario.", func(ctx context.Context, in ScenarioRef) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		if err := h.app.DeleteScenario(ctx, id, in.Scenario); err != nil {
+		if err := h.app.DeleteScenario(ctx, fromAssistant, id, in.Scenario); err != nil {
 			return nil, err
 		}
 		return map[string]string{"deleted": in.Scenario}, nil
@@ -355,7 +406,8 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			return sum(h.app.Undo(ctx, id, app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Latest}))
+			req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
+			return sum(h.app.Undo(ctx, fromAssistant, id, req))
 		})
 
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -380,7 +432,7 @@ func (h *handlers) apply(ctx context.Context, ref string, rev int64, ops ...budg
 	if err != nil {
 		return nil, err
 	}
-	return sum(h.app.Apply(ctx, id, rev, ops))
+	return sum(h.app.Apply(ctx, fromAssistant, id, rev, ops))
 }
 
 // spec turns the flat schedule fields of add_item/update_item into a

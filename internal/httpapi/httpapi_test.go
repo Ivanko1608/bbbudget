@@ -385,28 +385,72 @@ func TestDebtPayoffOverHTTP(t *testing.T) {
 	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"bike","value":{"pot":""}},{"op":"remove_pot","target":"savings"}]}`, 400)
 }
 
-func TestHistoryAndUndo(t *testing.T) {
+const setRentTo1200 = `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1200"}}]}`
+const setRentTo1300 = `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1300"}}]}`
+
+func TestHistoryListsBrowserChanges(t *testing.T) {
 	c := setup(t)
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1200"}}]}`, 200)
-	var h []map[string]any
+	c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+
 	w := c.req("GET", "/api/budgets/home/history", "", nil)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &h) != nil || len(h) != 2 {
+
+	var entries []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil || w.Code != 200 {
 		t.Fatalf("history: %d %s", w.Code, w.Body)
 	}
-	if h[0]["source"] != "web" || !strings.Contains(h[0]["summary"].(string), "1150 → 1200") || h[0]["budget"] != nil {
-		t.Fatalf("latest entry: %v", h[0])
+	if len(entries) != 2 {
+		t.Fatalf("want the creation and one change, got %d entries", len(entries))
 	}
-	c.do("GET", "/api/budgets/home/history?limit=x", "", 400)
+	if entries[0]["source"] != "web" {
+		t.Errorf("source: %v", entries[0]["source"])
+	}
+	if entries[0]["summary"] != "Rent: amount 1150 → 1200" {
+		t.Errorf("summary: %v", entries[0]["summary"])
+	}
+	if _, listed := entries[0]["budget"]; listed {
+		t.Error("history listings must not carry whole budgets")
+	}
+}
 
-	// Undoing r2 while r3 exists needs force; the 409 lists what would be lost.
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1300"}}]}`, 200)
-	if v := c.do("POST", "/api/budgets/home/undo", `{"revision":2}`, 409); len(v["later"].([]any)) != 1 {
-		t.Fatalf("conflict: %v", v)
+func TestHistoryLimitMustBeAWholeNumber(t *testing.T) {
+	c := setup(t)
+
+	c.do("GET", "/api/budgets/home/history?limit=x", "", 400)
+}
+
+// With r2 (rent 1200) and r3 (rent 1300) saved after the creation.
+func TestUndoAnswers(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"the latest change", `{}`, 200},
+		{"a change with a later one on top", `{"revision":2}`, 409},
+		{"forced, having seen everything", `{"revision":2,"force":true,"seen":3}`, 200},
+		{"forced, without having seen r3", `{"revision":2,"force":true,"seen":2}`, 409},
+		{"the creation", `{"revision":1}`, 409},
+		{"a revision never written", `{"revision":99}`, 400},
 	}
-	v := c.do("POST", "/api/budgets/home/undo", `{"revision":2,"force":true}`, 200)
-	if v["revision"].(float64) != 4 {
-		t.Fatalf("undo: %v", v["revision"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := setup(t)
+			c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+			c.do("POST", "/api/budgets/home/ops", setRentTo1300, 200)
+
+			c.do("POST", "/api/budgets/home/undo", tc.body, tc.want)
+		})
 	}
-	c.do("POST", "/api/budgets/home/undo", `{"revision":1}`, 409) // the creation
-	c.do("POST", "/api/budgets/home/undo", `{"revision":99}`, 400)
+}
+
+func TestUndoRefusalListsLaterChanges(t *testing.T) {
+	c := setup(t)
+	c.do("POST", "/api/budgets/home/ops", setRentTo1200, 200)
+	c.do("POST", "/api/budgets/home/ops", setRentTo1300, 200)
+
+	refusal := c.do("POST", "/api/budgets/home/undo", `{"revision":2}`, 409)
+
+	if later := refusal["later"].([]any); len(later) != 1 {
+		t.Errorf("later changes: %v", later)
+	}
 }
