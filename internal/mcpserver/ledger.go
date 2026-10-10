@@ -12,7 +12,7 @@ import (
 
 type LogIn struct {
 	Ref
-	Transactions []budget.TransactionInput `json:"transactions" jsonschema:"what was actually spent or received. date YYYY-MM-DD; amount positive; currency defaults to base; category id (its kind says income or spending); line optional; external_id: a stable id for a statement row, so importing it again is skipped"`
+	Transactions []budget.TransactionInput `json:"transactions" jsonschema:"what was actually spent or received. date YYYY-MM-DD; amount positive; currency defaults to base; category id (its kind says income or spending); item optional; external_id: a stable id for a statement row, so importing it again is skipped"`
 }
 
 type ListTxIn struct {
@@ -48,7 +48,7 @@ type txRow struct {
 	Currency string `json:"currency"`
 	Base     string `json:"base"`
 	Category string `json:"category"`
-	Line     string `json:"line,omitempty"`
+	Item     string `json:"item,omitempty"`
 	Note     string `json:"note,omitempty"`
 	Batch    string `json:"batch"`
 }
@@ -56,7 +56,7 @@ type txRow struct {
 func txRows(txs []budget.Transaction) []txRow {
 	out := make([]txRow, len(txs))
 	for i, t := range txs {
-		out[i] = txRow{t.ID, t.Date, t.Amount.String(), t.Currency, t.Base.String(), t.Category, t.Line, t.Note, t.Batch}
+		out[i] = txRow{t.ID, t.Date, t.Amount.String(), t.Currency, t.Base.String(), t.Category, t.Item, t.Note, t.Batch}
 	}
 	return out
 }

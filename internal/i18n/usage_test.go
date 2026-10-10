@@ -40,7 +40,7 @@ func TestGoKeysExist(t *testing.T) {
 			t.Errorf("missing month.short.%d", m)
 		}
 	}
-	for _, k := range []string{"currency", "category", "line", "debt", "goal", "scenario"} {
+	for _, k := range []string{"currency", "category", "item", "debt", "goal", "scenario"} {
 		if _, ok := en.Forms("thing." + k); !ok {
 			t.Errorf("missing thing.%s", k)
 		}
@@ -93,7 +93,7 @@ func TestUIKeysExist(t *testing.T) {
 		"source_opt.":     {"manual", "auto", "ecb", "currency-api", "coingecko"},
 		"every.":          {"0", "1", "2", "3", "6", "12"},
 		"strategy.":       {"avalanche", "snowball", "listed"},
-		"scenarios.kind.": {"line", "rate", "extra", "remove"},
+		"scenarios.kind.": {"item", "rate", "extra", "remove"},
 		"source.":         {"web", "mcp", "assistant", "cli", "auto-refresh", "earlier", "unknown"},
 		"prefs.files.":    {"data", "templates", "settings"},
 		"now.state.":      {"over", "pace", "unplanned", "short"},

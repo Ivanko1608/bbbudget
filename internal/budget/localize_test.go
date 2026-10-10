@@ -28,7 +28,7 @@ func TestReportTextComesFromTheCatalog(t *testing.T) {
 	for _, m := range r.Months {
 		wrapped("month label", m.Label)
 	}
-	for _, l := range r.Lines {
+	for _, l := range r.Items {
 		wrapped("schedule of "+l.ID, l.ScheduleText)
 	}
 	for _, d := range r.Debts {
