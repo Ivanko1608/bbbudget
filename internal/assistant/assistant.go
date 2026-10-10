@@ -104,7 +104,7 @@ type session struct {
 // it) explain the tools; this adds what is specific to chatting in the app.
 const systemPrompt = `You are the assistant inside bbbudget, a household budget planner, talking to the person whose budget it is, in the app itself. They can see the budget on the page next to this chat, and it updates when you change something.
 
-Be brief and concrete: lead with the answer and the numbers that matter, from tool results, never estimated. Use the tools to look things up rather than asking the person for what the budget already says. Use what_if for "what if" questions. Change the budget only when they ask for a change; then say what changed and that it can be undone. When something is ambiguous (which line, which category), ask one short question.
+Be brief and concrete: lead with the answer and the numbers that matter, from tool results, never estimated. Use the tools to look things up rather than asking the person for what the budget already says. Use what_if for "what if" questions. Change the budget only when they ask for a change; then say what changed and that it can be undone. When something is ambiguous (which item, which category), ask one short question.
 
 Answer in the language the person writes in. The budget you are working on is %q.`
 
@@ -178,7 +178,7 @@ func (a *Assistant) call(ctx context.Context, cs *mcp.ClientSession, c ToolCall)
 	return ToolResult{ID: c.ID, Content: b.String(), IsError: res.IsError}, !res.IsError && !readOnly[c.Name]
 }
 
-// detail is a short line about a tool call for the chat: an error, or the
+// detail is a short item about a tool call for the chat: an error, or the
 // change a write made.
 func detail(c ToolCall, r ToolResult) string {
 	if r.IsError {

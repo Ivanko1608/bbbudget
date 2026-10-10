@@ -294,8 +294,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		date := fs.String("date", "", "day it happened, YYYY-MM-DD (default today)")
 		cur := fs.String("currency", "", "currency (default the base currency)")
 		note := fs.String("note", "", "a note")
-		line := fs.String("line", "", "the planned line it pays (id or name)")
-		pos, err := parseArgs(fs, args, 3, "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-line ref]")
+		item := fs.String("item", "", "the planned item it pays (id or name)")
+		pos, err := parseArgs(fs, args, 3, "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]")
 		if err != nil {
 			return err
 		}
@@ -310,7 +310,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if *date == "" {
 			*date = a.Now().Format("2006-01-02")
 		}
-		res, err := a.LogTransactions(ctx, pos[0], []budget.TransactionInput{{Date: *date, Amount: amt, Currency: *cur, Category: pos[2], Note: *note, Line: *line}})
+		res, err := a.LogTransactions(ctx, pos[0], []budget.TransactionInput{{Date: *date, Amount: amt, Currency: *cur, Category: pos[2], Note: *note, Item: *item}})
 		if err != nil {
 			return err
 		}

@@ -13,7 +13,7 @@ import (
 
 func rentOp(amount string) budget.Op {
 	a := money.MustDecimal(amount)
-	return budget.NewOp("set_line", "rent", budget.LinePatch{Amount: &a})
+	return budget.NewOp("set_item", "rent", budget.ItemPatch{Amount: &a})
 }
 
 func rent(t *testing.T, a *App) string {
@@ -22,12 +22,12 @@ func rent(t *testing.T, a *App) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, l := range v.Budget.Lines {
+	for _, l := range v.Budget.Items {
 		if l.ID == "rent" {
 			return l.Amount.String()
 		}
 	}
-	t.Fatal("no rent line")
+	t.Fatal("no rent item")
 	return ""
 }
 

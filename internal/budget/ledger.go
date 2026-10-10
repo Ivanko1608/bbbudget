@@ -11,7 +11,7 @@ import (
 )
 
 // Transaction is money that actually came in or went out, as opposed to a
-// planned Line. It is stored in the budget's ledger, not in the budget.
+// planned Item. It is stored in the budget's ledger, not in the budget.
 type Transaction struct {
 	ID string `json:"id"`
 	// Date is the day it happened, "YYYY-MM-DD".
@@ -21,8 +21,8 @@ type Transaction struct {
 	Amount   money.Decimal `json:"amount"`
 	Currency string        `json:"currency"`
 	Category string        `json:"category"`
-	// Line optionally ties it to the planned line it pays.
-	Line string `json:"line,omitempty"`
+	// Item optionally ties it to the planned item it pays.
+	Item string `json:"item,omitempty"`
 	Note string `json:"note,omitempty"`
 	// ExternalID identifies it in its source (a bank statement row), so
 	// importing the same statement twice logs nothing twice.
@@ -45,7 +45,7 @@ type TransactionInput struct {
 	Amount     money.Decimal `json:"amount"`
 	Currency   string        `json:"currency,omitempty"`
 	Category   string        `json:"category"`
-	Line       string        `json:"line,omitempty"`
+	Item       string        `json:"item,omitempty"`
 	Note       string        `json:"note,omitempty"`
 	ExternalID string        `json:"external_id,omitempty"`
 }
@@ -63,7 +63,7 @@ const (
 func (p *Plan) Value(in TransactionInput, path string) (Transaction, []Issue) {
 	var c checker
 	t := Transaction{Date: strings.TrimSpace(in.Date), Amount: in.Amount, Currency: strings.ToUpper(strings.TrimSpace(in.Currency)),
-		Category: strings.TrimSpace(in.Category), Line: strings.TrimSpace(in.Line), Note: strings.TrimSpace(in.Note), ExternalID: strings.TrimSpace(in.ExternalID)}
+		Category: strings.TrimSpace(in.Category), Item: strings.TrimSpace(in.Item), Note: strings.TrimSpace(in.Note), ExternalID: strings.TrimSpace(in.ExternalID)}
 	if t.Currency == "" {
 		t.Currency = p.Base.Code
 	}
@@ -74,11 +74,11 @@ func (p *Plan) Value(in TransactionInput, path string) (Transaction, []Issue) {
 	if !ok {
 		c.add(path+".category", "issue.unknown_category", args{"id": i18n.Text(t.Category)})
 	}
-	if t.Line != "" {
-		if i, err := find("line", t.Line, ids(p.Doc.Lines, lineKey)); err != nil {
-			c.add(path+".line", "issue.error", errArg(err))
+	if t.Item != "" {
+		if i, err := find("item", t.Item, ids(p.Doc.Items, itemKey)); err != nil {
+			c.add(path+".item", "issue.error", errArg(err))
 		} else {
-			t.Line = p.Doc.Lines[i].ID
+			t.Item = p.Doc.Items[i].ID
 		}
 	}
 	if len(t.Note) > maxNote {
@@ -177,7 +177,7 @@ func (p *Plan) Status(month string, txs []Transaction, today time.Time) (*MonthS
 			m[k] = v
 		}
 	}
-	for _, l := range p.Lines {
+	for _, l := range p.Items {
 		if !l.Schedule.ActiveIn(idx) {
 			continue
 		}

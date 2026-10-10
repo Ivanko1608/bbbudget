@@ -64,8 +64,8 @@ func newAssistant(t *testing.T, p Provider) (*Assistant, *app.App) {
 
 func TestReplyRunsToolsAndRecordsTheAssistant(t *testing.T) {
 	p := &script{turns: []Turn{
-		{Text: "Let me look.", Calls: []ToolCall{call("1", "get_budget", `{"view":"lines"}`)}},
-		{Calls: []ToolCall{call("2", "update_line", `{"line":"rent","amount":"1200"}`)}},
+		{Text: "Let me look.", Calls: []ToolCall{call("1", "get_budget", `{"view":"items"}`)}},
+		{Calls: []ToolCall{call("2", "update_item", `{"item":"rent","amount":"1200"}`)}},
 		{Text: "Done: rent is 1200 now. You can undo it."},
 	}}
 	as, a := newAssistant(t, p)
@@ -85,7 +85,7 @@ func TestReplyRunsToolsAndRecordsTheAssistant(t *testing.T) {
 		t.Errorf("tool detail: %q", events[2].Detail)
 	}
 	// The model got the tool results back, the first one a real budget view.
-	if len(p.results) != 3 || !strings.Contains(p.results[1][0].Content, `"lines"`) || p.results[1][0].ID != "1" {
+	if len(p.results) != 3 || !strings.Contains(p.results[1][0].Content, `"items"`) || p.results[1][0].ID != "1" {
 		t.Fatalf("results: %+v", p.results)
 	}
 	// The tools and instructions came from the MCP server.
@@ -117,8 +117,8 @@ func TestReadsDontSignalChanges(t *testing.T) {
 
 func TestToolErrorsGoBackToTheModel(t *testing.T) {
 	p := &script{turns: []Turn{
-		{Calls: []ToolCall{call("1", "update_line", `{"line":"nothing like it","amount":"1"}`), call("2", "get_budget", `not json`)}},
-		{Text: "Sorry, which line?"},
+		{Calls: []ToolCall{call("1", "update_item", `{"item":"nothing like it","amount":"1"}`), call("2", "get_budget", `not json`)}},
+		{Text: "Sorry, which item?"},
 	}}
 	as, _ := newAssistant(t, p)
 	if _, err := as.Reply(context.Background(), "", "home", "change it", func(Event) {}); err != nil {

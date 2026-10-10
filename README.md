@@ -128,12 +128,12 @@ One honest caveat about AI: with a **hosted** model, whether that's the in-app a
 | **Currencies** | Fiat or crypto (BTC, ETH, SOL, LTC, BNB, XRP, ADA, TRX, DOGE, USDT, USDC, DAI). `per_base` rate (e.g. US$ per €), `transfer_fee_pct` (the share lost on every payment in that currency) and `cash_out_fee_pct` (the share lost when income in it is converted to base, such as fees for selling crypto). |
 | **Rate source** | Per currency: `manual` (typed) or fetched from `ecb`, `currency-api`, `coingecko` or `auto`. See [Exchange rates](#exchange-rates). |
 | **Categories** | `income` or `expense`, with a label and colour. |
-| **Lines** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
+| **Items** | Amount in any configured currency, with a schedule: monthly, every N months, or one-off. Each schedule has a start month and an optional end month. |
 | **Debts** | Balance, APR and minimum payment, in any currency. Interest compounds monthly at APR/12. `extra_to_debt_pct` of each month's leftover is paid on top, ordered by strategy: `avalanche` (highest APR first), `snowball` (smallest balance first) or `listed`. |
 | **Goals** | Savings targets: when they're reached, or the monthly rate needed to reach them. |
 | **Scenarios** | Named sets of edits, compared side by side against the real budget. You can also adopt one into the budget. |
 
-Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest line, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
+Insights cover category shares, transfer losses, cash-out losses, how much income is in volatile crypto and what a 30% fall would do, ±10% FX sensitivity, one-offs, slack this month, the biggest item, whether debt minimums cover interest, payoff dates, goal ETAs and negative-savings warnings.
 
 ## Money handling
 
@@ -142,7 +142,7 @@ Insights cover category shares, transfer losses, cash-out losses, how much incom
 - **Rounding is explicit and pessimistic.** There is one rounding per conversion. Money you pay rounds **up**, money you receive rounds **down**, and interest charged to you rounds up. A plan therefore never looks better than reality, and is off by at most one minor unit per conversion.
 - **Identities hold to the cent.** For every month, `left = income − expenses − debt minimums`, `saved = left − extra debt payment`, and `savings = previous + saved`. Each debt reconciles too: `opening + interest − payments = closing`. Extra payments never exceed their budget. A randomized test checks all of this over 400 budgets with awkward rates, mixed currencies and schedules.
 - **Overflow can't wrap.** Arithmetic is checked: overflow and currency mismatches become errors, never wrapped values or crashes. Inputs are bounded (amounts ≤ 10¹² units and ≤ 10¹⁵ minor units, ≤ 600 months).
-- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`lines[3].amount`). The UI highlights the matching fields.
+- **Invalid data is never stored.** Every write is re-validated, and validation reports *all* problems with paths (`items[3].amount`). The UI highlights the matching fields.
 
 ## Exchange rates
 
@@ -189,12 +189,12 @@ A broken settings file is an error naming the file, never silently replaced by d
 
 ### Crypto income
 
-Add the coin as a currency and write the income line in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
+Add the coin as a currency and write the income item in it: `0.015` BTC. Amounts allow the coin's configured decimals (8 for BTC, 6 for USDT). Set `cash_out_fee_pct` to what selling costs you. Income is then valued at the market rate minus that loss, and rounded down like any income. For volatile coins (stablecoins excluded), the insights show the coin's share of income and what a 30% fall would do to the month.
 
 ```yaml
 currencies:
   - {code: BTC, source: auto, per_base: 0.0000135, cash_out_fee_pct: 1.5}
-lines:
+items:
   - {name: Freelance (paid in BTC), amount: 0.012, currency: BTC, category: income}
 ```
 
@@ -213,7 +213,7 @@ currencies:
 categories:
   - {label: Income, kind: income}
   - {label: Home}                                        # kind defaults to expense
-lines:
+items:
   - {name: Salary, amount: 3900, category: income}       # currency defaults to base
   - {name: Rent, amount: 1150, category: home}           # schedule defaults to monthly
   - {name: Insurance, amount: 240, category: home, schedule: {every: 12, start: 2}}
@@ -260,7 +260,7 @@ The UI, the insights, schedule descriptions, month names, validation messages, c
 
 Numbers follow the language as well: `€1,235` in English and `1 235 €` in Russian. Amount fields take what's natural in that language, so in Russian `12,50` means twelve and a half and `1 234,5` works too. Amounts stay exact strings all the way through, and the UI formats them with `Intl.NumberFormat` straight from those strings, never through a float.
 
-Your own data is never translated: names of lines, debts, goals and categories stay as you typed them. The one exception is a new budget made from a built-in template, whose default category labels are created in your language.
+Your own data is never translated: names of items, debts, goals and categories stay as you typed them. The one exception is a new budget made from a built-in template, whose default category labels are created in your language.
 
 For assistants, each insight comes with its message key and typed arguments (exact amounts and months) alongside the text, so a model can quote numbers instead of re-reading prose. The server instructions tell it to answer in whatever language you write in.
 
@@ -309,7 +309,7 @@ Turn it on in Settings (or `bbbudget settings -set assistant_provider=anthropic 
 
 **Over HTTP**: while `bbbudget serve` runs, the MCP endpoint is `http://127.0.0.1:8080/mcp` (streamable HTTP).
 
-Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_line`, `update_line`, `remove_line`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`, `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status`, `whats_new`. Resources: `budget://{id}` (the raw document) and `whats-new://{id}`.
+Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_item`, `update_item`, `remove_item`, `set_currency`, `refresh_rates`, `update_settings`, `set_debt`, `apply_ops`, `what_if`, `save_scenario`, `compare_scenarios`, `adopt_scenario`, `delete_scenario`, `history`, `undo`, `log_transactions`, `list_transactions`, `update_transaction`, `delete_transactions`, `month_status`, `whats_new`. Resources: `budget://{id}` (the raw document) and `whats-new://{id}`.
 
 **Responses are sized for a model's context.** A write returns what changed and what that did, not the whole budget again:
 
@@ -317,7 +317,7 @@ Tools: `list_budgets`, `list_templates`, `create_budget`, `get_budget`, `add_lin
 {"budget":"home","revision":3,"saved":true,"change":"Rent: amount 1150 → 1200","currency":"EUR",
  "effect":{"totals":{"end_savings":{"before":"10409.88","after":"9771.60","change":"-638.28"}},
            "first_month":{"left":{"before":"317.49","after":"264.30","change":"-53.19"}},
-           "updated_insights":[{"id":"biggest_line","text":"Biggest recurring line: Rent at €1,277 a month (33% of income).","args":{"name":"Rent","amount":"1276.6 EUR","pct":33}}]}}
+           "updated_insights":[{"id":"biggest_item","text":"Biggest recurring item: Rent at €1,277 a month (33% of income).","args":{"name":"Rent","amount":"1276.6 EUR","pct":33}}]}}
 ```
 
 **Prompts** show up as slash commands in Claude Desktop and Claude Code (and in any MCP client that supports prompts):
@@ -338,9 +338,9 @@ Tools for actual spending: `log_transactions`, `list_transactions`, `update_tran
 
 `effect` also lists insights that appeared or went away, and debt payoff and goal dates that moved. `what_if` answers in the same shape with `"saved": false`. Pass `"detail": "full"` to a write for the whole budget instead. For a 600-month budget an edit returns about 2 KB rather than 87 KB.
 
-`get_budget` returns an overview by default: everything, but only the first three months and the last. Use `view` (`lines`, `months`, `debts`, `goals`, `insights`, `all`) and `from`/`to` (`YYYY-MM`) to get exactly the part you need.
+`get_budget` returns an overview by default: everything, but only the first three months and the last. Use `view` (`items`, `months`, `debts`, `goals`, `insights`, `all`) and `from`/`to` (`YYYY-MM`) to get exactly the part you need.
 
-`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Lines are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
+`-budget home` makes `home` the default, so "raise rent to 1200" works without naming the budget. Items are referenced by id, exact name, or an unambiguous part of a name. An ambiguous reference ("school" matching both "School tuition" and "School supplies") is an error, not a guess. `what_if` never saves.
 
 The web UI and the MCP server can run as separate processes on the same data directory. Writes are serialised with a file lock and guarded by revision numbers. The UI polls and picks up Claude's edits within a few seconds. If you were mid-edit when a change arrived, the UI reloads and tells you, rather than overwriting the other change.
 
