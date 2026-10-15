@@ -99,6 +99,14 @@ ExecStart=
 ExecStart=/usr/bin/bbbudget serve -budget home
 ```
 
+### Use it from another device
+
+`bbbudget serve -remote` lets your phone or another computer use the API and MCP. Only **paired** devices get in: run `bbbudget pair` on the server, and enter the code it prints on the device within 10 minutes. The device sends it to `POST /api/pair` and gets back a token it sends with every request (`Authorization: Bearer <token>`). `bbbudget devices` lists paired devices and `bbbudget devices -revoke ID` locks one out at once.
+
+Remote mode has no HTTPS of its own, and the token must never cross a network in the clear. Keep `-addr` on `127.0.0.1` and put something that does TLS in front: [`tailscale serve`](https://tailscale.com/kb/1312/serve) is the easiest if your devices are on a tailnet; Caddy or nginx work too.
+
+The web UI can't sign in yet, so for now remote mode is for API and MCP clients (Claude Code takes the token as a header). Phone apps come next.
+
 ## Quick start
 
 ```
@@ -111,7 +119,7 @@ bbbudget report home                     # projection + insights in the terminal
 
 A budget is about as personal as data gets, so bbbudget is built to keep it on your machine:
 
-- **Local only.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)).
+- **Local only, unless you say otherwise.** The server binds to `127.0.0.1` and refuses requests with a foreign `Host` header, which blocks DNS rebinding. Cross-site form posts are rejected as well (see [HTTP API](#http-api)). [Remote mode](#use-it-from-another-device) is off until you turn it on, and then answers only devices you paired.
 - **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
 - **Offline by default.** Fetching exchange rates is off until you turn it on in [Settings](#settings) (`fetch_rates`). Until then you type rates by hand and nothing goes online. Once it's on, the app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default too. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up.
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file. Each budget's change history sits next to it (`home.jsonl`), holding copies of its last 200 versions (the file is trimmed in batches, so it can briefly hold up to 400), so something you remove from a budget stays in its history until it ages out. Deleting the budget deletes its history too.
@@ -314,7 +322,7 @@ The web UI and the MCP server can run as separate processes on the same data dir
 ## Layout
 
 ```
-cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | history | undo
+cmd/bbbudget/        CLI: serve | mcp | init | import | templates | list | report | rates | settings | history | undo | pair | devices
 internal/money/      Money, Decimal, Currency, rounding. No dependencies.
 internal/i18n/       Message catalogs (locales/*.json), plural rules, locale-aware money and numbers
 internal/budget/     Document model, validation (Compile → Plan), projection engine,
@@ -322,9 +330,12 @@ internal/budget/     Document model, validation (Compile → Plan), projection e
 internal/rates/      Exchange-rate providers (ECB, currency-api, CoinGecko), chain + cache
 internal/settings/   App-wide settings file (load, validate, atomic 0600 save)
 internal/templates/  Built-in templates (embedded YAML) + the user template directory
+internal/filelock/   Cross-process file locks (flock)
 internal/store/      Store interface + FileStore (atomic writes, flock, revisions, change history)
 internal/app/        Use cases shared by every transport
-internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards
+internal/accounts/   One App, data directory and settings file per account, for servers shared by several people
+internal/devices/    Paired devices for remote mode: pairing codes and tokens, stored as hashes
+internal/httpapi/    JSON API + embedded UI + /mcp mount, localhost guards, device tokens in remote mode
 internal/mcpserver/  MCP tools and resources
 web/static/          The UI (vanilla JS, no build step): index.html (budgets), settings.html,
                      i18n.js + i18n/*.json, manifest.webmanifest and icons (icon.svg is the source of the PNGs)
@@ -346,6 +357,7 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |
 | `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?, locale?}` | app settings (the key is reported only as `coingecko_api_key_set`) |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
+| `POST /api/pair` `{code, name}` → `{device, token}` · `GET /api/devices` · `DELETE /api/devices/{id}` | remote mode only: pair a device (`403` for a wrong or expired code) / list / revoke |
 
 The server binds to 127.0.0.1 and accepts only these requests:
 
@@ -353,6 +365,8 @@ The server binds to 127.0.0.1 and accepts only these requests:
 - JSON content types for mutations (blocks cross-site form posts);
 - DELETE requests carrying an `X-Requested-With` header;
 - bodies up to 1 MB.
+
+In remote mode (`serve -remote`) any `Host` is accepted, and every `/api/` request except `POST /api/pair`, and every `/mcp` request, needs `Authorization: Bearer <token>` from a paired device; without one the answer is `401`. The UI's own files are served to anyone, since they hold no data.
 
 ## Extending
 

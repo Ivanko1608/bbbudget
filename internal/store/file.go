@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/filelock"
 )
 
 // FileStore keeps one JSON file per budget in a directory. Writes are atomic
@@ -41,7 +42,7 @@ func (s *FileStore) path(id string) string { return filepath.Join(s.dir, id+".js
 func (s *FileStore) withLock(exclusive bool, fn func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	unlock, err := lockFile(filepath.Join(s.dir, ".lock"), exclusive)
+	unlock, err := filelock.Lock(filepath.Join(s.dir, ".lock"), exclusive)
 	if err != nil {
 		return fmt.Errorf("lock store: %w", err)
 	}
@@ -99,7 +100,7 @@ func (s *FileStore) writeFile(path string, data []byte) error {
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return err
 	}
-	return syncDir(s.dir)
+	return filelock.SyncDir(s.dir)
 }
 
 func (s *FileStore) List(ctx context.Context) ([]Meta, error) {

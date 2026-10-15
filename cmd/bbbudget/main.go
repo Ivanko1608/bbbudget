@@ -9,6 +9,8 @@
 //	bbbudget history <id>     list recent changes and who made them
 //	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
+//	bbbudget pair             make a code that pairs a phone with `serve -remote`
+//	bbbudget devices          list or revoke paired devices
 package main
 
 import (
@@ -33,6 +35,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/devices"
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/mcpserver"
@@ -67,11 +70,14 @@ commands:
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
   history  list recent changes and who made them:  bbbudget history home [-limit 20]
   undo     undo a change:  bbbudget undo home [-revision REV] [-force]
+  pair     make a code that pairs a phone or computer with serve -remote
+  devices  list paired devices:  bbbudget devices [-revoke ID]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
 Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates); -templates overrides.
 App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
+Paired devices live in devices.json next to the settings file.
 `
 
 // fromCLI is the origin of every write made by a command.
@@ -113,6 +119,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		withMCP := fs.Bool("mcp", true, "also serve MCP (streamable HTTP) at /mcp")
 		def := fs.String("budget", "", "default budget for MCP tool calls that omit one")
 		hosts := fs.String("allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)")
+		remote := fs.Bool("remote", false,
+			"answer paired devices from any address; put HTTPS in front (see bbbudget pair)")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -124,6 +132,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		go a.RunAutoRefresh(ctx, log)
 		if *hosts != "" {
 			opts.AllowedHosts = strings.Split(*hosts, ",")
+		}
+		if *remote {
+			if opts.Devices, err = openDevices(*settingsFile); err != nil {
+				return err
+			}
+			fmt.Fprintln(stdout,
+				"remote mode: only paired devices can use the API; pair one with `bbbudget pair`")
 		}
 		if *withMCP {
 			srv := mcpserver.New(a, mcpserver.Options{DefaultBudget: *def, Version: version})
@@ -367,6 +382,33 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 
+	case "pair":
+		if _, err := parseArgs(fs, args, 0, "pair"); err != nil {
+			return err
+		}
+		registry, err := openDevices(*settingsFile)
+		if err != nil {
+			return err
+		}
+		return printPairing(stdout, registry)
+
+	case "devices":
+		revoke := fs.String("revoke", "", "unpair the device with this id")
+		if _, err := parseArgs(fs, args, 0, "devices [-revoke ID]"); err != nil {
+			return err
+		}
+		registry, err := openDevices(*settingsFile)
+		if err != nil {
+			return err
+		}
+		if *revoke != "" {
+			if err := registry.Revoke(*revoke); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "revoked %s\n", *revoke)
+		}
+		return printDevices(stdout, registry)
+
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return nil
@@ -428,6 +470,43 @@ func serve(ctx context.Context, addr string, h http.Handler, log *slog.Logger, s
 		defer cancel()
 		return srv.Shutdown(sctx)
 	}
+}
+
+// openDevices opens the paired devices, kept next to the settings file.
+func openDevices(settingsFile string) (*devices.Registry, error) {
+	if settingsFile == "" {
+		return nil, errors.New("no settings file location for devices.json (set BBBUDGET_SETTINGS)")
+	}
+	return devices.Open(filepath.Join(filepath.Dir(settingsFile), "devices.json")), nil
+}
+
+func printPairing(stdout io.Writer, registry *devices.Registry) error {
+	p, err := registry.NewPairing()
+	if err != nil {
+		return err
+	}
+	minutes := int(devices.PairingTTL.Minutes())
+	fmt.Fprintf(stdout, "pairing code: %s\n", p.Code)
+	fmt.Fprintf(stdout, "enter it on the device within %d minutes; it works once\n", minutes)
+	return nil
+}
+
+func printDevices(stdout io.Writer, registry *devices.Registry) error {
+	list, err := registry.List()
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(stdout, "no paired devices")
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tPAIRED")
+	for _, d := range list {
+		paired := d.PairedAt.Local().Format("2006-01-02 15:04")
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", d.ID, d.Name, paired)
+	}
+	return tw.Flush()
 }
 
 // settingsPatch turns "key=value" flags into a settings patch.

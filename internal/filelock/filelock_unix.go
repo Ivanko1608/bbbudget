@@ -1,13 +1,17 @@
 //go:build unix
 
-package store
+// Package filelock serialises access to files across processes.
+package filelock
 
 import (
 	"os"
 	"syscall"
 )
 
-func lockFile(path string, exclusive bool) (func(), error) {
+// Lock locks the file at path, creating it if needed, and returns the unlock
+// function. An exclusive lock waits for every other holder; a shared one only
+// for an exclusive holder.
+func Lock(path string, exclusive bool) (func(), error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -26,7 +30,8 @@ func lockFile(path string, exclusive bool) (func(), error) {
 	}, nil
 }
 
-func syncDir(dir string) error {
+// SyncDir flushes a directory, so a rename inside it survives a crash.
+func SyncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"bbbudget/internal/devices"
 )
 
 // runCLI runs a command in-process. Tests never read the user's own settings.
@@ -169,5 +171,39 @@ func TestStdioMCP(t *testing.T) {
 	// rent 1200 CHF = 1276.60/month (was 1223.41): 12 × 53.19 = 638.28 less saved
 	if !strings.Contains(string(out), "€9,771.60") {
 		t.Fatalf("report after MCP edit:\n%s", out)
+	}
+}
+
+func TestPairListAndRevokeDevices(t *testing.T) {
+	settingsFile := filepath.Join(t.TempDir(), "settings.json")
+	t.Setenv("BBBUDGET_SETTINGS", settingsFile)
+	out, err := runCLI(t, "pair")
+	if err != nil {
+		t.Fatalf("pair: %v %s", err, out)
+	}
+	code, ok := strings.CutPrefix(strings.SplitN(out, "\n", 2)[0], "pairing code: ")
+	if !ok {
+		t.Fatalf("pair printed no code: %s", out)
+	}
+	registry := devices.Open(filepath.Join(filepath.Dir(settingsFile), "devices.json"))
+	paired, err := registry.Pair(code, "Pixel")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := runCLI(t, "devices")
+	if err != nil {
+		t.Fatalf("devices: %v %s", err, listed)
+	}
+	if !strings.Contains(listed, "Pixel") {
+		t.Errorf("devices does not list Pixel: %s", listed)
+	}
+
+	afterRevoke, err := runCLI(t, "devices", "-revoke", paired.Device.ID)
+	if err != nil {
+		t.Fatalf("devices -revoke: %v %s", err, afterRevoke)
+	}
+	if !strings.Contains(afterRevoke, "no paired devices") {
+		t.Errorf("device still listed after revoke: %s", afterRevoke)
 	}
 }
