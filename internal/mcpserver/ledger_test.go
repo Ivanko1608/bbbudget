@@ -79,8 +79,8 @@ func TestMonthStatusTool(t *testing.T) {
 	if status["spent"] != "945.20" {
 		t.Errorf("spent: %v", status["spent"])
 	}
-	if status["elapsed"] != 8.0 {
-		t.Errorf("elapsed: %v", status["elapsed"])
+	if status["days_elapsed"] != 8.0 {
+		t.Errorf("days_elapsed: %v", status["days_elapsed"])
 	}
 }
 

@@ -1269,9 +1269,9 @@ async function saveWhatIf() {
 async function loadMonthStatus() {
   if (!S.id) return;
   const id = encodeURIComponent(S.id);
-  let status, transactions;
+  let monthStatus, transactions;
   try {
-    [status, transactions] = await Promise.all([
+    [monthStatus, transactions] = await Promise.all([
       api("GET", `/api/budgets/${id}/status`),
       api("GET", `/api/budgets/${id}/transactions?limit=8`),
     ]);
@@ -1281,23 +1281,23 @@ async function loadMonthStatus() {
   }
   const categories = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
   $("#monthStatusSection").hidden = false;
-  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(status.month) });
-  $("#monthStatusSub").textContent = monthStatusSubtitle(status);
-  $("#monthStatusFlags").innerHTML = status.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
-  $("#monthStatusCategories").innerHTML = status.categories
+  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(monthStatus.month) });
+  $("#monthStatusSub").textContent = monthStatusSubtitle(monthStatus);
+  $("#monthStatusFlags").innerHTML = monthStatus.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
+  $("#monthStatusCategories").innerHTML = monthStatus.categories
     .filter((row) => row.kind !== "income")
     .map((row) => renderCategoryBar(row, categories[row.category]))
     .join("");
   $("#monthStatusTransactions").innerHTML = renderRecentTransactions(transactions, categories);
 }
 
-function monthStatusSubtitle(status) {
-  if (!status.transaction_count) return t("month_status.empty");
+function monthStatusSubtitle(monthStatus) {
+  if (!monthStatus.transaction_count) return t("month_status.empty");
   const sums = {
-    spent: money(status.spent),
-    planned: money(status.planned_spending),
-    day: status.days_elapsed,
-    days: status.days_in_month,
+    spent: money(monthStatus.spent),
+    planned: money(monthStatus.planned_spending),
+    day: monthStatus.days_elapsed,
+    days: monthStatus.days_in_month,
   };
   return t("month_status.sub", sums);
 }

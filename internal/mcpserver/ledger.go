@@ -67,32 +67,32 @@ type statusRow struct {
 }
 
 type statusOut struct {
-	Month         string      `json:"month"`
-	Currency      string      `json:"currency"`
-	Days          int         `json:"days"`
-	Elapsed       int         `json:"elapsed"`
-	PlannedSpend  string      `json:"planned_spending"`
-	Spent         string      `json:"spent"`
-	PlannedIncome string      `json:"planned_income"`
-	Income        string      `json:"income"`
-	Transactions  int         `json:"transactions"`
-	Categories    []statusRow `json:"categories"`
-	Flags         []string    `json:"flags"`
+	Month            string      `json:"month"`
+	Currency         string      `json:"currency"`
+	DaysInMonth      int         `json:"days_in_month"`
+	DaysElapsed      int         `json:"days_elapsed"`
+	PlannedSpending  string      `json:"planned_spending"`
+	Spent            string      `json:"spent"`
+	PlannedIncome    string      `json:"planned_income"`
+	Income           string      `json:"income"`
+	TransactionCount int         `json:"transaction_count"`
+	Categories       []statusRow `json:"categories"`
+	Flags            []string    `json:"flags"`
 }
 
 func toStatusOut(s *budget.MonthStatus) statusOut {
 	out := statusOut{
-		Month:         s.Month,
-		Currency:      s.Spent.Currency().Code,
-		Days:          s.DaysInMonth,
-		Elapsed:       s.DaysElapsed,
-		PlannedSpend:  s.PlannedSpending.String(),
-		Spent:         s.Spent.String(),
-		PlannedIncome: s.PlannedIncome.String(),
-		Income:        s.Income.String(),
-		Transactions:  s.TransactionCount,
-		Categories:    []statusRow{},
-		Flags:         []string{},
+		Month:            s.Month,
+		Currency:         s.Spent.Currency().Code,
+		DaysInMonth:      s.DaysInMonth,
+		DaysElapsed:      s.DaysElapsed,
+		PlannedSpending:  s.PlannedSpending.String(),
+		Spent:            s.Spent.String(),
+		PlannedIncome:    s.PlannedIncome.String(),
+		Income:           s.Income.String(),
+		TransactionCount: s.TransactionCount,
+		Categories:       []statusRow{},
+		Flags:            []string{},
 	}
 	for _, c := range s.Categories {
 		out.Categories = append(out.Categories, newStatusRow(c))
@@ -154,7 +154,7 @@ func (h *handlers) flagsByMonth(
 }
 
 func (h *handlers) registerLedger(s *mcp.Server) {
-	tool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, pace, unplanned spending).",
+	tool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
 		func(ctx context.Context, in LogTransactionsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -208,7 +208,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return deletedResult{Deleted: removed}, nil
 		})
-	tool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
+	tool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
 		func(ctx context.Context, in StatusIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
