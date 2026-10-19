@@ -2,8 +2,8 @@ package assistant
 
 import "fmt"
 
-// baseSystemPrompt frames the chat. The MCP server's own instructions, appended to
-// it, explain the tools; this adds what is specific to chatting in the app.
+// baseSystemPrompt frames the chat. The MCP server's own instructions, appended
+// to it, explain the tools; this adds what is specific to chatting in the app.
 const baseSystemPrompt = `You are the assistant inside bbbudget, a household budget planner,
 talking to the person whose budget it is, in the app itself. They can see the budget on the
 page next to this chat, and it updates when you change something.
