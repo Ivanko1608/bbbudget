@@ -201,8 +201,10 @@ func (s *FileStore) Delete(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(s.historyPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+		for _, p := range []string{s.historyPath(id), s.ledgerPath(id)} {
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
 		}
 		return nil
 	})

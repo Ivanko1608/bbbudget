@@ -114,6 +114,9 @@
   "field.code": "code",
   "field.ops": "changes",
 
+  "issue.date_format": "must be YYYY-MM-DD, got \"{value}\"",
+  "issue.too_long": "is too long (at most {max} characters)",
+
   "issue.error": "{error}",
   "issue.required": "is required",
   "issue.negative": "must not be negative",

@@ -71,6 +71,24 @@ type Store interface {
 	// Snapshot returns the budget as of a revision still in the history, or
 	// ErrNoSnapshot.
 	Snapshot(ctx context.Context, id string, rev int64) (budget.Budget, error)
+	// Ledger returns a budget's logged transactions (empty if none yet).
+	Ledger(ctx context.Context, id string) (Ledger, error)
+	// UpdateLedger passes the current budget and transactions to edit and
+	// stores the transactions it returns, atomically with respect to every
+	// other write. The budget itself is not changed.
+	UpdateLedger(ctx context.Context, id string, edit LedgerEditFunc) (Ledger, error)
+}
+
+// LedgerEditFunc gets the current budget and a copy of its transactions,
+// and returns the transactions to store.
+type LedgerEditFunc func(budget.Budget, []budget.Transaction) ([]budget.Transaction, error)
+
+// Ledger is a budget's actual transactions, kept apart from the budget so
+// the plan stays small and an editor saving the whole plan can't drop them.
+type Ledger struct {
+	Revision     int64                `json:"revision"`
+	UpdatedAt    time.Time            `json:"updated_at"`
+	Transactions []budget.Transaction `json:"transactions"`
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)

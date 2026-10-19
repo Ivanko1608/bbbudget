@@ -114,6 +114,9 @@
   "field.code": "код",
   "field.ops": "изменения",
 
+  "issue.date_format": "должно быть в формате ГГГГ-ММ-ДД, а не \"{value}\"",
+  "issue.too_long": "слишком длинно (не больше {max} символов)",
+
   "issue.error": "{error}",
   "issue.required": "обязательное поле",
   "issue.negative": "не может быть отрицательным",
