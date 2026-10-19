@@ -11,6 +11,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/rates"
+	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 )
 
@@ -25,8 +26,8 @@ type script struct {
 	fails   error
 }
 
-func (s *script) Name() string  { return "script" }
-func (s *script) Model() string { return "fake" }
+func (s *script) Name() settings.AssistantProvider { return "script" }
+func (s *script) Model() string                    { return "fake" }
 
 func (s *script) Start(system string, tools []Tool) Conversation {
 	s.system = system

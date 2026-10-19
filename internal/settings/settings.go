@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,32 @@ const (
 	RefreshOff    = "off"
 	RefreshHourly = "hourly"
 	RefreshDaily  = "daily"
+)
+
+// AssistantProvider is the model provider behind the in-app assistant.
+type AssistantProvider string
+
+const (
+	// AssistantOff hides the assistant.
+	AssistantOff AssistantProvider = "off"
+	// AssistantAnthropic is Claude, through the Anthropic API.
+	AssistantAnthropic AssistantProvider = "anthropic"
+	// AssistantOpenAICompatible is any server with an OpenAI-compatible chat
+	// completions API, such as Ollama.
+	AssistantOpenAICompatible AssistantProvider = "openai-compatible"
+)
+
+// AssistantProviders is the set AssistantProvider must come from.
+var AssistantProviders = []AssistantProvider{
+	AssistantOff,
+	AssistantAnthropic,
+	AssistantOpenAICompatible,
+}
+
+// Longest values accepted for the free-text fields.
+const (
+	maxAPIKey    = 200
+	maxModelName = 200
 )
 
 // Settings are the app-wide preferences. The zero value is not valid; start
@@ -42,11 +69,27 @@ type Settings struct {
 	// UI, $LANG elsewhere) or a language tag such as "en" or "de". Empty
 	// means auto.
 	Locale string `json:"locale"`
+	// AssistantProvider is where the in-app assistant's model runs.
+	AssistantProvider AssistantProvider `json:"assistant_provider"`
+	// AssistantModel names the model; empty means the provider's default.
+	AssistantModel string `json:"assistant_model,omitempty"`
+	// AssistantURL is the API root of an OpenAI-compatible server; empty
+	// means Ollama on this machine.
+	AssistantURL string `json:"assistant_url,omitempty"`
+	// AssistantAPIKey is the key for the assistant's provider. Never sent
+	// back to the UI; only whether it is set.
+	AssistantAPIKey string `json:"assistant_api_key,omitempty"`
 }
 
 // Defaults are used when there is no settings file.
 func Defaults() Settings {
-	return Settings{FetchRates: false, DefaultRateSource: "auto", AutoRefresh: RefreshOff, Locale: LocaleAuto}
+	return Settings{
+		FetchRates:        false,
+		DefaultRateSource: "auto",
+		AutoRefresh:       RefreshOff,
+		Locale:            LocaleAuto,
+		AssistantProvider: AssistantOff,
+	}
 }
 
 // LocaleAuto picks the language from the reader's browser or environment.
@@ -83,20 +126,54 @@ func (s Settings) Validate() error {
 	if s.Locale != LocaleAuto && s.Locale != "" && !localeRe.MatchString(s.Locale) {
 		errs = append(errs, errors.New(`locale must be "auto" or a language tag such as "en" or "de"`))
 	}
-	if len(s.CoinGeckoAPIKey) > 200 || strings.ContainsAny(s.CoinGeckoAPIKey, " \t\r\n") {
+	if !isToken(s.CoinGeckoAPIKey, maxAPIKey) {
 		errs = append(errs, errors.New("coingecko_api_key must be a single token without spaces"))
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, s.assistantErrors()...)...)
 }
 
-// Patch changes some settings; nil fields stay as they are. An empty
-// CoinGeckoAPIKey removes the key.
+func (s Settings) assistantErrors() []error {
+	var errs []error
+	if !slices.Contains(AssistantProviders, s.AssistantProvider) {
+		errs = append(errs,
+			errors.New("assistant_provider must be off, anthropic or openai-compatible"))
+	}
+	if !isToken(s.AssistantModel, maxModelName) {
+		errs = append(errs, errors.New("assistant_model must be a single name without spaces"))
+	}
+	if s.AssistantURL != "" && !isWebURL(s.AssistantURL) {
+		errs = append(errs, errors.New("assistant_url must be an http or https URL"))
+	}
+	if !isToken(s.AssistantAPIKey, maxAPIKey) {
+		errs = append(errs, errors.New("assistant_api_key must be a single token without spaces"))
+	}
+	return errs
+}
+
+// isToken reports whether text is empty or one word of at most limit bytes.
+func isToken(text string, limit int) bool {
+	return len(text) <= limit && !strings.ContainsAny(text, " \t\r\n")
+}
+
+func isWebURL(text string) bool {
+	parsed, err := url.Parse(text)
+	isWeb := parsed != nil && (parsed.Scheme == "http" || parsed.Scheme == "https")
+	return err == nil && isWeb && parsed.Host != ""
+}
+
+// Patch changes some settings; nil fields stay as they are. An empty key
+// removes it.
 type Patch struct {
 	FetchRates        *bool   `json:"fetch_rates,omitempty"`
 	DefaultRateSource *string `json:"default_rate_source,omitempty"`
 	AutoRefresh       *string `json:"auto_refresh,omitempty"`
 	CoinGeckoAPIKey   *string `json:"coingecko_api_key,omitempty"`
 	Locale            *string `json:"locale,omitempty"`
+
+	AssistantProvider *AssistantProvider `json:"assistant_provider,omitempty"`
+	AssistantModel    *string            `json:"assistant_model,omitempty"`
+	AssistantURL      *string            `json:"assistant_url,omitempty"`
+	AssistantAPIKey   *string            `json:"assistant_api_key,omitempty"`
 }
 
 // Apply returns s with p applied, validated.
@@ -113,6 +190,12 @@ func (s Settings) Apply(p Patch) (Settings, error) {
 	set(&s.AutoRefresh, p.AutoRefresh)
 	set(&s.CoinGeckoAPIKey, p.CoinGeckoAPIKey)
 	set(&s.Locale, p.Locale)
+	if p.AssistantProvider != nil {
+		s.AssistantProvider = *p.AssistantProvider
+	}
+	set(&s.AssistantModel, p.AssistantModel)
+	set(&s.AssistantURL, p.AssistantURL)
+	set(&s.AssistantAPIKey, p.AssistantAPIKey)
 	return s, s.Validate()
 }
 

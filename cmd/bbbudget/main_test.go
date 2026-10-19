@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"bbbudget/internal/assistant"
 )
 
 // runCLI runs a command in-process. Tests never read the user's own settings.
@@ -169,5 +171,26 @@ func TestStdioMCP(t *testing.T) {
 	// rent 1200 CHF = 1276.60/month (was 1223.41): 12 × 53.19 = 638.28 less saved
 	if !strings.Contains(string(out), "€9,771.60") {
 		t.Fatalf("report after MCP edit:\n%s", out)
+	}
+}
+
+func TestTheAssistantIsSetUpFromTheCLI(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "settings.json")
+
+	out, err := runCLI(t, "settings", "-settings", conf,
+		"-set", "assistant_provider=anthropic",
+		"-set", "assistant_api_key=sk-secret")
+
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(out, "assistant_provider   anthropic  ready") {
+		t.Errorf("provider not shown as ready:\n%s", out)
+	}
+	if !strings.Contains(out, "assistant_model      "+assistant.DefaultAnthropicModel) {
+		t.Errorf("default model not shown:\n%s", out)
+	}
+	if strings.Contains(out, "sk-secret") {
+		t.Errorf("the key was printed:\n%s", out)
 	}
 }

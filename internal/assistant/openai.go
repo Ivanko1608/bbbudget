@@ -10,13 +10,12 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"bbbudget/internal/settings"
 )
 
 // DefaultOpenAICompatibleURL is Ollama's OpenAI-compatible endpoint.
 const DefaultOpenAICompatibleURL = "http://127.0.0.1:11434/v1"
-
-// OpenAICompatibleName names the provider in settings and status.
-const OpenAICompatibleName = "openai-compatible"
 
 // ErrNoModel means an OpenAI-compatible server was configured without a model.
 var ErrNoModel = errors.New(
@@ -71,7 +70,10 @@ func NewOpenAICompatible(config OpenAICompatibleConfig) (*OpenAICompatible, erro
 	return &OpenAICompatible{config: config, http: &http.Client{Timeout: modelTimeout}}, nil
 }
 
-func (p *OpenAICompatible) Name() string  { return OpenAICompatibleName }
+func (p *OpenAICompatible) Name() settings.AssistantProvider {
+	return settings.AssistantOpenAICompatible
+}
+
 func (p *OpenAICompatible) Model() string { return p.config.Model }
 
 // BaseURL is the API root the provider talks to.

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
@@ -39,6 +40,8 @@ type Options struct {
 	Log          *slog.Logger
 	// Paths are shown on the settings page (e.g. "data", "templates", "settings").
 	Paths map[string]string
+	// Assistant, if set, answers chat messages.
+	Assistant *assistant.Assistant
 }
 
 type server struct {
@@ -78,6 +81,7 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("GET /api/budgets/{id}/scenarios/{sid}/report", s.scenarioReport)
 	mux.HandleFunc("POST /api/budgets/{id}/scenarios/{sid}/adopt", s.adoptScenario)
 	mux.HandleFunc("DELETE /api/budgets/{id}/scenarios/{sid}", s.deleteScenario)
+	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
@@ -534,6 +538,12 @@ type settingsView struct {
 	Locale            string                `json:"locale"`
 	Status            app.AutoRefreshStatus `json:"auto_refresh_status"`
 	Paths             map[string]string     `json:"paths"`
+
+	AssistantProvider settings.AssistantProvider `json:"assistant_provider"`
+	AssistantModel    string                     `json:"assistant_model"`
+	AssistantURL      string                     `json:"assistant_url"`
+	AssistantKeySet   bool                       `json:"assistant_api_key_set"`
+	AssistantStatus   assistant.Status           `json:"assistant_status"`
 }
 
 func (s *server) settingsView(st settings.Settings) settingsView {
@@ -553,6 +563,11 @@ func (s *server) settingsView(st settings.Settings) settingsView {
 		Locale:            locale,
 		Status:            s.app.AutoRefresh(),
 		Paths:             paths,
+		AssistantProvider: st.AssistantProvider,
+		AssistantModel:    st.AssistantModel,
+		AssistantURL:      st.AssistantURL,
+		AssistantKeySet:   st.AssistantAPIKey != "",
+		AssistantStatus:   assistant.StatusOf(st),
 	}
 }
 

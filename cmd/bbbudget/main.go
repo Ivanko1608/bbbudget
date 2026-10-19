@@ -14,6 +14,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -34,6 +35,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/httpapi"
 	"bbbudget/internal/i18n"
@@ -125,7 +127,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		opts := httpapi.Options{Static: web.FS(), Log: log, Paths: map[string]string{"data": *dir, "templates": *tplDir, "settings": *settingsFile}}
+		paths := map[string]string{"data": *dir, "templates": *tplDir, "settings": *settingsFile}
+		opts := httpapi.Options{
+			Static:    web.FS(),
+			Log:       log,
+			Paths:     paths,
+			Assistant: assistant.New(a, assistant.Configured(a)),
+		}
 		go a.RunAutoRefresh(ctx, log)
 		if *hosts != "" {
 			opts.AllowedHosts = strings.Split(*hosts, ",")
@@ -384,7 +392,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	case "settings":
 		var sets []string
-		fs.Func("set", "key=value to change (repeatable): fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale", func(v string) error {
+		setKeys := "fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale, " +
+			"assistant_provider, assistant_model, assistant_url, assistant_api_key"
+		fs.Func("set", "key=value to change (repeatable): "+setKeys, func(v string) error {
 			sets = append(sets, v)
 			return nil
 		})
@@ -408,10 +418,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		key := "not set"
-		if s.CoinGeckoAPIKey != "" {
-			key = "set"
-		}
+		key := setOrNot(s.CoinGeckoAPIKey)
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		locale := s.Locale
 		if locale == "" {
@@ -419,6 +426,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
 			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
+		printAssistantSettings(tw, s)
 		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
 		return tw.Flush()
 
@@ -508,11 +516,37 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 			p.Locale = &v
 		case "coingecko_api_key":
 			p.CoinGeckoAPIKey = &v
+		case "assistant_provider":
+			provider := settings.AssistantProvider(v)
+			p.AssistantProvider = &provider
+		case "assistant_model":
+			p.AssistantModel = &v
+		case "assistant_url":
+			p.AssistantURL = &v
+		case "assistant_api_key":
+			p.AssistantAPIKey = &v
 		default:
 			return p, fmt.Errorf("unknown setting %q", k)
 		}
 	}
 	return p, nil
+}
+
+// printAssistantSettings shows whether a key is set, never the key.
+func printAssistantSettings(w io.Writer, s settings.Settings) {
+	status := assistant.StatusOf(s)
+	ready := cmp.Or(status.Problem, "ready")
+	fmt.Fprintf(w, "assistant_provider\t%s\t%s\n", s.AssistantProvider, ready)
+	fmt.Fprintf(w, "assistant_model\t%s\n", cmp.Or(status.Model, s.AssistantModel))
+	fmt.Fprintf(w, "assistant_url\t%s\n", s.AssistantURL)
+	fmt.Fprintf(w, "assistant_api_key\t%s\n", setOrNot(s.AssistantAPIKey))
+}
+
+func setOrNot(secret string) string {
+	if secret == "" {
+		return "not set"
+	}
+	return "set"
 }
 
 func printRates(w io.Writer, updates []app.RateUpdate) {
