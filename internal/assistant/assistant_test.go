@@ -34,12 +34,12 @@ func (s *script) Start(system string, tools []Tool) Conversation {
 	return s
 }
 
-func (s *script) Say(_ context.Context, text string) (Turn, error) {
+func (s *script) SendText(_ context.Context, text string) (Turn, error) {
 	s.said = append(s.said, text)
 	return s.next()
 }
 
-func (s *script) Answer(_ context.Context, results []ToolResult) (Turn, error) {
+func (s *script) SendResults(_ context.Context, results []ToolResult) (Turn, error) {
 	s.answers = append(s.answers, results)
 	return s.next()
 }

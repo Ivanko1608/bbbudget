@@ -98,7 +98,7 @@ func TestPromptsNameOnlyToolsThatExist(t *testing.T) {
 	}
 	allArguments := promptArgs{"item": "a bike", "amount": "1200"}
 
-	for _, w := range workflows {
+	for _, w := range promptTemplates {
 		for _, word := range toolLike.FindAllString(w.text(allArguments), -1) {
 			verb, _, _ := strings.Cut(word, "_")
 			if isToolVerb[verb] && !isTool[word] {

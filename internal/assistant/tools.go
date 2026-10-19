@@ -12,15 +12,15 @@ import (
 	"bbbudget/internal/store"
 )
 
-// toolbox is bbbudget's MCP server, connected in-process for one budget.
-type toolbox struct {
+// mcpTools is bbbudget's MCP server, connected in-process for one budget.
+type mcpTools struct {
 	session      *mcp.ClientSession
 	tools        []Tool
 	readOnly     map[string]bool
 	instructions string
 }
 
-func connectTools(ctx context.Context, a *app.App, budget string) (*toolbox, error) {
+func connectTools(ctx context.Context, a *app.App, budget string) (*mcpTools, error) {
 	server := mcpserver.New(a, mcpserver.Options{
 		DefaultBudget: budget,
 		Version:       "assistant",
@@ -42,16 +42,16 @@ func connectTools(ctx context.Context, a *app.App, budget string) (*toolbox, err
 		session.Close()
 		return nil, err
 	}
-	box := &toolbox{
+	tools := &mcpTools{
 		session:      session,
 		readOnly:     map[string]bool{},
 		instructions: session.InitializeResult().Instructions,
 	}
 	for _, tool := range listed.Tools {
-		box.tools = append(box.tools, toTool(tool))
-		box.readOnly[tool.Name] = isReadOnly(tool)
+		tools.tools = append(tools.tools, toTool(tool))
+		tools.readOnly[tool.Name] = isReadOnly(tool)
 	}
-	return box, nil
+	return tools, nil
 }
 
 func toTool(tool *mcp.Tool) Tool {
@@ -62,18 +62,20 @@ func isReadOnly(tool *mcp.Tool) bool {
 	return tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 }
 
-func (box *toolbox) close() { box.session.Close() }
+func (tools *mcpTools) close() { tools.session.Close() }
 
-// run makes the calls in order and reports each one, and then whether any
+// runCalls makes the calls in order and reports each one, and then whether any
 // of them changed the budget.
-func (box *toolbox) run(ctx context.Context, calls []ToolCall, emit func(Event)) []ToolResult {
+func (tools *mcpTools) runCalls(
+	ctx context.Context, calls []ToolCall, emit func(Event),
+) []ToolResult {
 	results := make([]ToolResult, 0, len(calls))
 	changed := false
 	for _, call := range calls {
-		result := box.call(ctx, call)
+		result := tools.callTool(ctx, call)
 		results = append(results, result)
 		emit(newToolEvent(call, result))
-		changed = changed || box.wrote(call, result)
+		changed = changed || tools.changedBudget(call, result)
 	}
 	if changed {
 		emit(Event{Type: EventChanged})
@@ -81,11 +83,11 @@ func (box *toolbox) run(ctx context.Context, calls []ToolCall, emit func(Event))
 	return results
 }
 
-func (box *toolbox) wrote(call ToolCall, result ToolResult) bool {
-	return !result.IsError && !box.readOnly[call.Name]
+func (tools *mcpTools) changedBudget(call ToolCall, result ToolResult) bool {
+	return !result.IsError && !tools.readOnly[call.Name]
 }
 
-func (box *toolbox) call(ctx context.Context, call ToolCall) ToolResult {
+func (tools *mcpTools) callTool(ctx context.Context, call ToolCall) ToolResult {
 	arguments := map[string]any{}
 	if len(call.Input) > 0 {
 		if err := json.Unmarshal(call.Input, &arguments); err != nil {
@@ -93,7 +95,7 @@ func (box *toolbox) call(ctx context.Context, call ToolCall) ToolResult {
 		}
 	}
 	params := &mcp.CallToolParams{Name: call.Name, Arguments: arguments}
-	result, err := box.session.CallTool(ctx, params)
+	result, err := tools.session.CallTool(ctx, params)
 	if err != nil {
 		return errorResult(call, err.Error())
 	}

@@ -34,8 +34,8 @@ func TestWhatsNewStartsFromTheAssistantsLastChange(t *testing.T) {
 
 	news := h.call("whats_new", map[string]any{}, false)
 
-	if news["since_revision"] != 2.0 {
-		t.Errorf("since_revision: %v", news["since_revision"])
+	if news["from_revision"] != 2.0 {
+		t.Errorf("from_revision: %v", news["from_revision"])
 	}
 	if news["revision"] != 3.0 {
 		t.Errorf("revision: %v", news["revision"])
@@ -61,7 +61,7 @@ func TestWhatsNewLeavesOutTheAssistantsOwnChanges(t *testing.T) {
 	h := setup(t)
 	h.assistantThenBrowserEdit()
 
-	news := h.call("whats_new", map[string]any{"since_revision": 1}, false)
+	news := h.call("whats_new", map[string]any{"from_revision": 1}, false)
 
 	others := news["changes_by_others"].([]any)
 	if len(others) != 1 {
@@ -98,8 +98,8 @@ func TestWhatsNewBeforeTheAssistantEverWrote(t *testing.T) {
 
 	news := h.call("whats_new", map[string]any{}, false)
 
-	if news["since_revision"] != 1.0 {
-		t.Errorf("since_revision: %v", news["since_revision"])
+	if news["from_revision"] != 1.0 {
+		t.Errorf("from_revision: %v", news["from_revision"])
 	}
 	if others := news["changes_by_others"].([]any); len(others) != 0 {
 		t.Errorf("changes by others: %v", others)
@@ -112,7 +112,7 @@ func TestWhatsNewBeforeTheAssistantEverWrote(t *testing.T) {
 func TestWhatsNewRefusesAFutureRevision(t *testing.T) {
 	h := setup(t)
 
-	refusal := h.call("whats_new", map[string]any{"since_revision": 99}, true)
+	refusal := h.call("whats_new", map[string]any{"from_revision": 99}, true)
 
 	if !strings.Contains(refusal["error"].(string), "r99 is newer than the budget") {
 		t.Errorf("refusal: %v", refusal["error"])
