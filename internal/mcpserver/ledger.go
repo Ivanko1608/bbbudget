@@ -154,7 +154,7 @@ func (h *handlers) flagsByMonth(
 }
 
 func (h *handlers) registerLedger(s *mcp.Server) {
-	addWriteTool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, pace, unplanned spending).",
+	addWriteTool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
 		func(ctx context.Context, in LogTransactionsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -208,7 +208,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return deletedResult{Deleted: removed}, nil
 		})
-	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
+	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
 		func(ctx context.Context, in StatusIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {

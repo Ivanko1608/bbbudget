@@ -1292,13 +1292,13 @@ async function loadMonthStatus() {
   $("#monthStatusTransactions").innerHTML = renderRecentTransactions(transactions, categories);
 }
 
-function monthStatusSubtitle(status) {
-  if (!status.transaction_count) return t("month_status.empty");
+function monthStatusSubtitle(monthStatus) {
+  if (!monthStatus.transaction_count) return t("month_status.empty");
   const sums = {
-    spent: money(status.spent),
-    planned: money(status.planned_spending),
-    day: status.days_elapsed,
-    days: status.days_in_month,
+    spent: money(monthStatus.spent),
+    planned: money(monthStatus.planned_spending),
+    day: monthStatus.days_elapsed,
+    days: monthStatus.days_in_month,
   };
   return t("month_status.sub", sums);
 }
