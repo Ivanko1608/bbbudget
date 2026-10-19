@@ -1,6 +1,8 @@
 template: example
 turns:
   - Add a one-off 600 EUR car service in March 2027, under travel.
+reference:
+  - - {tool: add_item, input: {name: Car service, amount: "600", category: travel, every: 0, starts: "2027-03"}}
 expect:
   saved: true
   items:

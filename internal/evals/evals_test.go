@@ -22,6 +22,23 @@ func loadCases(t *testing.T) []Case {
 	return cases
 }
 
+// Every case's reference solution passes its own checks, through the real
+// loop and tools. Runs in make check: no model, no cost.
+func TestReferenceSolutionsPass(t *testing.T) {
+	for _, c := range loadCases(t) {
+		t.Run(c.Name, func(t *testing.T) {
+			result := Run(context.Background(), c, NewReferenceProvider(c), t.TempDir())
+
+			if result.Err != nil {
+				t.Fatal(result.Err)
+			}
+			for _, failure := range result.Failures {
+				t.Error(failure)
+			}
+		})
+	}
+}
+
 // idleProvider is a model that only says "Sure!" and never calls a tool.
 type idleProvider struct{}
 
