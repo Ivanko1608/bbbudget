@@ -189,10 +189,10 @@ test("spending logged elsewhere shows in this month's panel, flagged when over p
   const groceries = { date: today, amount: "5000", category: "home", note: "Groceries" };
   await srv.api("POST", `/api/budgets/${id}/transactions`, { transactions: [groceries] });
   await page.goto(`${srv.base}/#${id}/overview`);
-  await waitFor(() => page.visible("#nowSection"), "the this-month panel");
-  await waitFor(async () => (await page.text("#nowCats")).includes("over plan"), "the home row to be flagged");
-  assert.match(await page.text("#nowTx"), /Groceries/, "the transaction is listed");
-  assert.match(await page.text("#nowFlags"), /over/, "the flag says by how much");
+  await waitFor(() => page.visible("#monthStatusSection"), "the this-month panel");
+  await waitFor(async () => (await page.text("#monthStatusCategories")).includes("over plan"), "the home row to be flagged");
+  assert.match(await page.text("#monthStatusTransactions"), /Groceries/, "the transaction is listed");
+  assert.match(await page.text("#monthStatusFlags"), /over/, "the flag says by how much");
 });
 
 test("what-if previews without saving", { skip }, async () => {

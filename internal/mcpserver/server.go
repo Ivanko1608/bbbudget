@@ -277,7 +277,7 @@ func (h *handlers) register(s *mcp.Server) {
 		return h.app.Templates.List(), nil
 	})
 	tool(s, "create_budget", "Create a budget from a template (see list_templates).", func(ctx context.Context, in CreateIn) (any, error) {
-		v, err := h.app.Create(ctx, fromAssistant, h.reader(), in.ID, in.Name, in.Template)
+		v, err := h.app.Create(ctx, fromAssistant, h.localizer(), in.ID, in.Name, in.Template)
 		return h.sum(v, err)
 	})
 	tool(s, "get_budget", "The budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
@@ -290,7 +290,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			v.Localize(h.reader())
+			v.Localize(h.localizer())
 			return part(summarize(v), in)
 		})
 
@@ -393,7 +393,7 @@ func (h *handlers) register(s *mcp.Server) {
 		if err != nil {
 			return nil, err
 		}
-		out, err := h.app.Compare(ctx, h.reader(), id, in.Scenarios)
+		out, err := h.app.Compare(ctx, h.localizer(), id, in.Scenarios)
 		if err != nil {
 			return nil, err
 		}
@@ -431,7 +431,7 @@ func (h *handlers) register(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			app.LocalizeHistory(history, h.reader())
+			app.LocalizeHistory(history, h.localizer())
 			return history, nil
 		})
 	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns what changed and its effect; set detail to full for the whole budget.",
@@ -490,9 +490,9 @@ func (h *handlers) sum(v *app.View, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	v.Localize(h.reader())
+	v.Localize(h.localizer())
 	return summarize(v), nil
 }
 
-// reader renders text in the language the app settings choose.
-func (h *handlers) reader() *i18n.Localizer { return h.app.SettingsLocalizer() }
+// localizer renders text in the language the app settings choose.
+func (h *handlers) localizer() *i18n.Localizer { return h.app.SettingsLocalizer() }

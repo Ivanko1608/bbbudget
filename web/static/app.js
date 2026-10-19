@@ -146,7 +146,7 @@ async function open(id, view = S.view) {
   status(t("status.saved"));
   loadCompare();
   loadActivity();
-  loadNow();
+  loadMonthStatus();
 }
 
 function adopt(view, rerenderEditors) {
@@ -186,7 +186,7 @@ async function save() {
     S.notice = null;
     loadCompare();
     loadActivity();
-    loadNow();
+    loadMonthStatus();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -217,7 +217,7 @@ async function poll() {
       status(t("status.updated_elsewhere"));
       loadCompare();
       loadActivity();
-    loadNow();
+    loadMonthStatus();
     }
   } catch {}
 }
@@ -1266,71 +1266,76 @@ async function saveWhatIf() {
 
 // ---------- this month: plan versus actual ----------
 
-async function loadNow() {
+async function loadMonthStatus() {
   if (!S.id) return;
   const id = encodeURIComponent(S.id);
-  let st, txs;
+  let status, transactions;
   try {
-    [st, txs] = await Promise.all([
+    [status, transactions] = await Promise.all([
       api("GET", `/api/budgets/${id}/status`),
       api("GET", `/api/budgets/${id}/transactions?limit=8`),
     ]);
   } catch {
-    $("#nowSection").hidden = true; // e.g. today is outside the budget's window
+    $("#monthStatusSection").hidden = true; // e.g. today is outside the budget's window
     return;
   }
   const categories = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
-  $("#nowSection").hidden = false;
-  $("#h-now").textContent = t("now.heading", { month: monthName(st.month) });
-  $("#nowSub").textContent = nowSubtitle(st);
-  $("#nowFlags").innerHTML = st.flags.map((f) => `<div class="ins ${esc(f.tone)}">${bold(f.text)}</div>`).join("");
-  $("#nowCats").innerHTML = st.categories
-    .filter((c) => c.kind !== "income")
-    .map((c) => nowRow(c, categories[c.category]))
+  $("#monthStatusSection").hidden = false;
+  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(status.month) });
+  $("#monthStatusSub").textContent = monthStatusSubtitle(status);
+  $("#monthStatusFlags").innerHTML = status.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
+  $("#monthStatusCategories").innerHTML = status.categories
+    .filter((row) => row.kind !== "income")
+    .map((row) => renderCategoryBar(row, categories[row.category]))
     .join("");
-  $("#nowTx").innerHTML = nowTransactions(txs, categories);
+  $("#monthStatusTransactions").innerHTML = renderRecentTransactions(transactions, categories);
 }
 
-function nowSubtitle(st) {
-  if (!st.transactions) return t("now.empty");
-  const sums = { spent: money(st.spent), planned: money(st.planned_spending), day: st.elapsed, days: st.days };
-  return t("now.sub", sums);
+function monthStatusSubtitle(status) {
+  if (!status.transaction_count) return t("month_status.empty");
+  const sums = {
+    spent: money(status.spent),
+    planned: money(status.planned_spending),
+    day: status.days_elapsed,
+    days: status.days_in_month,
+  };
+  return t("month_status.sub", sums);
 }
 
-// nowRow is one spending category's bar: how much of the plan is spent.
-function nowRow(c, category) {
-  const width = nowBarWidth(c);
-  const color = nowBarColor(c, category);
-  const badge = c.state === "ok" ? "" : `<span class="badge ${esc(c.state)}">${esc(t(`now.state.${c.state}`))}</span>`;
-  const ofPlan = t("now.of", { actual: money(c.actual), planned: money(c.planned) });
-  return `<div class="now-row">
-    <div class="now-head"><span>${esc(c.label)} ${badge}</span><span class="muted">${esc(ofPlan)}</span></div>
-    <div class="now-bar"><div style="width:${width}%;background:${esc(color)}"></div></div>
+// renderCategoryBar is one spending category's bar: how much of the plan is spent.
+function renderCategoryBar(row, category) {
+  const width = spentPercent(row);
+  const color = barColor(row, category);
+  const badge = row.state === "ok" ? "" : `<span class="badge ${esc(row.state)}">${esc(t(`month_status.state.${row.state}`))}</span>`;
+  const ofPlan = t("month_status.of", { actual: money(row.actual), planned: money(row.planned) });
+  return `<div class="category-bar-row">
+    <div class="category-bar-head"><span>${esc(row.label)} ${badge}</span><span class="muted">${esc(ofPlan)}</span></div>
+    <div class="category-bar"><div style="width:${width}%;background:${esc(color)}"></div></div>
   </div>`;
 }
 
-// nowBarWidth is the share of the plan spent, in percent, capped at 100.
+// spentPercent is the share of the plan spent, in percent, capped at 100.
 // Floats are fine here: they only size a bar.
-function nowBarWidth(c) {
-  const planned = parseFloat(c.planned.amount);
-  const actual = parseFloat(c.actual.amount);
+function spentPercent(row) {
+  const planned = parseFloat(row.planned.amount);
+  const actual = parseFloat(row.actual.amount);
   if (planned > 0) return Math.min(100, (actual / planned) * 100);
   if (actual > 0) return 100;
   return 0;
 }
 
-function nowBarColor(c, category) {
-  const overspent = c.state === "over" || c.state === "unplanned";
+function barColor(row, category) {
+  const overspent = row.state === "over" || row.state === "unplanned";
   if (overspent) return "var(--neg)";
   return category?.color || "var(--accent)";
 }
 
-function nowTransactions(txs, categories) {
-  if (!txs.length) return `<tr><td class="muted">${esc(t("now.none_logged"))}</td></tr>`;
-  return txs.map((x) => {
-    const label = categories[x.category]?.label || x.category;
-    const amount = money({ amount: x.amount, currency: x.currency });
-    return `<tr><td>${esc(x.date)}</td><td>${esc(label)}</td><td>${esc(amount)}</td><td class="muted">${esc(x.note || "")}</td></tr>`;
+function renderRecentTransactions(transactions, categories) {
+  if (!transactions.length) return `<tr><td class="muted">${esc(t("month_status.none_logged"))}</td></tr>`;
+  return transactions.map((transaction) => {
+    const label = categories[transaction.category]?.label || transaction.category;
+    const amount = money({ amount: transaction.amount, currency: transaction.currency });
+    return `<tr><td>${esc(transaction.date)}</td><td>${esc(label)}</td><td>${esc(amount)}</td><td class="muted">${esc(transaction.note || "")}</td></tr>`;
   }).join("");
 }
 
