@@ -68,11 +68,12 @@ type EventType string
 const (
 	// EventText is the assistant speaking.
 	EventText EventType = "text"
-	// EventTool is a tool call, with the tool's name and a short detail.
+	// EventTool is a tool call, with the tool's name and either the change
+	// it made or why it failed.
 	EventTool EventType = "tool"
 	// EventChanged means the budget was written and the page should reload it.
 	EventChanged EventType = "changed"
-	// EventError is a reply that failed, with the reason as its text.
+	// EventError is a reply that failed, with the reason as its error.
 	EventError EventType = "error"
 	// EventDone ends a reply, with the conversation to continue.
 	EventDone EventType = "done"
@@ -83,7 +84,8 @@ type Event struct {
 	Type         EventType `json:"type"`
 	Text         string    `json:"text,omitempty"`
 	Tool         string    `json:"tool,omitempty"`
-	Detail       string    `json:"detail,omitempty"`
+	Change       string    `json:"change,omitempty"`
+	Error        string    `json:"error,omitempty"`
 	Conversation string    `json:"conversation,omitempty"`
 }
 
@@ -140,7 +142,7 @@ func (a *Assistant) Reply(ctx context.Context, req Request, emit func(Event)) (s
 	if message == "" {
 		return req.Conversation, fmt.Errorf("%w: empty message", app.ErrBadInput)
 	}
-	current, err := a.chatFor(ctx, req.Conversation, req.Budget)
+	current, err := a.getOrCreateChat(ctx, req.Conversation, req.Budget)
 	if err != nil {
 		return req.Conversation, err
 	}
@@ -151,12 +153,12 @@ func (a *Assistant) Reply(ctx context.Context, req Request, emit func(Event)) (s
 	if err != nil {
 		return current.id, err
 	}
-	return current.id, current.work(ctx, turn, emit)
+	return current.id, current.runToolLoop(ctx, turn, emit)
 }
 
-// work runs the tools each turn asks for and hands the results back, until
-// the model answers without calling any.
-func (c *chat) work(ctx context.Context, turn Turn, emit func(Event)) error {
+// runToolLoop runs the tools each turn asks for and sends the results
+// back, until the model answers without calling any.
+func (c *chat) runToolLoop(ctx context.Context, turn Turn, emit func(Event)) error {
 	for round := 0; ; round++ {
 		if text := strings.TrimSpace(turn.Text); text != "" {
 			emit(Event{Type: EventText, Text: text})

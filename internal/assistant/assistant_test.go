@@ -132,7 +132,7 @@ func TestAWriteSaysWhatItChanged(t *testing.T) {
 
 	events, _ := ask(t, assistant, "", "Raise rent to 1200")
 
-	if detail := events[2].Detail; !strings.Contains(detail, "amount 1150 → 1200") {
+	if detail := events[2].Change; !strings.Contains(detail, "amount 1150 → 1200") {
 		t.Errorf("detail: %q", detail)
 	}
 }
