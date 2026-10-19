@@ -3,6 +3,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -86,8 +87,9 @@ type Options struct {
 	// DefaultBudget is used when a tool call omits "budget".
 	DefaultBudget string
 	Version       string
-	// Origin is recorded on every write; default: an outside MCP client.
-	Origin store.Origin
+	// Source is who the history names for every write; default
+	// store.SourceMCP, an outside MCP client.
+	Source store.Source
 }
 
 // New builds an MCP server over the app.
@@ -97,18 +99,20 @@ func New(a *app.App, opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "bbbudget", Title: "Budget planner", Version: opts.Version},
 		&mcp.ServerOptions{Instructions: instructions})
-	if opts.Origin.Source == "" {
-		opts.Origin = store.Origin{Source: store.SourceMCP}
+	source := cmp.Or(opts.Source, store.SourceMCP)
+	h := &handlers{
+		app:           a,
+		defaultBudget: opts.DefaultBudget,
+		origin:        store.Origin{Source: source},
 	}
-	h := &handlers{app: a, def: opts.DefaultBudget, origin: opts.Origin}
 	h.register(s)
 	return s
 }
 
 type handlers struct {
-	app    *app.App
-	def    string
-	origin store.Origin
+	app           *app.App
+	defaultBudget string
+	origin        store.Origin
 }
 
 var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
@@ -155,8 +159,8 @@ func (h *handlers) id(ref string) (string, error) {
 	if ref = strings.TrimSpace(ref); ref != "" {
 		return ref, nil
 	}
-	if h.def != "" {
-		return h.def, nil
+	if h.defaultBudget != "" {
+		return h.defaultBudget, nil
 	}
 	return "", fmt.Errorf(`"budget" is required (no default budget configured); call list_budgets`)
 }

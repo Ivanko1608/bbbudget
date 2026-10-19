@@ -17,40 +17,43 @@ type chat struct {
 	busy         sync.Mutex
 }
 
-// chatFor continues the conversation id when it is about the budget, and
-// starts a new one otherwise.
-func (a *Assistant) chatFor(ctx context.Context, id, budget string) (*chat, error) {
-	if earlier := a.resume(id, budget); earlier != nil {
-		return earlier, nil
+// getOrCreateChat returns the chat id when it is about the budget, and a
+// new chat otherwise.
+func (a *Assistant) getOrCreateChat(ctx context.Context, id, budget string) (*chat, error) {
+	a.removeExpiredChats()
+	if existing := a.getChat(id, budget); existing != nil {
+		return existing, nil
 	}
-	return a.start(ctx, budget)
+	return a.createChat(ctx, budget)
 }
 
-func (a *Assistant) resume(id, budget string) *chat {
+func (a *Assistant) getChat(id, budget string) *chat {
 	now := a.Now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.forgetIdle(now)
-	earlier, found := a.chats[id]
-	if !found || earlier.budget != budget {
+	existing, found := a.chats[id]
+	if !found || existing.budget != budget {
 		return nil
 	}
-	earlier.lastUsed = now
-	return earlier
+	existing.lastUsed = now
+	return existing
 }
 
-// forgetIdle drops the conversations idle for longer than the TTL. The
-// caller holds a.mu.
-func (a *Assistant) forgetIdle(now time.Time) {
-	for id, idle := range a.chats {
-		if now.Sub(idle.lastUsed) > a.TTL {
-			idle.tools.close()
+// removeExpiredChats closes and removes the chats unused for longer than
+// the TTL.
+func (a *Assistant) removeExpiredChats() {
+	now := a.Now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, c := range a.chats {
+		if now.Sub(c.lastUsed) > a.TTL {
+			c.tools.close()
 			delete(a.chats, id)
 		}
 	}
 }
 
-func (a *Assistant) start(ctx context.Context, budget string) (*chat, error) {
+func (a *Assistant) createChat(ctx context.Context, budget string) (*chat, error) {
 	if _, err := a.App.Get(ctx, budget); err != nil {
 		return nil, err
 	}
@@ -63,7 +66,7 @@ func (a *Assistant) start(ctx context.Context, budget string) (*chat, error) {
 		return nil, err
 	}
 	system := systemPrompt(budget, tools.instructions)
-	started := &chat{
+	created := &chat{
 		id:           rand.Text(),
 		budget:       budget,
 		conversation: provider.Start(system, tools.tools),
@@ -71,7 +74,7 @@ func (a *Assistant) start(ctx context.Context, budget string) (*chat, error) {
 		lastUsed:     a.Now(),
 	}
 	a.mu.Lock()
-	a.chats[started.id] = started
+	a.chats[created.id] = created
 	a.mu.Unlock()
-	return started, nil
+	return created, nil
 }

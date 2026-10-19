@@ -17,9 +17,8 @@ func TestWritesAreRecordedAsFromAnMCPClient(t *testing.T) {
 	}
 }
 
-func TestWritesAreRecordedWithTheConfiguredOrigin(t *testing.T) {
-	inApp := store.Origin{Source: store.SourceAssistant}
-	h := setupWith(t, Options{DefaultBudget: "home", Origin: inApp})
+func TestWritesAreRecordedWithTheConfiguredSource(t *testing.T) {
+	h := setupWith(t, Options{DefaultBudget: "home", Source: store.SourceAssistant})
 
 	h.call("update_item", map[string]any{"item": "rent", "amount": "1200"}, false)
 
