@@ -23,10 +23,8 @@ type whatsNewResult struct {
 	FromRevision    int64         `json:"from_revision"`
 	Revision        int64         `json:"revision"`
 	ChangesByOthers []store.Entry `json:"changes_by_others"`
-	Change          string        `json:"change"`
-	Currency        string        `json:"currency"`
-	Effect          effect        `json:"effect"`
-	ThisMonth       *statusOut    `json:"this_month,omitempty"`
+	changeOutcome
+	ThisMonth *statusOut `json:"this_month,omitempty"`
 }
 
 const whatsNewDescription = `What happened to the budget since your own last change (or ` +
@@ -77,7 +75,7 @@ func (h *handlers) whatsNew(
 	if err != nil {
 		return whatsNewResult{}, err
 	}
-	change, err := h.changeOf(news.Before, news.Now.Budget, news.Now.Report)
+	outcome, err := h.changeOf(news.Before, news.Now.Budget, news.Now.Report)
 	if err != nil {
 		return whatsNewResult{}, err
 	}
@@ -88,9 +86,7 @@ func (h *handlers) whatsNew(
 		FromRevision:    news.FromRevision,
 		Revision:        news.Now.Revision,
 		ChangesByOthers: news.ByOthers,
-		Change:          change.Change,
-		Currency:        change.Currency,
-		Effect:          change.Effect,
+		changeOutcome:   outcome,
 	}
 	if news.ThisMonth != nil {
 		news.ThisMonth.Localize(reader)
