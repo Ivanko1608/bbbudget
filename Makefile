@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test race cover check e2e run mcp hooks clean
+.PHONY: build test race cover check eval e2e run mcp hooks clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/bbbudget ./cmd/bbbudget
@@ -17,6 +17,13 @@ cover:
 
 check:
 	gofmt -l . | (! grep .) && go vet ./... && go test -race ./...
+
+# eval runs the assistant evals (evals/) against a real model: the one your
+# settings choose, else Claude with ANTHROPIC_API_KEY. It costs money and is
+# not deterministic, so it is not part of check. EVAL_RUNS repeats each case.
+eval:
+	BBBUDGET_EVAL=1 BBBUDGET_EVAL_RUNS=$(or $(EVAL_RUNS),1) \
+		go test -count=1 -run '^TestEvals$$' -v ./internal/evals
 
 # Browser tests: the real binary and headless Chromium (CHROME=path to pick one).
 # Needs Node 22+; skipped when no Chromium is found.
