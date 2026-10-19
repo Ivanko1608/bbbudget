@@ -495,4 +495,4 @@ func (h *handlers) sum(v *app.View, err error) (any, error) {
 }
 
 // reader renders text in the language the app settings choose.
-func (h *handlers) reader() *i18n.Localizer { return h.app.Localizer("") }
+func (h *handlers) reader() *i18n.Localizer { return h.app.SettingsLocalizer() }
