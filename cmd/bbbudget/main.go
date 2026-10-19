@@ -313,7 +313,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			Note:     *note,
 			Item:     *item,
 		}
-		return logOne(ctx, stdout, a, pos[0], in)
+		return logTransaction(ctx, stdout, a, pos[0], in)
 
 	case "history":
 		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
@@ -529,9 +529,10 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	}
 }
 
-// logOne logs one transaction and prints it, with its base value when it
-// was in another currency.
-func logOne(ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput) error {
+// logTransaction logs one transaction from the command line and prints it.
+func logTransaction(
+	ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput,
+) error {
 	result, err := a.LogTransactions(ctx, fromCLI, id, []budget.TransactionInput{in})
 	if err != nil {
 		return err
@@ -540,11 +541,16 @@ func logOne(ctx context.Context, w io.Writer, a *app.App, id string, in budget.T
 	if err != nil {
 		return err
 	}
-	t := result.Logged[0]
+	printTransaction(w, result.Logged[0], v.Budget.BaseCurrency)
+	return nil
+}
+
+// printTransaction prints t on one line, with its value in the base
+// currency when it was in another one.
+func printTransaction(w io.Writer, t budget.Transaction, base string) {
 	line := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
-	if base := v.Budget.BaseCurrency; t.Currency != base {
+	if t.Currency != base {
 		line += fmt.Sprintf("  → %s %s", t.Base, base)
 	}
 	fmt.Fprintln(w, line)
-	return nil
 }

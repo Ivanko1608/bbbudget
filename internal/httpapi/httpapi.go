@@ -438,22 +438,28 @@ func (s *server) updateTx(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) deleteTx(w http.ResponseWriter, r *http.Request) {
 	ids := []string{r.PathValue("tid")}
-	n, err := s.app.DeleteTransactions(r.Context(), r.PathValue("id"), ids)
-	s.writeRemoved(w, r, n, err)
-}
-
-// deleteBatch removes everything one log call added (/transactions?batch=b3).
-func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
-	n, err := s.app.DeleteBatch(r.Context(), r.PathValue("id"), r.URL.Query().Get("batch"))
-	s.writeRemoved(w, r, n, err)
-}
-
-func (s *server) writeRemoved(w http.ResponseWriter, r *http.Request, removed int, err error) {
+	removed, err := s.app.DeleteTransactions(r.Context(), r.PathValue("id"), ids)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"removed": removed})
+	writeJSON(w, http.StatusOK, removedResult{Removed: removed})
+}
+
+// deleteBatch removes everything one log call added (/transactions?batch=b3).
+func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
+	batch := r.URL.Query().Get("batch")
+	removed, err := s.app.DeleteBatch(r.Context(), r.PathValue("id"), batch)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, removedResult{Removed: removed})
+}
+
+// removedResult is what deleting transactions answers.
+type removedResult struct {
+	Removed int `json:"removed"`
 }
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {

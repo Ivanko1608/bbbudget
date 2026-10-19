@@ -47,8 +47,8 @@ func TestPastingTheSameStatementAgainLogsNothing(t *testing.T) {
 	if logged := r["logged"].([]any); len(logged) != 0 {
 		t.Errorf("logged again: %v", logged)
 	}
-	if skipped, _ := r["skipped_already_logged"].([]any); len(skipped) != 2 {
-		t.Errorf("skipped: %v", r["skipped_already_logged"])
+	if skipped, _ := r["skipped"].([]any); len(skipped) != 2 {
+		t.Errorf("skipped: %v", r["skipped"])
 	}
 }
 
