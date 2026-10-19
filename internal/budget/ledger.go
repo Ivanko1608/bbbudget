@@ -70,9 +70,8 @@ func (in TransactionInput) trimmed() TransactionInput {
 }
 
 // NewTransaction checks a transaction input against the budget and works out
-// its value in the base currency. The returned transaction still needs its
-// ID, Batch, Source and LoggedAt. path prefixes issue paths
-// ("transactions[2]").
+// its value in the base currency. The returned transaction still needs its ID,
+// Batch, Source and LoggedAt. path prefixes issue paths ("transactions[2]").
 func (p *Plan) NewTransaction(in TransactionInput, path string) (Transaction, []Issue) {
 	in = in.trimmed()
 	if in.Currency == "" {
