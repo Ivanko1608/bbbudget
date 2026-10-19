@@ -116,7 +116,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "serve":
 		addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 		withMCP := fs.Bool("mcp", true, "also serve MCP (streamable HTTP) at /mcp")
-		def := fs.String("budget", "", "default budget for MCP tool calls that omit one")
+		defaultBudget := fs.String("budget", "", "default budget for MCP tool calls that omit one")
 		hosts := fs.String("allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)")
 		if err := fs.Parse(args); err != nil {
 			return err
@@ -131,13 +131,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			opts.AllowedHosts = strings.Split(*hosts, ",")
 		}
 		if *withMCP {
-			srv := mcpserver.New(a, mcpserver.Options{DefaultBudget: *def, Version: version})
+			srv := mcpserver.New(a, mcpserver.Options{DefaultBudget: *defaultBudget, Version: version})
 			opts.MCP = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 		}
 		return serve(ctx, *addr, httpapi.New(a, opts), log, stdout)
 
 	case "mcp":
-		def := fs.String("budget", os.Getenv("BBBUDGET_DEFAULT"), "default budget for tool calls that omit one")
+		defaultBudget := fs.String("budget", os.Getenv("BBBUDGET_DEFAULT"), "default budget for tool calls that omit one")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -145,8 +145,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		log.Info("mcp server on stdio", "dir", *dir, "default_budget", *def)
-		return mcpserver.New(a, mcpserver.Options{DefaultBudget: *def, Version: version}).Run(ctx, &mcp.StdioTransport{})
+		log.Info("mcp server on stdio", "dir", *dir, "default_budget", *defaultBudget)
+		return mcpserver.New(a, mcpserver.Options{DefaultBudget: *defaultBudget, Version: version}).Run(ctx, &mcp.StdioTransport{})
 
 	case "init":
 		template := fs.String("template", "blank", "template name (see: bbbudget templates)")

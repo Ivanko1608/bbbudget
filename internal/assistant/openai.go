@@ -226,7 +226,7 @@ func (p *OpenAICompatible) complete(
 	var response openAIResponse
 	if err := json.Unmarshal(body, &response); err != nil || len(response.Choices) == 0 {
 		return openAIMessage{}, fmt.Errorf("model server: unexpected response: %s",
-			shorten(firstLine(string(body)), maxDetail))
+			truncate(firstLine(string(body)), maxErrorLen))
 	}
 	return response.Choices[0].Message, nil
 }
@@ -257,7 +257,7 @@ func (p *OpenAICompatible) post(ctx context.Context, request openAIRequest) ([]b
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("model server: HTTP %d: %s",
-			resp.StatusCode, shorten(firstLine(string(body)), maxDetail))
+			resp.StatusCode, truncate(firstLine(string(body)), maxErrorLen))
 	}
 	return body, nil
 }
