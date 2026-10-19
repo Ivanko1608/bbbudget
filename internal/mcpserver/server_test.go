@@ -46,7 +46,7 @@ func setupWith(t *testing.T, opts Options) *harness {
 		t.Fatal(err)
 	}
 	fromCLI := store.Origin{Source: store.SourceCLI}
-	if _, err := a.Create(ctx, fromCLI, a.Localizer(""), "home", "Home", "example"); err != nil {
+	if _, err := a.Create(ctx, fromCLI, a.SettingsLocalizer(), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, opts)

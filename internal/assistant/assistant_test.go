@@ -77,7 +77,7 @@ func newAssistant(t *testing.T, model *script) *Assistant {
 	a.Rates = map[string]rates.Provider{}
 	a.Now = func() time.Time { return testNow }
 	fromCLI := store.Origin{Source: store.SourceCLI}
-	_, err = a.Create(context.Background(), fromCLI, a.Localizer(""), "home", "Home", "example")
+	_, err = a.Create(context.Background(), fromCLI, a.SettingsLocalizer(), "home", "Home", "example")
 	if err != nil {
 		t.Fatal(err)
 	}
