@@ -315,7 +315,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			Note:     *note,
 			Item:     *item,
 		}
-		return logOne(ctx, stdout, a, pos[0], in)
+		return logTransaction(ctx, stdout, a, pos[0], in)
 
 	case "status":
 		month := fs.String("month", "", "YYYY-MM (default this month)")
@@ -550,28 +550,42 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	}
 }
 
-// logOne logs one transaction and prints it, with its base value when it
-// was in another currency, and the flags of its month.
-func logOne(ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput) error {
+// logTransaction logs one transaction from the command line and prints it,
+// with the flags of its month.
+func logTransaction(
+	ctx context.Context, w io.Writer, a *app.App, id string, in budget.TransactionInput,
+) error {
 	result, err := a.LogTransactions(ctx, fromCLI, id, []budget.TransactionInput{in})
 	if err != nil {
 		return err
 	}
-	t := result.Logged[0]
-	line := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
-	status, err := a.MonthStatus(ctx, id, t.Date[:len("YYYY-MM")])
-	if errors.Is(err, app.ErrBadInput) {
-		fmt.Fprintln(w, line) // a month outside the budget's window has no status
-		return nil
-	}
+	v, err := a.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	base := status.Spent.Currency().Code
+	logged := result.Logged[0]
+	printTransaction(w, logged, v.Budget.BaseCurrency)
+	return printMonthFlags(ctx, w, a, id, logged.Date[:len("YYYY-MM")])
+}
+
+// printTransaction prints t on one line, with its value in the base
+// currency when it was in another one.
+func printTransaction(w io.Writer, t budget.Transaction, base string) {
+	line := fmt.Sprintf("%s  %s  %s  %s %s", t.ID, t.Date, t.Category, t.Amount, t.Currency)
 	if t.Currency != base {
 		line += fmt.Sprintf("  → %s %s", t.Base, base)
 	}
 	fmt.Fprintln(w, line)
+}
+
+func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month string) error {
+	status, err := a.MonthStatus(ctx, id, month)
+	if errors.Is(err, app.ErrBadInput) {
+		return nil // a month outside the budget's window has no status
+	}
+	if err != nil {
+		return err
+	}
 	status.Localize(a.Localizer(""))
 	for _, f := range status.Flags {
 		fmt.Fprintf(w, "! %s\n", plain(f.Text))
