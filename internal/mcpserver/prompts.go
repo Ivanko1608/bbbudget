@@ -40,11 +40,8 @@ func optionalArgument(name, description string) *mcp.PromptArgument {
 
 var (
 	budgetArg   = optionalArgument("budget", "budget id; omit for the default")
-	languageArg = optionalArgument(
-		"language",
-		"language to answer in; default: the one the user writes in",
-	)
-	monthArg = optionalArgument("month", "YYYY-MM; default this month")
+	languageArg = optionalArgument("language", "language to answer in; default: the one the user writes in")
+	monthArg    = optionalArgument("month", "YYYY-MM; default this month")
 )
 
 var promptTemplates = []promptTemplate{
@@ -163,8 +160,7 @@ elsewhere), quantified with one more what_if.`
 }
 
 func debtPlanText(args promptArgs) string {
-	return `Help me plan paying off the debts in ` + budgetPhrase(args) + `. ` +
-		languageInstruction(args) + `
+	return `Help me plan paying off the debts in ` + budgetPhrase(args) + `. ` + languageInstruction(args) + `
 1. get_budget with view "debts": balances, rates, minimums, and payoff dates as things stand.
 2. save_scenario for avalanche versus snowball (debt_strategy), and for two or three levels
    of extra_to_debt_pct that the monthly leftover can carry. Then compare_scenarios.
@@ -192,14 +188,14 @@ Statement:
 }
 
 func registerPrompts(s *mcp.Server) {
-	for _, w := range promptTemplates {
+	for _, t := range promptTemplates {
 		prompt := &mcp.Prompt{
-			Name:        w.name,
-			Title:       w.title,
-			Description: w.description,
-			Arguments:   w.arguments,
+			Name:        t.name,
+			Title:       t.title,
+			Description: t.description,
+			Arguments:   t.arguments,
 		}
-		s.AddPrompt(prompt, w.render)
+		s.AddPrompt(prompt, t.render)
 	}
 }
 
