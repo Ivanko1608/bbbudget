@@ -67,32 +67,32 @@ type statusRow struct {
 }
 
 type statusOut struct {
-	Month         string      `json:"month"`
-	Currency      string      `json:"currency"`
-	Days          int         `json:"days"`
-	Elapsed       int         `json:"elapsed"`
-	PlannedSpend  string      `json:"planned_spending"`
-	Spent         string      `json:"spent"`
-	PlannedIncome string      `json:"planned_income"`
-	Income        string      `json:"income"`
-	Transactions  int         `json:"transactions"`
-	Categories    []statusRow `json:"categories"`
-	Flags         []string    `json:"flags"`
+	Month            string      `json:"month"`
+	Currency         string      `json:"currency"`
+	DaysInMonth      int         `json:"days_in_month"`
+	DaysElapsed      int         `json:"days_elapsed"`
+	PlannedSpending  string      `json:"planned_spending"`
+	Spent            string      `json:"spent"`
+	PlannedIncome    string      `json:"planned_income"`
+	Income           string      `json:"income"`
+	TransactionCount int         `json:"transaction_count"`
+	Categories       []statusRow `json:"categories"`
+	Flags            []string    `json:"flags"`
 }
 
 func toStatusOut(s *budget.MonthStatus) statusOut {
 	out := statusOut{
-		Month:         s.Month,
-		Currency:      s.Spent.Currency().Code,
-		Days:          s.DaysInMonth,
-		Elapsed:       s.DaysElapsed,
-		PlannedSpend:  s.PlannedSpending.String(),
-		Spent:         s.Spent.String(),
-		PlannedIncome: s.PlannedIncome.String(),
-		Income:        s.Income.String(),
-		Transactions:  s.TransactionCount,
-		Categories:    []statusRow{},
-		Flags:         []string{},
+		Month:            s.Month,
+		Currency:         s.Spent.Currency().Code,
+		DaysInMonth:      s.DaysInMonth,
+		DaysElapsed:      s.DaysElapsed,
+		PlannedSpending:  s.PlannedSpending.String(),
+		Spent:            s.Spent.String(),
+		PlannedIncome:    s.PlannedIncome.String(),
+		Income:           s.Income.String(),
+		TransactionCount: s.TransactionCount,
+		Categories:       []statusRow{},
+		Flags:            []string{},
 	}
 	for _, c := range s.Categories {
 		out.Categories = append(out.Categories, newStatusRow(c))

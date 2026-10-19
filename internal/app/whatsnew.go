@@ -80,20 +80,20 @@ func findOwnLastChange(history []store.Entry, asker store.Source) int64 {
 	return history[len(history)-1].Revision
 }
 
-// budgetAsOf is the budget as it was at revision since: the version saved
+// budgetAsOf is the budget as it was at fromRevision: the version saved
 // by the newest change at or before it.
 func (a *App) budgetAsOf(
-	ctx context.Context, id string, history []store.Entry, since, current int64,
+	ctx context.Context, id string, history []store.Entry, fromRevision, current int64,
 ) (budget.Budget, error) {
-	if since > current {
+	if fromRevision > current {
 		return budget.Budget{}, fmt.Errorf("%w: r%d is newer than the budget (r%d)",
-			ErrBadInput, since, current)
+			ErrBadInput, fromRevision, current)
 	}
-	notLater := func(entry store.Entry) bool { return entry.Revision <= since }
+	notLater := func(entry store.Entry) bool { return entry.Revision <= fromRevision }
 	i := slices.IndexFunc(history, notLater)
 	if i < 0 {
 		return budget.Budget{}, fmt.Errorf("%w: the history no longer reaches back to r%d",
-			ErrBadInput, since)
+			ErrBadInput, fromRevision)
 	}
 	return a.Store.Snapshot(ctx, id, history[i].Revision)
 }
