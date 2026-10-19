@@ -1,0 +1,7 @@
+template: example
+turns:
+  - I spent 45.20 on groceries on October 5th.
+expect:
+  transactions: 1
+  transaction: {category: home, amount: "45.2", date: "2026-10-05"}
+  saved: false

@@ -37,21 +37,18 @@ func (idleProvider) SendResults(context.Context, []assistant.ToolResult) (assist
 	return assistant.Turn{Text: "Sure!"}, nil
 }
 
-func TestAnAssistantThatDoesNothingFailsTheCaseThatAsksForARaise(t *testing.T) {
-	var raiseRent Case
+func TestAnAssistantThatDoesNothingFailsEveryCase(t *testing.T) {
 	for _, c := range loadCases(t) {
-		if c.Name == "raise-rent" {
-			raiseRent = c
-		}
-	}
+		t.Run(c.Name, func(t *testing.T) {
+			result := Run(context.Background(), c, idleProvider{}, t.TempDir())
 
-	result := Run(context.Background(), raiseRent, idleProvider{}, t.TempDir())
-
-	if result.Err != nil {
-		t.Fatal(result.Err)
-	}
-	if result.Passed() {
-		t.Fatalf("an assistant that only says %q passed", result.Reply)
+			if result.Err != nil {
+				t.Fatal(result.Err)
+			}
+			if result.Passed() {
+				t.Fatalf("an assistant that only says %q passed", result.Reply)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,8 @@
+template: example
+turns:
+  - What would happen to my savings if tuition went down to 450? Don't change anything yet.
+expect:
+  saved: false
+  items:
+    tuition: {amount: "900"}
+  reply_contains: ["5100"]
