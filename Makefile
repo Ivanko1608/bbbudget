@@ -22,7 +22,8 @@ check:
 # settings choose, else Claude with ANTHROPIC_API_KEY. It costs money and is
 # not deterministic, so it is not part of check. EVAL_RUNS repeats each case.
 eval:
-	BBBUDGET_EVAL=1 BBBUDGET_EVAL_RUNS=$(or $(EVAL_RUNS),1) go test -count=1 -run '^TestEvals$$' -v ./internal/evals
+	BBBUDGET_EVAL=1 BBBUDGET_EVAL_RUNS=$(or $(EVAL_RUNS),1) \
+		go test -count=1 -run '^TestEvals$$' -v ./internal/evals
 
 # Browser tests: the real binary and headless Chromium (CHROME=path to pick one).
 # Needs Node 22+; skipped when no Chromium is found.
