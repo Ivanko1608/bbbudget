@@ -65,7 +65,7 @@ func TestWhatsNewLeavesOutTheAssistantsOwnChanges(t *testing.T) {
 
 	others := news["changes_by_others"].([]any)
 	if len(others) != 1 {
-		t.Errorf("changes by others since r1: %v", others)
+		t.Errorf("changes by others from r1: %v", others)
 	}
 }
 

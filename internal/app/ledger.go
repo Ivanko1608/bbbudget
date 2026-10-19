@@ -35,9 +35,7 @@ func (a *App) LogTransactions(
 	}
 	metadata := logMetadata{at: a.Now().UTC(), source: string(origin.Source)}
 	var result LogResult
-	appendBatch := func(
-		b budget.Budget, existing []budget.Transaction,
-	) ([]budget.Transaction, error) {
+	appendBatch := func(b budget.Budget, existing []budget.Transaction) ([]budget.Transaction, error) {
 		plan, err := budget.Compile(b)
 		if err != nil {
 			return nil, err
@@ -63,10 +61,7 @@ type logMetadata struct {
 // buildBatch prices inputs into a new batch after existing, skipping the
 // external ids existing already has. Any invalid input fails the batch.
 func buildBatch(
-	plan *budget.Plan,
-	existing []budget.Transaction,
-	inputs []budget.TransactionInput,
-	metadata logMetadata,
+	plan *budget.Plan, existing []budget.Transaction, inputs []budget.TransactionInput, metadata logMetadata,
 ) (LogResult, error) {
 	seen := externalIDs(existing)
 	transactionIDs := newIDSequence(transactionPrefix, listIDs(existing))
@@ -189,20 +184,20 @@ func (a *App) ListTransactions(
 }
 
 // matchFunc turns the filter into a test for one transaction.
-func (filter TransactionFilter) matchFunc() (func(budget.Transaction) bool, error) {
-	first, err := parseStartDate(filter.From)
+func (f TransactionFilter) matchFunc() (func(budget.Transaction) bool, error) {
+	first, err := parseStartDate(f.From)
 	if err != nil {
 		return nil, err
 	}
-	last, err := parseEndDate(filter.To)
+	last, err := parseEndDate(f.To)
 	if err != nil {
 		return nil, err
 	}
 	return func(t budget.Transaction) bool {
 		day, err := time.Parse(time.DateOnly, t.Date)
 		inRange := err == nil && !day.Before(first) && !day.After(last)
-		inCategory := filter.Category == "" || t.Category == filter.Category
-		inBatch := filter.Batch == "" || t.Batch == filter.Batch
+		inCategory := f.Category == "" || t.Category == f.Category
+		inBatch := f.Batch == "" || t.Batch == f.Batch
 		return inRange && inCategory && inBatch
 	}, nil
 }
@@ -261,11 +256,8 @@ func (a *App) UpdateTransaction(
 	ctx context.Context, id, transactionID string, patch TransactionPatch,
 ) (*budget.Transaction, error) {
 	var updated budget.Transaction
-	replaceTransaction := func(
-		b budget.Budget, transactions []budget.Transaction,
-	) ([]budget.Transaction, error) {
-		matchesID := func(t budget.Transaction) bool { return t.ID == transactionID }
-		i := slices.IndexFunc(transactions, matchesID)
+	replaceTransaction := func(b budget.Budget, transactions []budget.Transaction) ([]budget.Transaction, error) {
+		i := slices.IndexFunc(transactions, func(t budget.Transaction) bool { return t.ID == transactionID })
 		if i < 0 {
 			return nil, fmt.Errorf("%w: no transaction %q", store.ErrNotFound, transactionID)
 		}
@@ -327,12 +319,9 @@ func (a *App) DeleteTransactions(ctx context.Context, id string, ids []string) (
 	if len(ids) == 0 {
 		return 0, fmt.Errorf("%w: give the ids of the transactions to delete", ErrBadInput)
 	}
-	return a.removeTransactions(
-		ctx, id,
-		func(transactions []budget.Transaction) ([]budget.Transaction, error) {
-			return withoutIDs(transactions, ids)
-		},
-	)
+	return a.removeTransactions(ctx, id, func(transactions []budget.Transaction) ([]budget.Transaction, error) {
+		return withoutIDs(transactions, ids)
+	})
 }
 
 // DeleteBatch removes every transaction logged in batch.
@@ -340,12 +329,9 @@ func (a *App) DeleteBatch(ctx context.Context, id, batch string) (int, error) {
 	if batch == "" {
 		return 0, fmt.Errorf("%w: give the batch to delete", ErrBadInput)
 	}
-	return a.removeTransactions(
-		ctx, id,
-		func(transactions []budget.Transaction) ([]budget.Transaction, error) {
-			return withoutBatch(transactions, batch)
-		},
-	)
+	return a.removeTransactions(ctx, id, func(transactions []budget.Transaction) ([]budget.Transaction, error) {
+		return withoutBatch(transactions, batch)
+	})
 }
 
 // removeTransactions stores what remove keeps, and returns how many it
@@ -355,9 +341,7 @@ func (a *App) removeTransactions(
 	remove func([]budget.Transaction) ([]budget.Transaction, error),
 ) (int, error) {
 	var removed int
-	edit := func(
-		_ budget.Budget, transactions []budget.Transaction,
-	) ([]budget.Transaction, error) {
+	edit := func(_ budget.Budget, transactions []budget.Transaction) ([]budget.Transaction, error) {
 		kept, err := remove(transactions)
 		removed = len(transactions) - len(kept)
 		return kept, err
@@ -366,13 +350,10 @@ func (a *App) removeTransactions(
 	return removed, err
 }
 
-func withoutIDs(
-	transactions []budget.Transaction, ids []string,
-) ([]budget.Transaction, error) {
+func withoutIDs(transactions []budget.Transaction, ids []string) ([]budget.Transaction, error) {
 	var missing []string
 	for _, transactionID := range ids {
-		hasID := func(t budget.Transaction) bool { return t.ID == transactionID }
-		if !slices.ContainsFunc(transactions, hasID) {
+		if !slices.ContainsFunc(transactions, func(t budget.Transaction) bool { return t.ID == transactionID }) {
 			missing = append(missing, transactionID)
 		}
 	}
