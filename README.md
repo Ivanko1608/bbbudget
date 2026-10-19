@@ -115,7 +115,7 @@ A budget is about as personal as data gets, so bbbudget is built to keep it on y
 - **No third-party requests from the UI.** The UI's scripts, styles and fonts are embedded in the binary. A strict `Content-Security-Policy` makes the browser refuse to contact any other origin, and `Referrer-Policy: no-referrer` is set too. There's no telemetry, no analytics and no update check.
 - **Offline by default.** Fetching exchange rates is off until you turn it on in [Settings](#settings) (`fetch_rates`). Until then you type rates by hand and nothing goes online. Once it's on, the app contacts a rate provider only when you ask: **Update rates now**, adding a currency, `bbbudget rates`, or auto-refresh, which is off by default too. The request carries currency codes and nothing else: no amounts, no budget names. The provider still sees your IP address and which currencies you look up.
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file. Each budget's change history sits next to it (`home.jsonl`), holding copies of its last 200 versions (the file is trimmed in batches, so it can briefly hold up to 400), so something you remove from a budget stays in its history until it ages out. Deleting the budget deletes its history too.
-- **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
+- **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and optional git hooks scan for leaks (`make hooks`, see [Development](#development)).
 
 The same goes for the [in-app assistant](#the-assistant): pointed at a model server on your own machine, nothing leaves it; with Claude, each chat sends the budget to Anthropic. The chat panel and the settings page say which one you have.
 
@@ -435,7 +435,7 @@ The server binds to 127.0.0.1 and accepts only these requests:
 ```
 make check     # gofmt, go vet, go test -race
 make e2e       # browser tests: real binary + headless Chromium (Node 22+)
-make hooks     # enable the pre-commit leak check in .githooks/
+make hooks     # enable the leak checks on commit and push (needs pre-commit)
 make cover
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
@@ -451,7 +451,7 @@ The tests include:
 - an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio;
 - browser tests in [`e2e/`](e2e/) that run `bbbudget serve` on a throwaway directory and drive the page in headless Chromium over the DevTools protocol: every view, editing in place, adding and undoing, covering a short month, routing income to a pot, paying off a debt, what-if, the phone layout and the settings page. They fail on any script error or request to another origin. They use only Node's built-in test runner and WebSocket, and skip when no Chromium is found (set `CHROME` to pick one).
 
-The pre-commit hook runs [leakscan](.githooks/pre-commit) over staged changes and blocks secrets and personal data (home paths, emails, keys, and anything in your own denylist at `~/.config/leakscan/denylist.txt`). The scanner isn't vendored, so point `$LEAKSCAN` at `leakscan.py` or put it at `~/.local/share/leakscan/leakscan.py`. Without it, the hook warns and lets the commit through. Known false positives go in `.leakscanignore`.
+`make hooks` installs the [pre-commit](https://pre-commit.com) hooks in [`.pre-commit-config.yaml`](.pre-commit-config.yaml). On commit, [tinfoil](https://github.com/Ivanko1608/tinfoil) scans staged changes for personal data (home paths, emails, and anything in your own denylist at `~/.config/leakscan/denylist.txt`) and [gitleaks](https://github.com/gitleaks/gitleaks) scans them for credentials. On push, tinfoil also checks the author and committer of every commit that isn't on a remote yet, because a staged scan never sees them; use your GitHub noreply address as `user.email`. CI runs tinfoil over the full history and gitleaks over the new commits. Known false positives go in `.leakscanignore`.
 
 ## Contributing and security
 

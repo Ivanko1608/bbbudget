@@ -19,6 +19,24 @@ jobs:
       - run: go mod tidy -diff
       - run: make check
 
+  leaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Ivanko1608/tinfoil@v1.1.0
+        with:
+          history: "true"
+          fail-on: medium
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
   e2e:
     runs-on: ubuntu-latest
     steps:
