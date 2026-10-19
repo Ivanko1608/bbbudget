@@ -12,6 +12,3 @@ fp:c0f5e0912a80
 fp:db0dc5218c73
 # The fake API key in an old HTTP test.
 fp:aec07e3204e6
-# The noreply identities of GitHub web merges and Claude Code commits.
-fp:47d5d890a8f8
-fp:c70de1355c6f
