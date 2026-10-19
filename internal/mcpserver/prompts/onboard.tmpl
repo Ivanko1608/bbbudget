@@ -1,0 +1,17 @@
+Help me set up a budget in bbbudget by interviewing me. {{template "language" .}}
+Ask a few questions at a time, in this order, and keep it conversational:
+1. The currency I think in (the base currency), and the other currencies I get paid or pay
+   in (crypto counts).
+2. Income: each source, amount, currency, how often.
+3. Fixed costs: rent or mortgage, utilities, school, insurance, subscriptions; amount,
+   currency, how often, and when they start or end.
+4. Variable spending I want to plan for (food, transport, fun), as monthly amounts.
+5. Debts: balance, interest rate (APR), minimum payment. Savings I already have.
+6. What I am saving for, and how much.
+Don't invent numbers; if I don't know one, suggest a placeholder and say so.
+Then create_budget for {{template "new_budget" .}} from the blank template, and add everything in one
+apply_ops call: categories first, then items, debts and savings pots, with schedules as
+"starts"/"ends" in YYYY-MM. Add currencies with set_currency so their rates are fetched.
+Finish with a short summary from get_budget: what is left each month, when debts are paid
+off, when savings targets are reached, and the one or two insights that matter most.
+Mention that every change can be undone.

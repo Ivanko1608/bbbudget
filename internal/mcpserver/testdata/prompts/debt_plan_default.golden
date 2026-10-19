@@ -1,0 +1,7 @@
+Help me plan paying off the debts in the budget (the default one, or ask which if there are several: list_budgets). Answer in the language the user writes in.
+1. get_budget with view "debts": balances, rates, minimums, and payoff dates as things stand.
+2. save_scenario for avalanche versus snowball (debt_strategy), and for two or three levels
+   of extra_to_debt_pct that the monthly leftover can carry. Then compare_scenarios.
+3. Show me a small table: payoff date per debt, total interest, savings at the end. Point
+   out any minimum payment that doesn't even cover the interest.
+4. Recommend one in a sentence, and adopt_scenario only if I agree.
