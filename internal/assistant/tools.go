@@ -66,7 +66,9 @@ func (tools *mcpTools) close() { tools.session.Close() }
 
 // runCalls makes the calls in order and reports each one, and then whether any
 // of them changed the budget.
-func (tools *mcpTools) runCalls(ctx context.Context, calls []ToolCall, emit func(Event)) []ToolResult {
+func (tools *mcpTools) runCalls(
+	ctx context.Context, calls []ToolCall, emit func(Event),
+) []ToolResult {
 	results := make([]ToolResult, 0, len(calls))
 	changed := false
 	for _, call := range calls {

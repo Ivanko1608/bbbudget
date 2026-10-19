@@ -37,8 +37,8 @@ func newOpenAICompatibleProvider(s settings.Settings) (Provider, error) {
 	return provider, nil
 }
 
-// ProviderFromSettings returns the provider the app's settings choose, reading
-// them afresh on each call.
+// ProviderFromSettings returns the provider the app's settings choose,
+// reading them afresh on each call.
 func ProviderFromSettings(a *app.App) func() (Provider, error) {
 	return func() (Provider, error) {
 		current, err := a.Settings()

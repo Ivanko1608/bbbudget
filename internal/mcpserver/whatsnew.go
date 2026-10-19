@@ -69,7 +69,9 @@ func (h *handlers) readWhatsNew(
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
 }
 
-func (h *handlers) whatsNew(ctx context.Context, id string, fromRevision int64) (whatsNewResult, error) {
+func (h *handlers) whatsNew(
+	ctx context.Context, id string, fromRevision int64,
+) (whatsNewResult, error) {
 	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
 	news, err := h.app.WhatsNew(ctx, id, req)
 	if err != nil {

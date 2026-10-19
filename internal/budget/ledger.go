@@ -72,9 +72,9 @@ func (in TransactionInput) trimmed() TransactionInput {
 	return in
 }
 
-// NewTransaction checks a transaction input against the budget and works out its value in the
-// base currency. The returned transaction still needs its ID, Batch, Source and LoggedAt. path
-// prefixes issue paths ("transactions[2]").
+// NewTransaction checks a transaction input against the budget and works out its
+// value in the base currency. The returned transaction still needs its ID, Batch,
+// Source and LoggedAt. path prefixes issue paths ("transactions[2]").
 func (p *Plan) NewTransaction(in TransactionInput, path string) (Transaction, []Issue) {
 	in = in.trimmed()
 	if in.Currency == "" {
@@ -158,7 +158,8 @@ const (
 	StateOK SpendingState = "ok"
 	// StateOver is spending above plan.
 	StateOver SpendingState = "over"
-	// StateProjectedOver is spending on course to go more than projectionTolerance over plan.
+	// StateProjectedOver is spending on course to go more than projectionTolerance over
+	// plan.
 	StateProjectedOver SpendingState = "projected_over"
 	// StateUnplanned is spending with nothing planned.
 	StateUnplanned SpendingState = "unplanned"
@@ -166,8 +167,8 @@ const (
 	StateShort SpendingState = "short"
 )
 
-// projectionTolerance is how far over plan the projected spending may go before it
-// is flagged: 10%.
+// projectionTolerance is how far over plan the projected spending may go before
+// it is flagged: 10%.
 var projectionTolerance = big.NewRat(11, 10)
 
 // CategoryStatus is one category's plan and actuals for a month, in the
@@ -206,7 +207,9 @@ type MonthStatus struct {
 
 // MonthStatus compares a month ("YYYY-MM") of the plan with the transactions
 // logged in it. today decides how far into the month we are.
-func (p *Plan) MonthStatus(month string, transactions []Transaction, today time.Time) (*MonthStatus, error) {
+func (p *Plan) MonthStatus(
+	month string, transactions []Transaction, today time.Time,
+) (*MonthStatus, error) {
 	index, start, err := p.monthIndex(month)
 	if err != nil {
 		return nil, err
@@ -378,8 +381,8 @@ func newCategoryStatus(c Category, planned, actual money.Money) CategoryStatus {
 	}
 }
 
-// projectSpending is spending extrapolated to the end of the month, or nil when
-// the month hasn't started, is over, or has no spending yet.
+// projectSpending is spending extrapolated to the end of the month, or nil
+// when the month hasn't started, is over, or has no spending yet.
 func (s *MonthStatus) projectSpending(actual money.Money) *money.Money {
 	monthUnderway := s.DaysElapsed > 0 && s.DaysElapsed < s.DaysInMonth
 	if !monthUnderway || !actual.IsPositive() {

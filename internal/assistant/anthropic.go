@@ -133,7 +133,9 @@ func (c *anthropicConversation) SendText(ctx context.Context, text string) (Turn
 // SendResults keeps the results even when the request fails: the calls they
 // answer have already happened, and the API joins them with the person's
 // next message.
-func (c *anthropicConversation) SendResults(ctx context.Context, results []ToolResult) (Turn, error) {
+func (c *anthropicConversation) SendResults(
+	ctx context.Context, results []ToolResult,
+) (Turn, error) {
 	blocks := make([]anthropic.BetaContentBlockParamUnion, 0, len(results))
 	for _, result := range results {
 		block := anthropic.NewBetaToolResultBlock(result.CallID, result.Content, result.IsError)

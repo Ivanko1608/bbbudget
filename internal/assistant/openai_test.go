@@ -115,7 +115,8 @@ func TestOpenAICompatibleResultsAnswerTheirCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	answer, err := conversation.SendResults(ctx, []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}})
+	results := []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}}
+	answer, err := conversation.SendResults(ctx, results)
 	if err != nil {
 		t.Fatal(err)
 	}

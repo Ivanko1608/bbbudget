@@ -520,5 +520,5 @@ func (h *handlers) sum(v *app.View, err error) (any, error) {
 	return summarize(v), nil
 }
 
-// reader renders text in the language the app settings choose.
+// localizer renders text in the language the app settings choose.
 func (h *handlers) localizer() *i18n.Localizer { return h.app.SettingsLocalizer() }

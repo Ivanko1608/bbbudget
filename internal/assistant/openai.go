@@ -164,7 +164,9 @@ func (c *openAIConversation) SendText(ctx context.Context, text string) (Turn, e
 
 // SendResults keeps the results even when the server fails: the calls they
 // answer have already happened.
-func (c *openAIConversation) SendResults(ctx context.Context, results []ToolResult) (Turn, error) {
+func (c *openAIConversation) SendResults(
+	ctx context.Context, results []ToolResult,
+) (Turn, error) {
 	for _, result := range results {
 		c.messages = append(c.messages, toToolMessage(result))
 	}
