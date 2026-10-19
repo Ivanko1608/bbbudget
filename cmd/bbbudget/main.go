@@ -586,13 +586,13 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	}
 	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", plain(localizer.Render(f.Msg)))
+		fmt.Fprintf(w, "! %s\n", stripMarkdown(localizer.Render(f.Msg)))
 	}
 	return nil
 }
 
 func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
-	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.Elapsed, status.Days)
+	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.DaysElapsed, status.DaysInMonth)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
 	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.status.header"}))
 	for _, c := range status.Categories {
@@ -601,12 +601,12 @@ func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	}
 	tw.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", plain(l.Render(f.Msg)))
+		fmt.Fprintf(w, "\n! %s", stripMarkdown(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)
 	}
 }
 
-// plain drops the bold markers from insight text.
-func plain(s string) string { return strings.ReplaceAll(s, "**", "") }
+// stripMarkdown drops the bold markers from insight text.
+func stripMarkdown(s string) string { return strings.ReplaceAll(s, "**", "") }

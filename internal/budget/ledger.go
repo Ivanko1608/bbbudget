@@ -58,11 +58,11 @@ const (
 	maxExternalID   = 200
 )
 
-// normalized is the input as it is stored: without surrounding spaces, and
+// trimmed is the input as it is stored: without surrounding spaces, and
 // with the currency code in upper case. Callers (people, models, pasted
 // statements) send "eur" or " Food", but the category, the currency and
 // the external id are looked up and compared exactly.
-func (in TransactionInput) normalized() TransactionInput {
+func (in TransactionInput) trimmed() TransactionInput {
 	in.Date = strings.TrimSpace(in.Date)
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
 	in.Category = strings.TrimSpace(in.Category)
@@ -72,11 +72,11 @@ func (in TransactionInput) normalized() TransactionInput {
 	return in
 }
 
-// Price checks a transaction against the budget and works out its value in
-// the base currency. The returned transaction still needs its ID, Batch,
+// NewTransaction checks a transaction input against the budget and works out its
+// value in the base currency. The returned transaction still needs its ID, Batch,
 // Source and LoggedAt. path prefixes issue paths ("transactions[2]").
-func (p *Plan) Price(in TransactionInput, path string) (Transaction, []Issue) {
-	in = in.normalized()
+func (p *Plan) NewTransaction(in TransactionInput, path string) (Transaction, []Issue) {
+	in = in.trimmed()
 	if in.Currency == "" {
 		in.Currency = p.Base.Code
 	}
@@ -151,24 +151,25 @@ func (p *Plan) baseValue(amount money.Money, category Category) money.Money {
 	return p.PayCost(amount, roundPay)
 }
 
-// SpendState says how a category's month compares with the plan.
-type SpendState string
+// SpendingState says how a category's month compares with the plan.
+type SpendingState string
 
 const (
-	StateOK SpendState = "ok"
+	StateOK SpendingState = "ok"
 	// StateOver is spending above plan.
-	StateOver SpendState = "over"
-	// StatePace is spending on course to go more than paceMargin over plan.
-	StatePace SpendState = "pace"
+	StateOver SpendingState = "over"
+	// StateProjectedOver is spending on course to go more than projectionTolerance over
+	// plan.
+	StateProjectedOver SpendingState = "projected_over"
 	// StateUnplanned is spending with nothing planned.
-	StateUnplanned SpendState = "unplanned"
+	StateUnplanned SpendingState = "unplanned"
 	// StateShort is income below plan once the month is over.
-	StateShort SpendState = "short"
+	StateShort SpendingState = "short"
 )
 
-// paceMargin is how far over plan the projected spending may go before it
-// is flagged: 10%.
-var paceMargin = big.NewRat(11, 10)
+// projectionTolerance is how far over plan the projected spending may go before
+// it is flagged: 10%.
+var projectionTolerance = big.NewRat(11, 10)
 
 // CategoryStatus is one category's plan and actuals for a month, in the
 // base currency.
@@ -183,41 +184,43 @@ type CategoryStatus struct {
 	Remaining money.Money `json:"remaining"`
 	// Projected is spending extrapolated to the end of the month at the
 	// pace so far; set for spending in the current month.
-	Projected *money.Money `json:"projected,omitempty"`
-	State     SpendState   `json:"state"`
+	Projected *money.Money  `json:"projected,omitempty"`
+	State     SpendingState `json:"state"`
 }
 
 // MonthStatus is plan versus actual for one month.
 type MonthStatus struct {
 	Month string `json:"month"`
-	// Days and Elapsed are the month's length and the days gone by
-	// (Elapsed = Days for a past month, 0 for a future one).
-	Days         int              `json:"days"`
-	Elapsed      int              `json:"elapsed"`
-	Categories   []CategoryStatus `json:"categories"`
-	Planned      money.Money      `json:"planned_spending"`
-	Spent        money.Money      `json:"spent"`
-	IncomePlan   money.Money      `json:"planned_income"`
-	Income       money.Money      `json:"income"`
-	Transactions int              `json:"transactions"`
+	// DaysInMonth and DaysElapsed are the month's length and the days gone by
+	// (DaysElapsed = DaysInMonth for a past month, 0 for a future one).
+	DaysInMonth      int              `json:"days_in_month"`
+	DaysElapsed      int              `json:"days_elapsed"`
+	Categories       []CategoryStatus `json:"categories"`
+	PlannedSpending  money.Money      `json:"planned_spending"`
+	Spent            money.Money      `json:"spent"`
+	PlannedIncome    money.Money      `json:"planned_income"`
+	Income           money.Money      `json:"income"`
+	TransactionCount int              `json:"transaction_count"`
 	// Flags are the things worth saying, as messages (see Localize).
 	Flags []Insight `json:"flags"`
 }
 
-// Status compares a month ("YYYY-MM") of the plan with the transactions
+// MonthStatus compares a month ("YYYY-MM") of the plan with the transactions
 // logged in it. today decides how far into the month we are.
-func (p *Plan) Status(month string, txs []Transaction, today time.Time) (*MonthStatus, error) {
+func (p *Plan) MonthStatus(
+	month string, transactions []Transaction, today time.Time,
+) (*MonthStatus, error) {
 	index, start, err := p.monthIndex(month)
 	if err != nil {
 		return nil, err
 	}
-	planned := p.plannedByCategory(index)
-	actual, count, err := actualByCategory(txs, month, p.Base)
+	planned := p.plannedTotals(index)
+	actual, count, err := actualTotals(transactions, month, p.Base)
 	if err != nil {
 		return nil, err
 	}
 	status := newMonthStatus(month, start, today, p.Base)
-	status.Transactions = count
+	status.TransactionCount = count
 	for _, c := range p.Doc.Categories {
 		if !planned.has(c.ID) && !actual.has(c.ID) {
 			continue
@@ -253,16 +256,16 @@ func newMonthStatus(month string, start, today time.Time, base money.Currency) *
 	days := start.AddDate(0, 1, -1).Day()
 	zero := money.Zero(base)
 	return &MonthStatus{
-		Month:   month,
-		Days:    days,
-		Elapsed: elapsedDays(start, days, today),
+		Month:       month,
+		DaysInMonth: days,
+		DaysElapsed: elapsedDays(start, days, today),
 		// Empty lists, not null: clients iterate over them.
-		Categories: []CategoryStatus{},
-		Flags:      []Insight{},
-		Planned:    zero,
-		Spent:      zero,
-		IncomePlan: zero,
-		Income:     zero,
+		Categories:      []CategoryStatus{},
+		Flags:           []Insight{},
+		PlannedSpending: zero,
+		Spent:           zero,
+		PlannedIncome:   zero,
+		Income:          zero,
 	}
 }
 
@@ -279,35 +282,35 @@ func elapsedDays(start time.Time, days int, today time.Time) int {
 	return day.Day()
 }
 
-// sums adds up amounts per category.
-type sums struct {
+// categoryTotals adds up amounts per category.
+type categoryTotals struct {
 	base       money.Currency
 	byCategory map[string]money.Money
 }
 
-func newSums(base money.Currency) sums {
-	return sums{base: base, byCategory: map[string]money.Money{}}
+func newCategoryTotals(base money.Currency) categoryTotals {
+	return categoryTotals{base: base, byCategory: map[string]money.Money{}}
 }
 
-func (s sums) add(category string, amount money.Money) {
+func (s categoryTotals) add(category string, amount money.Money) {
 	s.byCategory[category] = s.get(category).Add(amount)
 }
 
-func (s sums) has(category string) bool {
+func (s categoryTotals) has(category string) bool {
 	_, ok := s.byCategory[category]
 	return ok
 }
 
 // get is the sum for a category, zero if it has none.
-func (s sums) get(category string) money.Money {
+func (s categoryTotals) get(category string) money.Money {
 	if sum, ok := s.byCategory[category]; ok {
 		return sum
 	}
 	return money.Zero(s.base)
 }
 
-func (p *Plan) plannedByCategory(month int) sums {
-	planned := newSums(p.Base)
+func (p *Plan) plannedTotals(month int) categoryTotals {
+	planned := newCategoryTotals(p.Base)
 	for _, item := range p.Items {
 		if !item.Schedule.ActiveIn(month) {
 			continue
@@ -321,18 +324,20 @@ func (p *Plan) plannedByCategory(month int) sums {
 	return planned
 }
 
-// actualByCategory sums the base values of a month's transactions, and
+// actualTotals sums the base values of a month's transactions, and
 // counts them.
-func actualByCategory(txs []Transaction, month string, base money.Currency) (sums, int, error) {
-	actual := newSums(base)
+func actualTotals(
+	transactions []Transaction, month string, base money.Currency,
+) (categoryTotals, int, error) {
+	actual := newCategoryTotals(base)
 	count := 0
-	for _, t := range txs {
+	for _, t := range transactions {
 		if !strings.HasPrefix(t.Date, month+"-") {
 			continue
 		}
 		value, err := money.FromDecimal(t.Base, base)
 		if err != nil {
-			return sums{}, 0, err
+			return categoryTotals{}, 0, err
 		}
 		actual.add(t.Category, value)
 		count++
@@ -341,25 +346,25 @@ func actualByCategory(txs []Transaction, month string, base money.Currency) (sum
 }
 
 func (s *MonthStatus) addIncome(c Category, planned, actual money.Money) {
-	s.IncomePlan = s.IncomePlan.Add(planned)
+	s.PlannedIncome = s.PlannedIncome.Add(planned)
 	s.Income = s.Income.Add(actual)
 	row := newCategoryStatus(c, planned, actual)
-	monthOver := s.Elapsed == s.Days
-	if monthOver && actual.Cmp(planned) < 0 {
+	monthEnded := s.DaysElapsed == s.DaysInMonth
+	if monthEnded && actual.Cmp(planned) < 0 {
 		row.State = StateShort
-		s.flag(c, row)
+		s.addFlag(c, row)
 	}
 	s.Categories = append(s.Categories, row)
 }
 
 func (s *MonthStatus) addSpending(c Category, planned, actual money.Money) {
-	s.Planned = s.Planned.Add(planned)
+	s.PlannedSpending = s.PlannedSpending.Add(planned)
 	s.Spent = s.Spent.Add(actual)
 	row := newCategoryStatus(c, planned, actual)
-	row.Projected = s.projected(actual)
+	row.Projected = s.projectSpending(actual)
 	row.State = spendingState(planned, actual, row.Projected)
 	if row.State != StateOK {
-		s.flag(c, row)
+		s.addFlag(c, row)
 	}
 	s.Categories = append(s.Categories, row)
 }
@@ -376,31 +381,31 @@ func newCategoryStatus(c Category, planned, actual money.Money) CategoryStatus {
 	}
 }
 
-// projected is spending extrapolated to the end of the month, or nil when
-// the month hasn't started, is over, or has no spending yet.
-func (s *MonthStatus) projected(actual money.Money) *money.Money {
-	monthUnderway := s.Elapsed > 0 && s.Elapsed < s.Days
+// projectSpending is spending extrapolated to the end of the month, or nil
+// when the month hasn't started, is over, or has no spending yet.
+func (s *MonthStatus) projectSpending(actual money.Money) *money.Money {
+	monthUnderway := s.DaysElapsed > 0 && s.DaysElapsed < s.DaysInMonth
 	if !monthUnderway || !actual.IsPositive() {
 		return nil
 	}
-	atThisPace := actual.Mul(big.NewRat(int64(s.Days), int64(s.Elapsed)), money.Ceil)
+	atThisPace := actual.Mul(big.NewRat(int64(s.DaysInMonth), int64(s.DaysElapsed)), money.Ceil)
 	return &atThisPace
 }
 
-func spendingState(planned, actual money.Money, projected *money.Money) SpendState {
+func spendingState(planned, actual money.Money, projected *money.Money) SpendingState {
 	switch {
 	case !planned.IsPositive() && actual.IsPositive():
 		return StateUnplanned
 	case actual.Cmp(planned) > 0:
 		return StateOver
-	case projected != nil && projected.Cmp(planned.Mul(paceMargin, money.Floor)) > 0:
-		return StatePace
+	case projected != nil && projected.Cmp(planned.Mul(projectionTolerance, money.Floor)) > 0:
+		return StateProjectedOver
 	}
 	return StateOK
 }
 
-// flag adds the insight that says what row's state means.
-func (s *MonthStatus) flag(c Category, row CategoryStatus) {
+// addFlag adds the insight that says what row's state means.
+func (s *MonthStatus) addFlag(c Category, row CategoryStatus) {
 	a := args{
 		"category": i18n.Text(c.Label),
 		"actual":   i18n.Money(row.Actual),
@@ -410,7 +415,7 @@ func (s *MonthStatus) flag(c Category, row CategoryStatus) {
 	switch row.State {
 	case StateOver:
 		a["over"] = i18n.Money(row.Actual.Sub(row.Planned))
-	case StatePace:
+	case StateProjectedOver:
 		a["projected"] = i18n.Money(*row.Projected)
 		tone = ToneInfo
 	}
