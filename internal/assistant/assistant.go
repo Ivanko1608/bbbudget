@@ -49,10 +49,10 @@ type Turn struct {
 // Conversation is one chat with a model. Each provider keeps the history in
 // its own native form, so nothing the API needs back is lost in translation.
 type Conversation interface {
-	// Say sends the person's message.
-	Say(ctx context.Context, text string) (Turn, error)
-	// Answer sends the results of the calls in the previous turn.
-	Answer(ctx context.Context, results []ToolResult) (Turn, error)
+	// SendText sends the person's message.
+	SendText(ctx context.Context, text string) (Turn, error)
+	// SendResults sends the results of the calls in the previous turn.
+	SendResults(ctx context.Context, results []ToolResult) (Turn, error)
 }
 
 // Provider starts conversations with one model.
@@ -149,7 +149,7 @@ func (a *Assistant) Reply(ctx context.Context, req Request, emit func(Event)) (s
 	// One message at a time per conversation: providers keep a single history.
 	current.busy.Lock()
 	defer current.busy.Unlock()
-	turn, err := current.conversation.Say(ctx, message)
+	turn, err := current.conversation.SendText(ctx, message)
 	if err != nil {
 		return current.id, err
 	}
@@ -169,9 +169,9 @@ func (c *chat) runToolLoop(ctx context.Context, turn Turn, emit func(Event)) err
 		if round == MaxToolRounds {
 			return ErrTooManyToolRounds
 		}
-		results := c.tools.run(ctx, turn.Calls, emit)
+		results := c.tools.runCalls(ctx, turn.Calls, emit)
 		var err error
-		turn, err = c.conversation.Answer(ctx, results)
+		turn, err = c.conversation.SendResults(ctx, results)
 		if err != nil {
 			return err
 		}

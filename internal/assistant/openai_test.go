@@ -63,7 +63,7 @@ func startOpenAI(t *testing.T, replies ...string) (Conversation, *modelServer) {
 func TestOpenAICompatibleSendsTheModelAndTheTools(t *testing.T) {
 	conversation, server := startOpenAI(t, saysRent)
 
-	if _, err := conversation.Say(context.Background(), "biggest cost?"); err != nil {
+	if _, err := conversation.SendText(context.Background(), "biggest cost?"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +79,7 @@ func TestOpenAICompatibleSendsTheModelAndTheTools(t *testing.T) {
 func TestOpenAICompatibleSendsTheAPIKey(t *testing.T) {
 	conversation, server := startOpenAI(t, saysRent)
 
-	if _, err := conversation.Say(context.Background(), "hi"); err != nil {
+	if _, err := conversation.SendText(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,7 +91,7 @@ func TestOpenAICompatibleSendsTheAPIKey(t *testing.T) {
 func TestOpenAICompatibleReturnsTheToolCalls(t *testing.T) {
 	conversation, _ := startOpenAI(t, callsGetItems)
 
-	turn, err := conversation.Say(context.Background(), "biggest cost?")
+	turn, err := conversation.SendText(context.Background(), "biggest cost?")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +110,13 @@ func TestOpenAICompatibleReturnsTheToolCalls(t *testing.T) {
 func TestOpenAICompatibleResultsAnswerTheirCall(t *testing.T) {
 	conversation, server := startOpenAI(t, callsGetItems, saysRent)
 	ctx := context.Background()
-	turn, err := conversation.Say(ctx, "biggest cost?")
+	turn, err := conversation.SendText(ctx, "biggest cost?")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	answer, err := conversation.Answer(ctx, []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}})
+	results := []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}}
+	answer, err := conversation.SendResults(ctx, results)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,11 +134,11 @@ func TestOpenAICompatibleResultsAnswerTheirCall(t *testing.T) {
 func TestOpenAICompatibleForgetsAMessageTheServerFailed(t *testing.T) {
 	conversation, server := startOpenAI(t, failure, saysRent)
 	ctx := context.Background()
-	if _, err := conversation.Say(ctx, "hello"); err == nil {
+	if _, err := conversation.SendText(ctx, "hello"); err == nil {
 		t.Fatal("a failed request was not an error")
 	}
 
-	if _, err := conversation.Say(ctx, "hello"); err != nil {
+	if _, err := conversation.SendText(ctx, "hello"); err != nil {
 		t.Fatal(err)
 	}
 

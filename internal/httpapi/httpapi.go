@@ -67,10 +67,10 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
 	mux.HandleFunc("GET /api/budgets/{id}/history", s.history)
-	mux.HandleFunc("GET /api/budgets/{id}/transactions", s.listTx)
-	mux.HandleFunc("POST /api/budgets/{id}/transactions", s.logTx)
-	mux.HandleFunc("PUT /api/budgets/{id}/transactions/{tid}", s.updateTx)
-	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTx)
+	mux.HandleFunc("GET /api/budgets/{id}/transactions", s.listTransactions)
+	mux.HandleFunc("POST /api/budgets/{id}/transactions", s.logTransactions)
+	mux.HandleFunc("PUT /api/budgets/{id}/transactions/{tid}", s.updateTransaction)
+	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTransactions)
 	mux.HandleFunc("DELETE /api/budgets/{id}/transactions", s.deleteBatch)
 	mux.HandleFunc("GET /api/budgets/{id}/status", s.status)
 	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
@@ -386,9 +386,9 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h)
 }
 
-func (s *server) listTx(w http.ResponseWriter, r *http.Request) {
+func (s *server) listTransactions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := app.TxFilter{
+	f := app.TransactionFilter{
 		From:     q.Get("from"),
 		To:       q.Get("to"),
 		Category: q.Get("category"),
@@ -411,7 +411,7 @@ func (s *server) listTx(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, txs)
 }
 
-func (s *server) logTx(w http.ResponseWriter, r *http.Request) {
+func (s *server) logTransactions(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Transactions []budget.TransactionInput `json:"transactions"`
 	}
@@ -427,8 +427,8 @@ func (s *server) logTx(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
-func (s *server) updateTx(w http.ResponseWriter, r *http.Request) {
-	var p app.TxPatch
+func (s *server) updateTransaction(w http.ResponseWriter, r *http.Request) {
+	var p app.TransactionPatch
 	if err := decode(r, &p); err != nil {
 		s.fail(w, r, err)
 		return
@@ -441,14 +441,14 @@ func (s *server) updateTx(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
-func (s *server) deleteTx(w http.ResponseWriter, r *http.Request) {
+func (s *server) deleteTransactions(w http.ResponseWriter, r *http.Request) {
 	ids := []string{r.PathValue("tid")}
 	removed, err := s.app.DeleteTransactions(r.Context(), r.PathValue("id"), ids)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, removedResult{Removed: removed})
+	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
 }
 
 // deleteBatch removes everything one log call added (/transactions?batch=b3).
@@ -459,12 +459,12 @@ func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, removedResult{Removed: removed})
+	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
 }
 
-// removedResult is what deleting transactions answers.
-type removedResult struct {
-	Removed int `json:"removed"`
+// deletedResult is what deleting transactions answers.
+type deletedResult struct {
+	Deleted int `json:"deleted"`
 }
 
 func (s *server) status(w http.ResponseWriter, r *http.Request) {
@@ -573,7 +573,7 @@ func (s *server) settingsView(st settings.Settings) settingsView {
 		AssistantModel:    st.AssistantModel,
 		AssistantURL:      st.AssistantURL,
 		AssistantKeySet:   st.AssistantAPIKey != "",
-		AssistantStatus:   assistant.StatusOf(st),
+		AssistantStatus:   assistant.StatusFromSettings(st),
 	}
 }
 

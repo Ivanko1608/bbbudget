@@ -132,7 +132,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			Static:    web.FS(),
 			Log:       log,
 			Paths:     paths,
-			Assistant: assistant.New(a, assistant.Configured(a)),
+			Assistant: assistant.New(a, assistant.ProviderFromSettings(a)),
 		}
 		go a.RunAutoRefresh(ctx, log)
 		if *hosts != "" {
@@ -416,7 +416,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		key := setOrNot(s.CoinGeckoAPIKey)
+		key := describeSecret(s.CoinGeckoAPIKey)
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		locale := s.Locale
 		if locale == "" {
@@ -532,15 +532,15 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 
 // printAssistantSettings shows whether a key is set, never the key.
 func printAssistantSettings(w io.Writer, s settings.Settings) {
-	status := assistant.StatusOf(s)
+	status := assistant.StatusFromSettings(s)
 	ready := cmp.Or(status.Problem, "ready")
 	fmt.Fprintf(w, "assistant_provider\t%s\t%s\n", s.AssistantProvider, ready)
 	fmt.Fprintf(w, "assistant_model\t%s\n", cmp.Or(status.Model, s.AssistantModel))
 	fmt.Fprintf(w, "assistant_url\t%s\n", s.AssistantURL)
-	fmt.Fprintf(w, "assistant_api_key\t%s\n", setOrNot(s.AssistantAPIKey))
+	fmt.Fprintf(w, "assistant_api_key\t%s\n", describeSecret(s.AssistantAPIKey))
 }
 
-func setOrNot(secret string) string {
+func describeSecret(secret string) string {
 	if secret == "" {
 		return "not set"
 	}
@@ -620,13 +620,13 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	}
 	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", plain(localizer.Render(f.Msg)))
+		fmt.Fprintf(w, "! %s\n", stripMarkdown(localizer.Render(f.Msg)))
 	}
 	return nil
 }
 
 func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
-	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.Elapsed, status.Days)
+	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.DaysElapsed, status.DaysInMonth)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
 	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.status.header"}))
 	for _, c := range status.Categories {
@@ -635,12 +635,12 @@ func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	}
 	tw.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", plain(l.Render(f.Msg)))
+		fmt.Fprintf(w, "\n! %s", stripMarkdown(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)
 	}
 }
 
-// plain drops the bold markers from insight text.
-func plain(s string) string { return strings.ReplaceAll(s, "**", "") }
+// stripMarkdown drops the bold markers from insight text.
+func stripMarkdown(s string) string { return strings.ReplaceAll(s, "**", "") }

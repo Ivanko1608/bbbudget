@@ -2,9 +2,9 @@ package assistant
 
 import "fmt"
 
-// inTheApp frames the chat. The MCP server's own instructions, appended to
+// baseSystemPrompt frames the chat. The MCP server's own instructions, appended to
 // it, explain the tools; this adds what is specific to chatting in the app.
-const inTheApp = `You are the assistant inside bbbudget, a household budget planner,
+const baseSystemPrompt = `You are the assistant inside bbbudget, a household budget planner,
 talking to the person whose budget it is, in the app itself. They can see the budget on the
 page next to this chat, and it updates when you change something.
 
@@ -17,7 +17,7 @@ ambiguous (which item, which category), ask one short question.
 Answer in the language the person writes in. The budget you are working on is %q.`
 
 func systemPrompt(budget, toolInstructions string) string {
-	prompt := fmt.Sprintf(inTheApp, budget)
+	prompt := fmt.Sprintf(baseSystemPrompt, budget)
 	if toolInstructions == "" {
 		return prompt
 	}

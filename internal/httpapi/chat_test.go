@@ -22,11 +22,11 @@ func (greeter) Start(string, []assistant.Tool) assistant.Conversation { return g
 
 type greeting struct{}
 
-func (greeting) Say(context.Context, string) (assistant.Turn, error) {
+func (greeting) SendText(context.Context, string) (assistant.Turn, error) {
 	return assistant.Turn{Text: "Hello."}, nil
 }
 
-func (greeting) Answer(context.Context, []assistant.ToolResult) (assistant.Turn, error) {
+func (greeting) SendResults(context.Context, []assistant.ToolResult) (assistant.Turn, error) {
 	return assistant.Turn{}, nil
 }
 

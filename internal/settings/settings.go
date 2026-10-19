@@ -126,32 +126,32 @@ func (s Settings) Validate() error {
 	if s.Locale != LocaleAuto && s.Locale != "" && !localeRe.MatchString(s.Locale) {
 		errs = append(errs, errors.New(`locale must be "auto" or a language tag such as "en" or "de"`))
 	}
-	if !isToken(s.CoinGeckoAPIKey, maxAPIKey) {
+	if !isValidToken(s.CoinGeckoAPIKey, maxAPIKey) {
 		errs = append(errs, errors.New("coingecko_api_key must be a single token without spaces"))
 	}
-	return errors.Join(append(errs, s.assistantErrors()...)...)
+	return errors.Join(append(errs, s.validateAssistant()...)...)
 }
 
-func (s Settings) assistantErrors() []error {
+func (s Settings) validateAssistant() []error {
 	var errs []error
 	if !slices.Contains(AssistantProviders, s.AssistantProvider) {
 		errs = append(errs,
 			errors.New("assistant_provider must be off, anthropic or openai-compatible"))
 	}
-	if !isToken(s.AssistantModel, maxModelName) {
+	if !isValidToken(s.AssistantModel, maxModelName) {
 		errs = append(errs, errors.New("assistant_model must be a single name without spaces"))
 	}
 	if s.AssistantURL != "" && !isWebURL(s.AssistantURL) {
 		errs = append(errs, errors.New("assistant_url must be an http or https URL"))
 	}
-	if !isToken(s.AssistantAPIKey, maxAPIKey) {
+	if !isValidToken(s.AssistantAPIKey, maxAPIKey) {
 		errs = append(errs, errors.New("assistant_api_key must be a single token without spaces"))
 	}
 	return errs
 }
 
-// isToken reports whether text is empty or one word of at most limit bytes.
-func isToken(text string, limit int) bool {
+// isValidToken reports whether text is empty or one word of at most limit bytes.
+func isValidToken(text string, limit int) bool {
 	return len(text) <= limit && !strings.ContainsAny(text, " \t\r\n")
 }
 

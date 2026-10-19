@@ -9,23 +9,23 @@ import (
 	"bbbudget/internal/settings"
 )
 
-// ErrOff means the assistant is turned off in the settings.
-var ErrOff = errors.New("the assistant is off; turn it on in Settings")
+// ErrAssistantOff means the assistant is turned off in the settings.
+var ErrAssistantOff = errors.New("the assistant is off; turn it on in Settings")
 
-// FromSettings builds the provider the settings choose.
-func FromSettings(s settings.Settings) (Provider, error) {
+// NewProvider builds the provider the settings choose.
+func NewProvider(s settings.Settings) (Provider, error) {
 	switch s.AssistantProvider {
 	case settings.AssistantAnthropic:
 		config := AnthropicConfig{APIKey: s.AssistantAPIKey, Model: s.AssistantModel}
 		return NewAnthropic(config), nil
 	case settings.AssistantOpenAICompatible:
-		return openAICompatibleFrom(s)
+		return newOpenAICompatibleProvider(s)
 	default:
-		return nil, ErrOff
+		return nil, ErrAssistantOff
 	}
 }
 
-func openAICompatibleFrom(s settings.Settings) (Provider, error) {
+func newOpenAICompatibleProvider(s settings.Settings) (Provider, error) {
 	provider, err := NewOpenAICompatible(OpenAICompatibleConfig{
 		BaseURL: s.AssistantURL,
 		Model:   s.AssistantModel,
@@ -37,15 +37,15 @@ func openAICompatibleFrom(s settings.Settings) (Provider, error) {
 	return provider, nil
 }
 
-// Configured returns the provider the app's settings choose, reading them
-// afresh on each call.
-func Configured(a *app.App) func() (Provider, error) {
+// ProviderFromSettings returns the provider the app's settings choose,
+// reading them afresh on each call.
+func ProviderFromSettings(a *app.App) func() (Provider, error) {
 	return func() (Provider, error) {
 		current, err := a.Settings()
 		if err != nil {
 			return nil, err
 		}
-		return FromSettings(current)
+		return NewProvider(current)
 	}
 }
 
@@ -62,9 +62,9 @@ type Status struct {
 	Problem string `json:"problem,omitempty"`
 }
 
-// StatusOf reports what FromSettings would build.
-func StatusOf(s settings.Settings) Status {
-	provider, err := FromSettings(s)
+// StatusFromSettings reports what NewProvider would build.
+func StatusFromSettings(s settings.Settings) Status {
+	provider, err := NewProvider(s)
 	if err != nil {
 		return Status{Provider: s.AssistantProvider, Problem: err.Error()}
 	}

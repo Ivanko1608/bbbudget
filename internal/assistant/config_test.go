@@ -43,7 +43,7 @@ func TestTheSettingsChooseTheProvider(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			provider, err := FromSettings(c.settings)
+			provider, err := NewProvider(c.settings)
 
 			if err != nil {
 				t.Fatal(err)
@@ -64,7 +64,7 @@ func TestProvidersTheSettingsCantBuild(t *testing.T) {
 		settings settings.Settings
 		want     error
 	}{
-		{"off", settings.Defaults(), ErrOff},
+		{"off", settings.Defaults(), ErrAssistantOff},
 		{
 			"a server without a model",
 			assistantSettings(settings.AssistantOpenAICompatible, "", ""),
@@ -73,7 +73,7 @@ func TestProvidersTheSettingsCantBuild(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			provider, err := FromSettings(c.settings)
+			provider, err := NewProvider(c.settings)
 
 			if !errors.Is(err, c.want) {
 				t.Errorf("error: %v", err)
@@ -106,7 +106,7 @@ func TestStatusSaysWhetherTheModelRunsOnThisMachine(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			status := StatusOf(c.settings)
+			status := StatusFromSettings(c.settings)
 
 			if status.OnThisMachine != c.want {
 				t.Errorf("on this machine: %v", status.OnThisMachine)
@@ -116,12 +116,12 @@ func TestStatusSaysWhetherTheModelRunsOnThisMachine(t *testing.T) {
 }
 
 func TestStatusOfAnAssistantThatIsntReady(t *testing.T) {
-	status := StatusOf(settings.Defaults())
+	status := StatusFromSettings(settings.Defaults())
 
 	if status.Ready {
 		t.Error("an assistant that is off is ready")
 	}
-	if status.Problem != ErrOff.Error() {
+	if status.Problem != ErrAssistantOff.Error() {
 		t.Errorf("problem: %q", status.Problem)
 	}
 }
