@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -246,5 +247,40 @@ func TestWriteResponsesStaySmall(t *testing.T) {
 	}
 	if len(overview) > 8000 {
 		t.Errorf("the overview of a 600-month budget is %d bytes", len(overview))
+	}
+}
+
+func TestChangeOutcomeKeepsItsJSONPlace(t *testing.T) {
+	outcome := changeOutcome{Change: "c", Currency: "EUR", Effect: effect{None: true}}
+	tests := map[string]struct {
+		result any
+		want   string
+	}{
+		"change result": {
+			result: changeResult{
+				Budget: "b", Revision: 3, Saved: true, changeOutcome: outcome, Hint: "h",
+			},
+			want: `{"budget":"b","revision":3,"saved":true,"change":"c",` +
+				`"currency":"EUR","effect":{"none":true},"hint":"h"}`,
+		},
+		"whats new result": {
+			result: whatsNewResult{
+				Budget: "b", FromRevision: 1, Revision: 3, changeOutcome: outcome,
+			},
+			want: `{"budget":"b","from_revision":1,"revision":3,"changes_by_others":null,` +
+				`"change":"c","currency":"EUR","effect":{"none":true}}`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := json.Marshal(test.result)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(got) != test.want {
+				t.Errorf("got  %s\nwant %s", got, test.want)
+			}
+		})
 	}
 }

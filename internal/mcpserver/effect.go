@@ -32,18 +32,23 @@ type WriteRef struct {
 	Detail Detail `json:"detail,omitempty" jsonschema:"what to return: omit for what changed (short), or \"full\" for the whole updated budget"`
 }
 
+// changeOutcome is what a change was and what it did to the outcome.
+type changeOutcome struct {
+	// Change is what was edited, in the user's language.
+	Change string `json:"change"`
+	// Currency is the base currency of the amounts in Effect.
+	Currency string `json:"currency"`
+	Effect   effect `json:"effect"`
+}
+
 // changeResult is what a write or what_if returns by default: what the
 // change was and what it did to the outcome, not the whole budget again.
 type changeResult struct {
 	Budget   string `json:"budget"`
 	Revision int64  `json:"revision,omitempty"`
 	Saved    bool   `json:"saved"`
-	// Change is what was edited, in the user's language.
-	Change string `json:"change"`
-	// Currency is the base currency of the amounts in Effect.
-	Currency string `json:"currency"`
-	Effect   effect `json:"effect"`
-	Hint     string `json:"hint"`
+	changeOutcome
+	Hint string `json:"hint"`
 }
 
 const changeHint = `This is what changed, not the whole budget. get_budget shows any ` +
@@ -101,18 +106,17 @@ const goalAlreadyMet goalReach = "already met"
 // afterReport, in the user's language.
 func (h *handlers) changeOf(
 	before, after budget.Budget, afterReport *budget.Report,
-) (changeResult, error) {
+) (changeOutcome, error) {
 	beforeReport, err := budget.Analyze(before)
 	if err != nil {
-		return changeResult{}, err
+		return changeOutcome{}, err
 	}
 	reader := h.localizer()
 	differences := budget.Differences(before, after)
-	return changeResult{
+	return changeOutcome{
 		Change:   reader.Render(budget.DifferencesMsg(differences)),
 		Currency: afterReport.BaseCurrency,
 		Effect:   newEffect(budget.EffectOf(beforeReport, afterReport), reader),
-		Hint:     changeHint,
 	}, nil
 }
 
@@ -128,14 +132,17 @@ func (h *handlers) written(w WriteRef, v *app.View, err error) (any, error) {
 	if w.Detail == DetailFull || nothingSaved {
 		return h.sum(v, nil)
 	}
-	result, err := h.changeOf(*v.Before, v.Budget, v.Report)
+	outcome, err := h.changeOf(*v.Before, v.Budget, v.Report)
 	if err != nil {
 		return nil, err
 	}
-	result.Budget = v.ID
-	result.Revision = v.Revision
-	result.Saved = true
-	return result, nil
+	return changeResult{
+		Budget:        v.ID,
+		Revision:      v.Revision,
+		Saved:         true,
+		changeOutcome: outcome,
+		Hint:          changeHint,
+	}, nil
 }
 
 // previewed answers what_if: what the ops would change, or the whole
@@ -151,12 +158,11 @@ func (h *handlers) previewed(w WriteRef, v *app.View) (any, error) {
 		whole.Revision = 0
 		return whole, nil
 	}
-	result, err := h.changeOf(*v.Before, v.Budget, v.Report)
+	outcome, err := h.changeOf(*v.Before, v.Budget, v.Report)
 	if err != nil {
 		return nil, err
 	}
-	result.Budget = v.ID
-	return result, nil
+	return changeResult{Budget: v.ID, changeOutcome: outcome, Hint: changeHint}, nil
 }
 
 func newEffect(e budget.Effect, reader *i18n.Localizer) effect {
