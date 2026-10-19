@@ -12,7 +12,7 @@ type chat struct {
 	id           string
 	budget       string
 	conversation Conversation
-	tools        *toolbox
+	tools        *mcpTools
 	lastUsed     time.Time
 	busy         sync.Mutex
 }

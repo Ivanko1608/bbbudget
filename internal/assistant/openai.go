@@ -148,9 +148,9 @@ type openAIConversation struct {
 	messages []openAIMessage
 }
 
-// Say forgets the message when the server fails, so the person can send it
+// SendText forgets the message when the server fails, so the person can send it
 // again.
-func (c *openAIConversation) Say(ctx context.Context, text string) (Turn, error) {
+func (c *openAIConversation) SendText(ctx context.Context, text string) (Turn, error) {
 	kept := len(c.messages)
 	c.messages = append(c.messages, openAIMessage{Role: roleUser, Content: text})
 	turn, err := c.complete(ctx)
@@ -160,16 +160,18 @@ func (c *openAIConversation) Say(ctx context.Context, text string) (Turn, error)
 	return turn, err
 }
 
-// Answer keeps the results even when the server fails: the calls they
+// SendResults keeps the results even when the server fails: the calls they
 // answer have already happened.
-func (c *openAIConversation) Answer(ctx context.Context, results []ToolResult) (Turn, error) {
+func (c *openAIConversation) SendResults(
+	ctx context.Context, results []ToolResult,
+) (Turn, error) {
 	for _, result := range results {
-		c.messages = append(c.messages, toolMessage(result))
+		c.messages = append(c.messages, toToolMessage(result))
 	}
 	return c.complete(ctx)
 }
 
-func toolMessage(result ToolResult) openAIMessage {
+func toToolMessage(result ToolResult) openAIMessage {
 	content := result.Content
 	if result.IsError {
 		content = "Error: " + content
@@ -195,11 +197,11 @@ func (c *openAIConversation) complete(ctx context.Context) (Turn, error) {
 
 // assignMissingCallIDs gives an id to each call the server left without one,
 // as some do, so the results can answer it. The ids are unique within the
-// conversation because position is the index of the reply in it.
-func assignMissingCallIDs(calls []openAIToolCall, position int) {
+// conversation because replyIndex is the index of the reply in it.
+func assignMissingCallIDs(calls []openAIToolCall, replyIndex int) {
 	for i := range calls {
 		if calls[i].ID == "" {
-			calls[i].ID = fmt.Sprintf("call_%d_%d", position, i)
+			calls[i].ID = fmt.Sprintf("call_%d_%d", replyIndex, i)
 		}
 	}
 }

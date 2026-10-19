@@ -85,7 +85,7 @@ func startAnthropic(t *testing.T, replies ...string) (Conversation, *messagesSer
 
 func say(t *testing.T, conversation Conversation, text string) Turn {
 	t.Helper()
-	turn, err := conversation.Say(context.Background(), text)
+	turn, err := conversation.SendText(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestAnthropicResultsAnswerTheirCall(t *testing.T) {
 	turn := say(t, conversation, "biggest cost?")
 
 	results := []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}}
-	answer, err := conversation.Answer(context.Background(), results)
+	answer, err := conversation.SendResults(context.Background(), results)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestAnthropicSendsThinkingBackUnchanged(t *testing.T) {
 	turn := say(t, conversation, "biggest cost?")
 
 	results := []ToolResult{{CallID: turn.Calls[0].ID, Content: "{}"}}
-	if _, err := conversation.Answer(context.Background(), results); err != nil {
+	if _, err := conversation.SendResults(context.Background(), results); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +212,7 @@ func TestAnthropicSendsThinkingBackUnchanged(t *testing.T) {
 func TestAnthropicRejectedCredentialsSayWhatToDo(t *testing.T) {
 	conversation, _ := startAnthropic(t, rejectedKey)
 
-	_, err := conversation.Say(context.Background(), "hello")
+	_, err := conversation.SendText(context.Background(), "hello")
 
 	if err == nil || !strings.Contains(err.Error(), "check the API key") {
 		t.Errorf("error: %v", err)
@@ -221,7 +221,7 @@ func TestAnthropicRejectedCredentialsSayWhatToDo(t *testing.T) {
 
 func TestAnthropicForgetsAMessageTheAPIFailed(t *testing.T) {
 	conversation, server := startAnthropic(t, rejectedKey, answersRent)
-	if _, err := conversation.Say(context.Background(), "hello"); err == nil {
+	if _, err := conversation.SendText(context.Background(), "hello"); err == nil {
 		t.Fatal("a failed request was not an error")
 	}
 
@@ -240,7 +240,7 @@ func TestAnthropicStopReasons(t *testing.T) {
 	}{
 		{"refusal without text", stoppedFor("refusal", ""), refusalText},
 		{"refusal with text", stoppedFor("refusal", "No."), "No."},
-		{"cut off", stoppedFor("max_tokens", "Rent is"), "Rent is" + cutOffNote},
+		{"cut off", stoppedFor("max_tokens", "Rent is"), "Rent is" + truncatedNote},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

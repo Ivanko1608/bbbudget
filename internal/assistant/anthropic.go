@@ -24,8 +24,8 @@ const AnthropicName = "anthropic"
 // needing streaming.
 const maxAnswerTokens = 16000
 
-// cutOffNote ends an answer the token limit cut short.
-const cutOffNote = "\n\n(The answer was cut off.)"
+// truncatedNote ends an answer the token limit cut short.
+const truncatedNote = "\n\n(The answer was cut off.)"
 
 // refusalText stands in for an answer the model declined to give.
 const refusalText = "I can't help with that request."
@@ -92,7 +92,7 @@ func toInputSchema(schema any) anthropic.BetaToolInputSchemaParam {
 		case "properties":
 			param.Properties = value
 		case "required":
-			param.Required = requiredNames(value)
+			param.Required = toStringSlice(value)
 		default:
 			param.ExtraFields[key] = value
 		}
@@ -100,7 +100,7 @@ func toInputSchema(schema any) anthropic.BetaToolInputSchemaParam {
 	return param
 }
 
-func requiredNames(value any) []string {
+func toStringSlice(value any) []string {
 	listed, _ := value.([]any)
 	var names []string
 	for _, entry := range listed {
@@ -118,9 +118,9 @@ type anthropicConversation struct {
 	messages []anthropic.BetaMessageParam
 }
 
-// Say forgets the message when the request fails, so the person can send it
-// again.
-func (c *anthropicConversation) Say(ctx context.Context, text string) (Turn, error) {
+// SendText forgets the message when the request fails, so the person can send
+// it again.
+func (c *anthropicConversation) SendText(ctx context.Context, text string) (Turn, error) {
 	kept := len(c.messages)
 	message := anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(text))
 	c.messages = append(c.messages, message)
@@ -131,10 +131,12 @@ func (c *anthropicConversation) Say(ctx context.Context, text string) (Turn, err
 	return turn, err
 }
 
-// Answer keeps the results even when the request fails: the calls they
+// SendResults keeps the results even when the request fails: the calls they
 // answer have already happened, and the API joins them with the person's
 // next message.
-func (c *anthropicConversation) Answer(ctx context.Context, results []ToolResult) (Turn, error) {
+func (c *anthropicConversation) SendResults(
+	ctx context.Context, results []ToolResult,
+) (Turn, error) {
 	blocks := make([]anthropic.BetaContentBlockParamUnion, 0, len(results))
 	for _, result := range results {
 		block := anthropic.NewBetaToolResultBlock(result.CallID, result.Content, result.IsError)
@@ -147,9 +149,9 @@ func (c *anthropicConversation) Answer(ctx context.Context, results []ToolResult
 }
 
 func (c *anthropicConversation) complete(ctx context.Context) (Turn, error) {
-	response, err := c.provider.client.Beta.Messages.New(ctx, c.request())
+	response, err := c.provider.client.Beta.Messages.New(ctx, c.buildRequest())
 	if err != nil {
-		return Turn{}, explainAnthropicError(err)
+		return Turn{}, describeAnthropicError(err)
 	}
 	// The response goes back into the history unchanged, thinking blocks
 	// included: the API needs them on the next request.
@@ -157,7 +159,7 @@ func (c *anthropicConversation) complete(ctx context.Context) (Turn, error) {
 	return turnFromAnthropic(response), nil
 }
 
-func (c *anthropicConversation) request() anthropic.BetaMessageNewParams {
+func (c *anthropicConversation) buildRequest() anthropic.BetaMessageNewParams {
 	return anthropic.BetaMessageNewParams{
 		Model:     anthropic.Model(c.provider.model),
 		MaxTokens: maxAnswerTokens,
@@ -201,15 +203,15 @@ func turnFromAnthropic(response *anthropic.BetaMessage) Turn {
 		// Cut-off calls stay: each needs a result, and an input cut short
 		// goes back to the model as an error.
 		if len(turn.Calls) == 0 {
-			turn.Text += cutOffNote
+			turn.Text += truncatedNote
 		}
 	}
 	return turn
 }
 
-// explainAnthropicError says what the person can do about the errors they
+// describeAnthropicError says what the person can do about the errors they
 // can fix themselves.
-func explainAnthropicError(err error) error {
+func describeAnthropicError(err error) error {
 	var apiErr *anthropic.Error
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("can't reach the Anthropic API: %w", err)
