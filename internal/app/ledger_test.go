@@ -68,6 +68,39 @@ func TestLoggedTransactionsShareABatch(t *testing.T) {
 	}
 }
 
+func TestASecondCallStartsTheNextBatch(t *testing.T) {
+	a := testApp(t)
+	mustLog(t, a, statement...)
+
+	result := mustLog(t, a, spent("2026-10-05", "12", "home"))
+
+	if result.Batch != "b2" {
+		t.Errorf("batch: %s", result.Batch)
+	}
+	if id := result.Logged[0].ID; id != "t3" {
+		t.Errorf("id: %s", id)
+	}
+}
+
+func TestLoggedInputIsStoredNormalized(t *testing.T) {
+	a := testApp(t)
+	messy := statementRow(" 2026-10-03 ", "40", " usd", " home ", " stmt-1 ")
+
+	logged := mustLog(t, a, messy).Logged[0]
+
+	cases := []struct{ field, got, want string }{
+		{"date", logged.Date, "2026-10-03"},
+		{"currency", logged.Currency, "USD"},
+		{"category", logged.Category, "home"},
+		{"external id", logged.ExternalID, "stmt-1"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: got %q, want %q", c.field, c.got, c.want)
+		}
+	}
+}
+
 func TestAForeignAmountIsValuedLikeAPlannedCost(t *testing.T) {
 	a := testApp(t)
 
