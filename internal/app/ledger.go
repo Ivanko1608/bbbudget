@@ -15,6 +15,8 @@ import (
 
 // LogResult says what LogTransactions did.
 type LogResult struct {
+	// Batch is the id these transactions share, such as "b3". DeleteBatch
+	// with it takes back the whole call, for example an imported statement.
 	Batch  string               `json:"batch"`
 	Logged []budget.Transaction `json:"logged"`
 	// Skipped lists external ids already in the ledger (or repeated within
@@ -62,9 +64,9 @@ func newBatch(
 	plan *budget.Plan, existing []budget.Transaction, inputs []budget.TransactionInput, stamp logStamp,
 ) (LogResult, error) {
 	seen := externalIDs(existing)
-	next := nextNumber(existing, transactionID)
-	batch := "b" + strconv.Itoa(nextNumber(existing, batchID))
-	result := LogResult{Batch: batch, Logged: []budget.Transaction{}}
+	transactionIDs := sequenceAfter(transactionPrefix, idsOf(existing))
+	batchIDs := sequenceAfter(batchPrefix, batchesOf(existing))
+	result := LogResult{Batch: batchIDs.take(), Logged: []budget.Transaction{}}
 	var issues []budget.Issue
 	for i, in := range inputs {
 		t, problems := plan.Price(in, fmt.Sprintf("transactions[%d]", i))
@@ -77,11 +79,10 @@ func newBatch(
 			continue
 		}
 		seen[t.ExternalID] = true
-		t.ID = "t" + strconv.Itoa(next)
+		t.ID = transactionIDs.take()
 		t.Batch = result.Batch
 		t.Source = stamp.source
 		t.LoggedAt = stamp.at
-		next++
 		result.Logged = append(result.Logged, t)
 	}
 	if len(issues) > 0 {
@@ -100,18 +101,50 @@ func externalIDs(txs []budget.Transaction) map[string]bool {
 	return seen
 }
 
-func transactionID(t budget.Transaction) string { return strings.TrimPrefix(t.ID, "t") }
-func batchID(t budget.Transaction) string       { return strings.TrimPrefix(t.Batch, "b") }
+// Transaction ids are "t1", "t2", …; batch ids are "b1", "b2", ….
+const (
+	transactionPrefix = "t"
+	batchPrefix       = "b"
+)
 
-// nextNumber is one more than the highest number number(t) gives.
-func nextNumber(txs []budget.Transaction, number func(budget.Transaction) string) int {
+// sequence hands out ids made of a prefix and a counter.
+type sequence struct {
+	prefix string
+	next   int
+}
+
+// sequenceAfter starts after the highest id already taken.
+func sequenceAfter(prefix string, taken []string) sequence {
 	highest := 0
-	for _, t := range txs {
-		if n, err := strconv.Atoi(number(t)); err == nil {
-			highest = max(highest, n)
+	for _, id := range taken {
+		number, err := strconv.Atoi(strings.TrimPrefix(id, prefix))
+		if err == nil {
+			highest = max(highest, number)
 		}
 	}
-	return highest + 1
+	return sequence{prefix: prefix, next: highest + 1}
+}
+
+func (s *sequence) take() string {
+	id := s.prefix + strconv.Itoa(s.next)
+	s.next++
+	return id
+}
+
+func idsOf(txs []budget.Transaction) []string {
+	ids := make([]string, 0, len(txs))
+	for _, t := range txs {
+		ids = append(ids, t.ID)
+	}
+	return ids
+}
+
+func batchesOf(txs []budget.Transaction) []string {
+	batches := make([]string, 0, len(txs))
+	for _, t := range txs {
+		batches = append(batches, t.Batch)
+	}
+	return batches
 }
 
 // TxFilter narrows ListTransactions. From and To are inclusive, either a
@@ -232,7 +265,7 @@ func (a *App) UpdateTransaction(
 		if err != nil {
 			return nil, err
 		}
-		updated, err = patched(plan, txs[i], patch)
+		updated, err = applyPatch(plan, txs[i], patch)
 		if err != nil {
 			return nil, err
 		}
@@ -245,8 +278,11 @@ func (a *App) UpdateTransaction(
 	return &updated, nil
 }
 
-// patched is old with patch applied, priced again if its value changed.
-func patched(plan *budget.Plan, old budget.Transaction, patch TxPatch) (budget.Transaction, error) {
+// applyPatch returns old with the patch's fields changed. It keeps old's
+// base value unless the patch changes the amount, currency or category.
+func applyPatch(
+	plan *budget.Plan, old budget.Transaction, patch TxPatch,
+) (budget.Transaction, error) {
 	in := budget.TransactionInput{
 		Date:       valueOr(patch.Date, old.Date),
 		Amount:     valueOr(patch.Amount, old.Amount),

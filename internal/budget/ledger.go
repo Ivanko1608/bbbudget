@@ -57,9 +57,11 @@ const (
 	maxExternalID   = 200
 )
 
-// trimmed is the input with surrounding spaces removed and the currency
-// code in upper case.
-func (in TransactionInput) trimmed() TransactionInput {
+// normalized is the input as it is stored: without surrounding spaces, and
+// with the currency code in upper case. Callers (people, models, pasted
+// statements) send "eur" or " Food", but the category, the currency and
+// the external id are looked up and compared exactly.
+func (in TransactionInput) normalized() TransactionInput {
 	in.Date = strings.TrimSpace(in.Date)
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
 	in.Category = strings.TrimSpace(in.Category)
@@ -73,7 +75,7 @@ func (in TransactionInput) trimmed() TransactionInput {
 // the base currency. The returned transaction still needs its ID, Batch,
 // Source and LoggedAt. path prefixes issue paths ("transactions[2]").
 func (p *Plan) Price(in TransactionInput, path string) (Transaction, []Issue) {
-	in = in.trimmed()
+	in = in.normalized()
 	if in.Currency == "" {
 		in.Currency = p.Base.Code
 	}
