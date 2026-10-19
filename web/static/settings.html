@@ -72,6 +72,33 @@
       </div>
     </section>
 
+    <section class="card" aria-labelledby="h-ai">
+      <h2 id="h-ai" data-i18n="prefs.ai.heading">Assistant</h2>
+      <p class="muted" data-i18n="prefs.ai.text"></p>
+      <div class="grid settings-grid">
+        <label class="f"><span data-i18n="prefs.ai.provider">Model provider</span>
+          <select name="assistant_provider">
+            <option value="off" data-i18n="prefs.ai.off">Off</option>
+            <option value="anthropic" data-i18n="prefs.ai.anthropic">Claude (Anthropic API)</option>
+            <option value="openai-compatible" data-i18n="prefs.ai.openai">OpenAI-compatible server (Ollama, LM Studio…)</option>
+          </select>
+        </label>
+        <label class="f"><span data-i18n="prefs.ai.model">Model</span>
+          <input name="assistant_model" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="f" id="aiUrlField"><span data-i18n="prefs.ai.url">Server address</span>
+          <input name="assistant_url" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+        </label>
+      </div>
+      <div class="key-row">
+        <label class="f"><span><span data-i18n="prefs.ai.key">API key</span> <span id="aiKeyState"></span></span>
+          <input name="assistant_api_key" type="password" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:prefs.cg.placeholder">
+        </label>
+        <button type="button" id="clearAiKey" class="danger" data-i18n="prefs.cg.remove">Remove key</button>
+      </div>
+      <p class="muted hint" id="aiStatus" role="status"></p>
+    </section>
+
     <section class="card" aria-labelledby="h-files">
       <h2 id="h-files" data-i18n="prefs.files.heading">Where things are stored</h2>
       <dl class="paths" id="paths"></dl>

@@ -26,6 +26,8 @@
   <div class="appbar-actions">
     <button id="appAdd" type="button" class="icon-btn compact-only" data-action="add-item" data-i18n-attr="aria-label:items.add_aria" hidden>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button id="chatBtn" type="button" class="chat-btn" hidden>
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span data-i18n="chat.open">Ask</span></button>
     <button id="newBtn" type="button" class="desktop-only" data-i18n="app.new">New</button>
     <a class="btn desktop-only" href="settings.html" data-i18n="app.settings">Settings</a>
     <details class="menu">
@@ -235,6 +237,24 @@
       <button value="cancel" formnovalidate data-i18n="new.cancel">Cancel</button>
       <button value="ok" class="primary" data-i18n="new.create">Create</button>
     </div>
+  </form>
+</dialog>
+
+<dialog id="chat" class="chat" aria-labelledby="chatTitle">
+  <div class="chat-head">
+    <div>
+      <h2 id="chatTitle" data-i18n="chat.title">Assistant</h2>
+      <p id="chatWhere" class="muted"></p>
+    </div>
+    <button type="button" id="chatNew" class="linkish" data-i18n="chat.new">New conversation</button>
+    <button type="button" id="chatClose" class="icon-btn" data-i18n-attr="aria-label:chat.close">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div id="chatLog" class="chat-log" aria-live="polite"></div>
+  <p id="chatState" class="muted chat-state" role="status"></p>
+  <form id="chatForm" class="chat-form">
+    <textarea name="message" rows="2" data-i18n-attr="aria-label:chat.message;placeholder:chat.placeholder"></textarea>
+    <button name="send" class="primary" data-i18n="chat.send">Send</button>
   </form>
 </dialog>
 

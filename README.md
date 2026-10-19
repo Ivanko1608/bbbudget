@@ -117,6 +117,8 @@ A budget is about as personal as data gets, so bbbudget is built to keep it on y
 - **Your files, your format.** Budgets are plain JSON in `~/.local/share/bbbudget/`, so you can back them up, `grep` them, version them or delete them. Writes are atomic, so a crash never leaves you with half a file. Each budget's change history sits next to it (`home.jsonl`), holding copies of its last 200 versions (the file is trimmed in batches, so it can briefly hold up to 400), so something you remove from a budget stays in its history until it ages out. Deleting the budget deletes its history too.
 - **Nothing personal in the repo.** Your own templates live in `~/.config/bbbudget/templates/`. `.gitignore` catches personal data accidentally pointed at the checkout, and an optional pre-commit hook scans for leaks (`make hooks`, see [Development](#development)).
 
+The same goes for the [in-app assistant](#the-assistant): pointed at a model server on your own machine, nothing leaves it; with Claude, each chat sends the budget to Anthropic. The chat panel and the settings page say which one you have.
+
 One honest caveat: when you use the MCP server with a hosted AI assistant, the MCP server itself still runs locally, but whatever budget data the assistant reads is sent to that assistant's provider as part of the conversation. If that matters to you, use a local MCP client or stick to the web UI and CLI.
 
 ## What it models
@@ -303,6 +305,24 @@ bbbudget undo home -revision 12  # a specific one (refused if later changes exis
 ```
 
 The editor saves as you type, so its saves within two minutes of each other merge into one entry. Each budget keeps its last 200 changes, each with a full copy of the budget as it was, so any of them can be restored.
+
+## The assistant
+
+The **Ask** button opens a chat about the open budget. It answers questions ("what is my biggest cost?") and makes the changes you ask for ("set rent to 1000"), and the page shows each change as it happens. Its changes are recorded in [history](#history-and-undo) like any other, so they can be undone.
+
+It is off until you choose a model in Settings, or with `bbbudget settings -set`:
+
+```sh
+# a local model through Ollama: nothing leaves this machine
+bbbudget settings -set assistant_provider=openai-compatible -set assistant_model=llama3.1
+
+# Claude, with a key from console.anthropic.com
+bbbudget settings -set assistant_provider=anthropic -set assistant_api_key=sk-ant-...
+```
+
+Any server with an OpenAI-compatible chat API and tool calling works: Ollama, LM Studio, llama.cpp's server or vLLM. Set `assistant_url` when it isn't Ollama on its default port. Small local models make more mistakes with tools than Claude does; the chat shows each tool it used, so you can check.
+
+The server runs the model and the tools, so keys never reach the browser. The assistant uses the same tools as the [MCP server](#using-it-with-claude), with the open budget as the default.
 
 ## Using it with Claude
 
