@@ -49,6 +49,11 @@ var promptCases = []promptCase{
 			"language":  "German",
 		},
 	},
+	{
+		"import_statement_markup",
+		"import_statement",
+		map[string]string{"statement": "<b>Tom & Jerry</b> -5 EUR"},
+	},
 }
 
 func TestPromptTextsMatchTheGoldenFiles(t *testing.T) {

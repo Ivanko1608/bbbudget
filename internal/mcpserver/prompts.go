@@ -4,8 +4,6 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"io/fs"
-	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -25,13 +23,6 @@ type promptTemplate struct {
 type promptArgs map[string]string
 
 func (args promptArgs) get(name string) string { return strings.TrimSpace(args[name]) }
-
-func (args promptArgs) getOrDefault(name, fallback string) string {
-	if value := args.get(name); value != "" {
-		return value
-	}
-	return fallback
-}
 
 func requiredArgument(name, description string) *mcp.PromptArgument {
 	return &mcp.PromptArgument{Name: name, Description: description, Required: true}
@@ -96,36 +87,9 @@ var promptTemplates = []promptTemplate{
 //go:embed prompts/*.tmpl
 var promptFiles embed.FS
 
-// promptTexts holds one template per prompt, named like the prompt, plus the
+// promptTexts holds one template per prompt, named like its file, plus the
 // shared parts they include.
-var promptTexts = template.Must(parsePromptFiles(promptFiles))
-
-func parsePromptFiles(files fs.FS) (*template.Template, error) {
-	paths, err := fs.Glob(files, "prompts/*.tmpl")
-	if err != nil {
-		return nil, err
-	}
-	texts := template.New("prompts")
-	for _, path := range paths {
-		if err := parsePromptFile(texts, files, path); err != nil {
-			return nil, err
-		}
-	}
-	return texts, nil
-}
-
-func parsePromptFile(texts *template.Template, files fs.FS, path string) error {
-	source, err := fs.ReadFile(files, path)
-	if err != nil {
-		return err
-	}
-	name := strings.TrimSuffix(filepath.Base(path), ".tmpl")
-	body := strings.TrimSuffix(string(source), "\n")
-	if _, err := texts.New(name).Parse(body); err != nil {
-		return fmt.Errorf("parse prompt %s: %w", name, err)
-	}
-	return nil
-}
+var promptTexts = template.Must(template.ParseFS(promptFiles, "prompts/*.tmpl"))
 
 // promptFields are the values the prompt templates are filled with.
 type promptFields struct {
@@ -144,18 +108,18 @@ func promptFieldsFromArgs(args promptArgs) promptFields {
 		ID:        args.get("id"),
 		Budget:    args.get("budget"),
 		Language:  args.get("language"),
-		Month:     args.getOrDefault("month", "this month"),
-		When:      args.getOrDefault("when", "this month"),
+		Month:     args.get("month"),
+		When:      args.get("when"),
 		Item:      args.get("item"),
 		Amount:    args.get("amount"),
-		Statement: args.getOrDefault("statement", "(ask me to paste it)"),
+		Statement: args.get("statement"),
 	}
 }
 
 func (t promptTemplate) renderText(args promptArgs) (string, error) {
 	var text strings.Builder
-	err := promptTexts.ExecuteTemplate(&text, t.name, promptFieldsFromArgs(args))
-	return text.String(), err
+	err := promptTexts.ExecuteTemplate(&text, t.name+".tmpl", promptFieldsFromArgs(args))
+	return strings.TrimSuffix(text.String(), "\n"), err
 }
 
 func registerPrompts(s *mcp.Server) {
@@ -179,7 +143,7 @@ func (t promptTemplate) render(
 	}
 	text, err := t.renderText(args)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", t.name, err)
+		return nil, err
 	}
 	message := &mcp.PromptMessage{Role: "user", Content: &mcp.TextContent{Text: text}}
 	return &mcp.GetPromptResult{

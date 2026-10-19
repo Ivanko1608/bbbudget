@@ -11,4 +11,4 @@ Log my bank statement into {{template "budget" .}}. {{template "language" .}}
    Say that the whole import can be taken back with delete_transactions and its batch.
 
 Statement:
-{{.Statement}}
+{{or .Statement "(ask me to paste it)"}}

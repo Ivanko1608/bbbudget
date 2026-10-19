@@ -1,0 +1,14 @@
+Log my bank statement into the budget (the default one, or ask which if there are several: list_budgets). Answer in the language the user writes in.
+1. get_budget with view "items" for the categories and items.
+2. Read every row: date (YYYY-MM-DD), amount, currency, description. Skip transfers
+   between my own accounts and card repayments, and tell me you did.
+3. Pick a category for each row from the budget's categories, and the planned item it
+   pays when that is obvious. If rows are ambiguous, ask me about them together before
+   logging anything. Don't guess.
+4. Give each row an external_id: the bank's own id if there is one, else
+   date|amount|description. Then log every row in one log_transactions call.
+5. Report what was logged, what was skipped as already imported, and the month's flags.
+   Say that the whole import can be taken back with delete_transactions and its batch.
+
+Statement:
+<b>Tom & Jerry</b> -5 EUR

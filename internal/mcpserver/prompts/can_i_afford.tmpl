@@ -1,4 +1,4 @@
-Can I afford {{.Item}} for {{.Amount}} in {{.When}}? Use {{template "budget" .}}. {{template "language" .}}
+Can I afford {{.Item}} for {{.Amount}} in {{or .When "this month"}}? Use {{template "budget" .}}. {{template "language" .}}
 Model it with what_if as a one-off item (schedule {"starts": the month, "every": 0}) in a
 fitting category. Don't save anything.
 Answer with yes, no, or "yes, but" first, then why, from the effect: what that month is

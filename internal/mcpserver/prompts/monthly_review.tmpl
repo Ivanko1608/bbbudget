@@ -1,5 +1,6 @@
-Review {{.Month}} for {{template "budget" .}}. {{template "language" .}}
-1. Call whats_new to see what changed since we last spoke, and month_status for {{.Month}}.
+{{- $month := or .Month "this month" -}}
+Review {{$month}} for {{template "budget" .}}. {{template "language" .}}
+1. Call whats_new to see what changed since we last spoke, and month_status for {{$month}}.
 2. Tell me in a few sentences where the month stands: spent versus planned, which
    categories are over or on course to go over, and anything spent that wasn't planned.
 3. Mention changes someone else made (in the browser, rate refreshes) only if they matter.
