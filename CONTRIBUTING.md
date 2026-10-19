@@ -34,7 +34,7 @@ Use a throwaway data directory while developing, so you don't touch your real bu
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
 
-`make hooks` enables `.githooks/pre-commit`, which scans staged changes for secrets and personal data with leakscan (see [Development](README.md#development) for where it looks for the scanner). If it flags a false positive, either commit with `--no-verify` or add its fingerprint to `.leakscanignore`.
+`make hooks` enables `.githooks/pre-commit`, which scans staged changes for secrets and personal data with leakscan (see [Development](README.md#development) for where it looks for the scanner). If it flags a false positive, either commit with `--no-verify` or add its fingerprint to `.leakscanignore`. It also enables `.githooks/pre-push`, which blocks a push whose new commits carry an author or committer email other than a GitHub noreply address.
 
 ## Ground rules for the code
 
