@@ -30,7 +30,8 @@ mcp: build
 	./bin/bbbudget mcp
 
 hooks:
-	git config core.hooksPath .githooks
+	-git config --unset core.hooksPath
+	pre-commit install --hook-type pre-commit --hook-type pre-push
 
 clean:
 	rm -rf bin coverage.out
