@@ -1270,9 +1270,9 @@ async function saveWhatIf() {
 async function loadMonthStatus() {
   if (!S.id) return;
   const id = encodeURIComponent(S.id);
-  let status, transactions;
+  let monthStatus, transactions;
   try {
-    [status, transactions] = await Promise.all([
+    [monthStatus, transactions] = await Promise.all([
       api("GET", `/api/budgets/${id}/status`),
       api("GET", `/api/budgets/${id}/transactions?limit=8`),
     ]);
@@ -1282,10 +1282,10 @@ async function loadMonthStatus() {
   }
   const categories = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
   $("#monthStatusSection").hidden = false;
-  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(status.month) });
-  $("#monthStatusSub").textContent = monthStatusSubtitle(status);
-  $("#monthStatusFlags").innerHTML = status.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
-  $("#monthStatusCategories").innerHTML = status.categories
+  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(monthStatus.month) });
+  $("#monthStatusSub").textContent = monthStatusSubtitle(monthStatus);
+  $("#monthStatusFlags").innerHTML = monthStatus.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
+  $("#monthStatusCategories").innerHTML = monthStatus.categories
     .filter((row) => row.kind !== "income")
     .map((row) => renderCategoryBar(row, categories[row.category]))
     .join("");
