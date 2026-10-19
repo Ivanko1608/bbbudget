@@ -1,0 +1,12 @@
+repos:
+  - repo: https://github.com/Ivanko1608/tinfoil
+    rev: v1.1.0
+    hooks:
+      - id: tinfoil
+        args: [--fail-on, medium]
+      - id: tinfoil-push
+        args: [--fail-on, medium]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
