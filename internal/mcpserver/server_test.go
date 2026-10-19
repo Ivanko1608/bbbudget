@@ -26,6 +26,11 @@ type harness struct {
 
 func setup(t *testing.T) *harness {
 	t.Helper()
+	return setupWith(t, Options{DefaultBudget: "home", Version: "test"})
+}
+
+func setupWith(t *testing.T, opts Options) *harness {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.NewFileStore(t.TempDir())
 	if err != nil {
@@ -44,7 +49,7 @@ func setup(t *testing.T) *harness {
 	if _, err := a.Create(ctx, fromCLI, a.Localizer(""), "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
-	srv := New(a, Options{DefaultBudget: "home", Version: "test"})
+	srv := New(a, opts)
 	ct, srvT := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx, srvT, nil); err != nil {
 		t.Fatal(err)

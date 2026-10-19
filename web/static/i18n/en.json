@@ -107,6 +107,7 @@
 
   "source.web": "You (browser)",
   "source.mcp": "AI assistant",
+  "source.assistant": "In-app assistant",
   "source.cli": "Command line",
   "source.auto-refresh": "Rate refresh",
   "source.earlier": "Earlier",

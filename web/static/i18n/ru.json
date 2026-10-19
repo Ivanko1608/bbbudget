@@ -107,6 +107,7 @@
 
   "source.web": "Вы (браузер)",
   "source.mcp": "ИИ-ассистент",
+  "source.assistant": "Ассистент в приложении",
   "source.cli": "Командная строка",
   "source.auto-refresh": "Обновление курсов",
   "source.earlier": "Ранее",

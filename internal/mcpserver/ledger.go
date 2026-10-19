@@ -178,7 +178,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			res, err := h.app.LogTransactions(ctx, fromAssistant, id, in.Transactions)
+			res, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
 			if err != nil {
 				return nil, err
 			}
@@ -195,7 +195,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return out, nil
 		})
-	tool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
+	readTool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
 		func(ctx context.Context, in ListTxIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -241,7 +241,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return map[string]int{"removed": n}, nil
 		})
-	tool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
+	readTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
 		func(ctx context.Context, in StatusIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
