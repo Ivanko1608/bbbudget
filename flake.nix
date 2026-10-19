@@ -34,7 +34,7 @@
               ./packaging/systemd
             ];
           };
-          vendorHash = "sha256-zeqShm2OnsvuEb1XIsyDn0l9iEfeGBEjSaPh2pnbgdw=";
+          vendorHash = "sha256-oH6CtMyYgZzFX0BGX6IGUDN3+y07Fom82c1O6cvVdoU=";
 
           env.CGO_ENABLED = 0;
           ldflags = [
