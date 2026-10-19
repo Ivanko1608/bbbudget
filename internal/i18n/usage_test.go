@@ -104,18 +104,19 @@ func TestUIKeysExist(t *testing.T) {
 		t.Fatal(err)
 	}
 	families := map[string][]string{
-		"source_opt.":     {"manual", "auto", "ecb", "currency-api", "coingecko"},
-		"every.":          {"0", "1", "2", "3", "6", "12"},
-		"sched.every.":    {"1", "3", "12"},
-		"strategy.":       {"avalanche", "snowball", "listed"},
-		"scenarios.kind.": {"item", "rate", "extra", "remove"},
-		"source.":         {"web", "mcp", "cli", "auto-refresh", "earlier", "unknown"},
-		"prefs.files.":    {"data", "templates", "settings"},
-		"pot_kind.":       {"general", "sinking", "emergency"},
-		"pot.help.":       {"general", "sinking", "emergency"},
-		"short.note.":     {"sinking", "emergency"},
-		"table.":          {"month", "income", "spent", "to_debts", "left", "from_savings", "owed", "saved", "savings", "debt"},
-		"compare.":        {"scenario", "this_month", "end_savings", "delta", "interest", "goals"},
+		"source_opt.":         {"manual", "auto", "ecb", "currency-api", "coingecko"},
+		"every.":              {"0", "1", "2", "3", "6", "12"},
+		"sched.every.":        {"1", "3", "12"},
+		"strategy.":           {"avalanche", "snowball", "listed"},
+		"scenarios.kind.":     {"item", "rate", "extra", "remove"},
+		"source.":             {"web", "mcp", "cli", "auto-refresh", "earlier", "unknown"},
+		"prefs.files.":        {"data", "templates", "settings"},
+		"pot_kind.":           {"general", "sinking", "emergency"},
+		"pot.help.":           {"general", "sinking", "emergency"},
+		"short.note.":         {"sinking", "emergency"},
+		"table.":              {"month", "income", "spent", "to_debts", "left", "from_savings", "owed", "saved", "savings", "debt"},
+		"compare.":            {"scenario", "this_month", "end_savings", "delta", "interest", "goals"},
+		"month_status.state.": {"over", "projected_over", "unplanned", "short"},
 	}
 	for prefix, members := range families {
 		for _, m := range members {

@@ -146,6 +146,7 @@ async function open(id, view = S.view) {
   status(t("status.saved"));
   loadCompare();
   loadActivity();
+  loadMonthStatus();
 }
 
 function adopt(view, rerenderEditors) {
@@ -185,6 +186,7 @@ async function save() {
     S.notice = null;
     loadCompare();
     loadActivity();
+    loadMonthStatus();
   } catch (e) {
     if (e.status === 422) {
       showIssues(e.data?.issues || [{ path: "", message: e.message }]);
@@ -215,6 +217,7 @@ async function poll() {
       status(t("status.updated_elsewhere"));
       loadCompare();
       loadActivity();
+    loadMonthStatus();
     }
   } catch {}
 }
@@ -1259,6 +1262,81 @@ async function saveWhatIf() {
   S.wi = [];
   $("#wiResult").innerHTML = "";
   await serverChange(() => api("POST", `/api/budgets/${encodeURIComponent(S.id)}/scenarios`, { name, ops }));
+}
+
+// ---------- this month: plan versus actual ----------
+
+async function loadMonthStatus() {
+  if (!S.id) return;
+  const id = encodeURIComponent(S.id);
+  let monthStatus, transactions;
+  try {
+    [monthStatus, transactions] = await Promise.all([
+      api("GET", `/api/budgets/${id}/status`),
+      api("GET", `/api/budgets/${id}/transactions?limit=8`),
+    ]);
+  } catch {
+    $("#monthStatusSection").hidden = true; // e.g. today is outside the budget's window
+    return;
+  }
+  const categories = Object.fromEntries(S.budget.categories.map((c) => [c.id, c]));
+  $("#monthStatusSection").hidden = false;
+  $("#h-month-status").textContent = t("month_status.heading", { month: monthName(monthStatus.month) });
+  $("#monthStatusSub").textContent = monthStatusSubtitle(monthStatus);
+  $("#monthStatusFlags").innerHTML = monthStatus.flags.map((flag) => `<div class="ins ${esc(flag.tone)}">${bold(flag.text)}</div>`).join("");
+  $("#monthStatusCategories").innerHTML = monthStatus.categories
+    .filter((row) => row.kind !== "income")
+    .map((row) => renderCategoryBar(row, categories[row.category]))
+    .join("");
+  $("#monthStatusTransactions").innerHTML = renderRecentTransactions(transactions, categories);
+}
+
+function monthStatusSubtitle(monthStatus) {
+  if (!monthStatus.transaction_count) return t("month_status.empty");
+  const sums = {
+    spent: money(monthStatus.spent),
+    planned: money(monthStatus.planned_spending),
+    day: monthStatus.days_elapsed,
+    days: monthStatus.days_in_month,
+  };
+  return t("month_status.sub", sums);
+}
+
+// renderCategoryBar is one spending category's bar: how much of the plan is spent.
+function renderCategoryBar(row, category) {
+  const width = spentPercent(row);
+  const color = barColor(row, category);
+  const badge = row.state === "ok" ? "" : `<span class="badge ${esc(row.state)}">${esc(t(`month_status.state.${row.state}`))}</span>`;
+  const ofPlan = t("month_status.of", { actual: money(row.actual), planned: money(row.planned) });
+  return `<div class="category-bar-row">
+    <div class="category-bar-head"><span>${esc(row.label)} ${badge}</span><span class="muted">${esc(ofPlan)}</span></div>
+    <div class="category-bar"><div style="width:${width}%;background:${esc(color)}"></div></div>
+  </div>`;
+}
+
+// spentPercent is the share of the plan spent, in percent, capped at 100.
+// Floats are fine here: they only size a bar.
+function spentPercent(row) {
+  const planned = parseFloat(row.planned.amount);
+  const actual = parseFloat(row.actual.amount);
+  if (planned > 0) return Math.min(100, (actual / planned) * 100);
+  if (actual > 0) return 100;
+  return 0;
+}
+
+function barColor(row, category) {
+  const overspent = row.state === "over" || row.state === "unplanned";
+  if (overspent) return "var(--neg)";
+  return category?.color || "var(--accent)";
+}
+
+function renderRecentTransactions(transactions, categories) {
+  if (!transactions.length) return `<tr><td class="muted">${esc(t("month_status.none_logged"))}</td></tr>`;
+  return transactions.map((transaction) => {
+    const label = categories[transaction.category]?.label || transaction.category;
+    const amount = money({ amount: transaction.amount, currency: transaction.currency });
+    return `<tr><td>${esc(transaction.date)}</td><td>${esc(label)}</td><td>${esc(amount)}</td><td class="muted">${esc(transaction.note || "")}</td></tr>`;
+  }).join("");
 }
 
 // ---------- activity ----------

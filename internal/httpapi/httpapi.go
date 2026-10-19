@@ -69,6 +69,7 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("PUT /api/budgets/{id}/transactions/{tid}", s.updateTransaction)
 	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTransactions)
 	mux.HandleFunc("DELETE /api/budgets/{id}/transactions", s.deleteBatch)
+	mux.HandleFunc("GET /api/budgets/{id}/status", s.status)
 	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
@@ -460,6 +461,16 @@ func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
 // deletedResult is what deleting transactions answers.
 type deletedResult struct {
 	Deleted int `json:"deleted"`
+}
+
+func (s *server) status(w http.ResponseWriter, r *http.Request) {
+	st, err := s.app.MonthStatus(r.Context(), r.PathValue("id"), r.URL.Query().Get("month"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	st.Localize(s.reader(r))
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {

@@ -85,6 +85,17 @@
   "ins.fewer": "Показать меньше",
   "ins.all": "Показать все ({count})",
 
+  "month_status.heading": "Этот месяц: {month}",
+  "month_status.sub": "Потрачено {spent} из запланированных {planned} · день {day} из {days}",
+  "month_status.empty": "В этом месяце пока ничего не записано. Расскажите ИИ-ассистенту, что вы потратили, или используйте «bbbudget log».",
+  "month_status.of": "{actual} из {planned}",
+  "month_status.recent": "Последние записи",
+  "month_status.none_logged": "Транзакций пока нет.",
+  "month_status.state.over": "перерасход",
+  "month_status.state.projected_over": "темп выше плана",
+  "month_status.state.unplanned": "не запланировано",
+  "month_status.state.short": "ниже плана",
+
   "activity.heading": "Последние изменения",
   "activity.text": "Все изменения, кто бы их ни сделал: вы, ИИ-ассистент или обновление курсов. «Отменить» возвращает версию до изменения — как новое изменение, которое тоже можно отменить.",
   "activity.empty": "Изменений пока нет.",

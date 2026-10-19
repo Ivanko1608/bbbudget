@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -193,6 +194,123 @@ func TestListingRejectsABadDate(t *testing.T) {
 
 	if !errors.Is(err, ErrBadInput) {
 		t.Fatalf("bad date: %v", err)
+	}
+}
+
+// statusOfOctober logs a month of spending against the example budget,
+// eight days into October (testApp's today).
+func statusOfOctober(t *testing.T) *budget.MonthStatus {
+	t.Helper()
+	a := testApp(t)
+	fun := budget.Category{ID: "fun", Label: "Fun"}
+	addFun := []budget.Op{budget.NewOp("add_category", "", fun)}
+	if _, err := a.Apply(context.Background(), byTest, "home", store.AnyRevision, addFun); err != nil {
+		t.Fatal(err)
+	}
+	mustLog(t, a,
+		spent("2026-10-02", "900", "travel"),  // 600 planned for the holiday
+		spent("2026-10-05", "800", "home"),    // on course to overspend
+		spent("2026-10-06", "25", "fun"),      // nothing planned
+		spent("2026-11-01", "999", "home"),    // another month
+		spent("2026-10-01", "3900", "income"), // salary as planned
+	)
+	status, err := a.MonthStatus(context.Background(), "home", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func TestMonthStatusCountsTheDays(t *testing.T) {
+	status := statusOfOctober(t)
+
+	if status.Month != "2026-10" {
+		t.Errorf("month: %s", status.Month)
+	}
+	if status.DaysInMonth != 31 {
+		t.Errorf("days: %d", status.DaysInMonth)
+	}
+	if status.DaysElapsed != 8 {
+		t.Errorf("elapsed: %d", status.DaysElapsed)
+	}
+	if status.TransactionCount != 4 {
+		t.Errorf("transactions: %d", status.TransactionCount)
+	}
+}
+
+func TestMonthStatusStates(t *testing.T) {
+	status := statusOfOctober(t)
+	states := map[string]budget.SpendingState{}
+	for _, c := range status.Categories {
+		states[c.Category] = c.State
+	}
+
+	cases := map[string]budget.SpendingState{
+		"travel": budget.StateOver,
+		"home":   budget.StateProjectedOver,
+		"fun":    budget.StateUnplanned,
+		"income": budget.StateOK,
+	}
+	for category, want := range cases {
+		if states[category] != want {
+			t.Errorf("%s: %s, want %s", category, states[category], want)
+		}
+	}
+}
+
+func TestMonthStatusFlagsOverspending(t *testing.T) {
+	status := statusOfOctober(t)
+
+	var texts []string
+	for _, f := range status.Flags {
+		texts = append(texts, f.Text)
+	}
+
+	want := "Travel: €900 spent of €600 planned, **€300 over**."
+	if !strings.Contains(strings.Join(texts, "\n"), want) {
+		t.Errorf("flags: %q", texts)
+	}
+}
+
+func TestMonthStatusTotals(t *testing.T) {
+	status := statusOfOctober(t)
+
+	if s := status.Spent.String(); s != "1725.00" {
+		t.Errorf("spent: %s", s)
+	}
+	if s := status.Income.String(); s != "3900.00" {
+		t.Errorf("income: %s", s)
+	}
+}
+
+func TestMonthStatusOutsideTheWindowIsAnError(t *testing.T) {
+	a := testApp(t)
+
+	_, err := a.MonthStatus(context.Background(), "home", "2030-01")
+
+	if !errors.Is(err, ErrBadInput) {
+		t.Fatalf("month outside the window: %v", err)
+	}
+}
+
+// The page iterates over flags and categories, and null broke it.
+func TestMonthStatusWithoutFlagsHasEmptyLists(t *testing.T) {
+	a := testApp(t)
+
+	status, err := a.MonthStatus(context.Background(), "home", "")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"flags":[]`) {
+		t.Errorf("flags: %s", raw)
+	}
+	if strings.Contains(string(raw), `"categories":null`) {
+		t.Errorf("categories: %s", raw)
 	}
 }
 

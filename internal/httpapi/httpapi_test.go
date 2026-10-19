@@ -583,6 +583,23 @@ func TestUpdateUnknownTransaction(t *testing.T) {
 	c.do("PUT", "/api/budgets/home/transactions/t9", `{"note":"x"}`, http.StatusNotFound)
 }
 
+func TestMonthStatus(t *testing.T) {
+	c := setup(t)
+	c.logTwo()
+
+	status := c.do("GET", "/api/budgets/home/status?month="+thisMonth(), "", http.StatusOK)
+
+	if status["transaction_count"] != 2.0 {
+		t.Errorf("transaction_count: %v", status["transaction_count"])
+	}
+}
+
+func TestMonthStatusOutsideTheBudget(t *testing.T) {
+	c := setup(t)
+
+	c.do("GET", "/api/budgets/home/status?month=1999-01", "", http.StatusBadRequest)
+}
+
 func TestDeleteTransactionThenItsBatch(t *testing.T) {
 	c := setup(t)
 	c.logTwo()
@@ -591,6 +608,6 @@ func TestDeleteTransactionThenItsBatch(t *testing.T) {
 	deleted := c.do("DELETE", "/api/budgets/home/transactions?batch=b1", "", http.StatusOK)
 
 	if deleted["deleted"] != 1.0 {
-		t.Errorf("deleted: %v", deleted["deleted"])
+		t.Errorf("removed: %v", deleted["deleted"])
 	}
 }

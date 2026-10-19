@@ -383,3 +383,28 @@ func withoutBatch(transactions []budget.Transaction, batch string) ([]budget.Tra
 	}
 	return kept, nil
 }
+
+// MonthStatus is plan versus actual for a month ("YYYY-MM"; "" for the
+// current one), with its flags in English.
+func (a *App) MonthStatus(ctx context.Context, id, month string) (*budget.MonthStatus, error) {
+	r, err := a.Store.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	ledger, err := a.Store.Ledger(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := budget.Compile(r.Budget)
+	if err != nil {
+		return nil, err
+	}
+	if month == "" {
+		month = a.Now().Format("2006-01")
+	}
+	status, err := plan.MonthStatus(month, ledger.Transactions, a.Now())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
+	}
+	return status, nil
+}

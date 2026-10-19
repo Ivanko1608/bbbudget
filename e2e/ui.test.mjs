@@ -183,6 +183,18 @@ test("a debt is paid off in full from a pot, and the payoff can be removed", { s
   }, "the payoff and its pot to be removed together");
 });
 
+test("spending logged elsewhere shows in this month's panel, flagged when over plan", { skip }, async () => {
+  const id = await fresh("overview");
+  const today = new Date().toISOString().slice(0, 10);
+  const groceries = { date: today, amount: "5000", category: "home", note: "Groceries" };
+  await srv.api("POST", `/api/budgets/${id}/transactions`, { transactions: [groceries] });
+  await page.goto(`${srv.base}/#${id}/overview`);
+  await waitFor(() => page.visible("#monthStatusSection"), "the this-month panel");
+  await waitFor(async () => (await page.text("#monthStatusCategories")).includes("over plan"), "the home row to be flagged");
+  assert.match(await page.text("#monthStatusTransactions"), /Groceries/, "the transaction is listed");
+  assert.match(await page.text("#monthStatusFlags"), /over/, "the flag says by how much");
+});
+
 test("what-if previews without saving", { skip }, async () => {
   const id = await fresh("scenarios");
   const rev = (await srv.api("GET", `/api/budgets/${id}`)).revision;
