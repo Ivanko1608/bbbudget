@@ -50,16 +50,17 @@ function addLine(kind, text) {
 }
 
 function toolLine(event) {
-  const what = t("chat.tool", { tool: event.tool });
-  if (!event.detail) return what;
-  return `${what}: ${event.detail}`;
+  const call = t("chat.tool", { tool: event.tool });
+  const outcome = event.error || event.change;
+  if (!outcome) return call;
+  return `${call}: ${outcome}`;
 }
 
 const HANDLERS = {
   text: (event) => addLine("assistant", event.text),
   tool: (event) => addLine("tool", toolLine(event)),
   changed: () => onChanged(),
-  error: (event) => addLine("error", event.text),
+  error: (event) => addLine("error", event.error),
   done: (event) => { conversation = event.conversation || ""; },
 };
 
