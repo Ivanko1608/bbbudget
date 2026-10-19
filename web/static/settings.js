@@ -1,6 +1,6 @@
 // App-wide settings: language, rate fetching, the default rate source,
-// automatic refresh and the CoinGecko key. The key is write-only: the server
-// only says whether one is set.
+// automatic refresh, the CoinGecko key and the assistant. Keys are
+// write-only: the server only says whether one is set.
 
 import { t, loadLocale, dateTime } from "./i18n.js";
 
@@ -37,6 +37,7 @@ function render(s) {
   $("#keyState").textContent = t(s.coingecko_api_key_set ? "prefs.cg.set" : "prefs.cg.none");
   $("#clearKey").hidden = !s.coingecko_api_key_set;
   syncDisabled();
+  renderAssistant(s);
 
   const st = s.auto_refresh_status;
   let text = t("prefs.auto_status");
@@ -65,6 +66,50 @@ function syncDisabled() {
   for (const name of ["default_rate_source", "auto_refresh", "coingecko_api_key"]) form[name].disabled = off;
 }
 
+const MODEL_PLACEHOLDERS = { anthropic: "claude-opus-5-5", "openai-compatible": "llama3.1" };
+
+function renderAssistant(s) {
+  form.assistant_provider.value = s.assistant_provider;
+  form.assistant_model.value = s.assistant_model;
+  form.assistant_url.value = s.assistant_url;
+  form.assistant_api_key.value = "";
+  const keyState = s.assistant_api_key_set ? "prefs.cg.set" : "prefs.cg.none";
+  $("#aiKeyState").textContent = t(keyState);
+  $("#clearAiKey").hidden = !s.assistant_api_key_set;
+  $("#aiStatus").textContent = assistantStatusText(s.assistant_status);
+  syncAssistantFields();
+}
+
+function assistantStatusText(status) {
+  const model = status.model;
+  if (status.provider === "off") return t("prefs.ai.off_status");
+  if (!status.ready) return t("prefs.ai.problem", { problem: status.problem });
+  if (status.on_this_machine) return t("prefs.ai.local", { model });
+  if (status.provider === "anthropic") return t("prefs.ai.remote_anthropic", { model });
+  return t("prefs.ai.remote_server", { model });
+}
+
+// The server address only applies to an OpenAI-compatible server.
+function syncAssistantFields() {
+  const provider = form.assistant_provider.value;
+  for (const name of ["assistant_model", "assistant_url", "assistant_api_key"]) {
+    form[name].disabled = provider === "off";
+  }
+  $("#aiUrlField").hidden = provider !== "openai-compatible";
+  form.assistant_model.placeholder = MODEL_PLACEHOLDERS[provider] || "";
+}
+
+function readAssistantSettings() {
+  const patch = {
+    assistant_provider: form.assistant_provider.value,
+    assistant_model: form.assistant_model.value.trim(),
+    assistant_url: form.assistant_url.value.trim(),
+  };
+  const key = form.assistant_api_key.value.trim();
+  if (key) patch.assistant_api_key = key;
+  return patch;
+}
+
 // save reports whether the settings were saved.
 async function save(patch, done) {
   try {
@@ -78,6 +123,7 @@ async function save(patch, done) {
 }
 
 form.fetch_rates.addEventListener("change", syncDisabled);
+form.assistant_provider.addEventListener("change", syncAssistantFields);
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   const patch = {
@@ -85,6 +131,7 @@ form.addEventListener("submit", (e) => {
     fetch_rates: form.fetch_rates.checked,
     default_rate_source: form.default_rate_source.value,
     auto_refresh: form.auto_refresh.value,
+    ...readAssistantSettings(),
   };
   const key = form.coingecko_api_key.value.trim();
   if (key) patch.coingecko_api_key = key; // empty means "keep the current key"
@@ -92,6 +139,9 @@ form.addEventListener("submit", (e) => {
   save(patch, t("prefs.saved")).then((ok) => { if (ok && relang) location.reload(); }); // show the page in the new language
 });
 $("#clearKey").addEventListener("click", () => save({ coingecko_api_key: "" }, t("prefs.key_removed")));
+$("#clearAiKey").addEventListener("click", () => {
+  save({ assistant_api_key: "" }, t("prefs.key_removed"));
+});
 
 let CURRENT = "auto";
 

@@ -11,6 +11,7 @@
 // formatted for the reader's locale from the exact amounts the server sends.
 
 import { t, tHTML, loadLocale, money, moneyAxis, number, monthName, date, dateTime, toInput, parseDecimal } from "./i18n.js";
+import { initAssistant } from "./assistant.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1554,6 +1555,7 @@ window.addEventListener("beforeunload", (e) => { if (S.pending || S.saving) e.pr
     S.meta = await api("GET", "/api/meta");
     await loadLocale(S.meta.locale, S.meta.crypto);
     S.prefs = await api("GET", "/api/settings").catch(() => S.prefs);
+    initAssistant(S.prefs.assistant_status, { budget: () => S.id, changed: poll });
     await loadList();
     if (!S.list.length) { status(t("status.no_budgets_yet")); return; }
     let [want, view] = decodeURIComponent(location.hash.slice(1)).split("/");

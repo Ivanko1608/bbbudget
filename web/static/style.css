@@ -195,9 +195,9 @@ h3.sub{font-size:.9rem;margin:16px 0 6px}
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 @media (min-width:560px){.grid{grid-template-columns:repeat(3,1fr)}}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:var(--muted);min-width:0}
-input,select{font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--field-line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 input[type=color]{padding:2px;height:40px}
-input:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible,.line-main:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible,.line-main:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .invalid{border-color:var(--neg) !important;box-shadow:0 0 0 1px var(--neg)}
 
 button,a.btn{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--field);color:var(--ink);padding:8px 12px;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px}
@@ -313,7 +313,7 @@ dialog form{display:flex;flex-direction:column;gap:12px}
 @media (pointer:coarse){
   button,a.btn,input,select,.menu summary,.filebtn,.menu-link{min-height:44px}
   button.del,.icon-btn{min-width:44px}
-  input,select{font-size:16px} /* below 16px, iOS zooms the page on focus */
+  input,select,textarea{font-size:16px} /* below 16px, iOS zooms the page on focus */
   .line-main{min-height:44px;justify-content:center}
 }
 
@@ -332,6 +332,7 @@ section.card > .hint:last-child{margin:12px 0 0}
 @media (min-width:560px){.settings-grid{grid-template-columns:1fr 1fr}}
 .key-row{display:grid;grid-template-columns:1fr;gap:8px;align-items:end}
 .key-row button{justify-self:start}
+.settings-grid + .key-row{margin-top:12px}
 .paths{display:grid;grid-template-columns:1fr;gap:2px 16px;margin:0;font-size:.9rem}
 .paths dt{color:var(--muted)}
 .paths dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
@@ -340,4 +341,27 @@ section.card > .hint:last-child{margin:12px 0 0}
   .key-row{grid-template-columns:1fr auto}
   .paths{grid-template-columns:max-content 1fr;gap:6px 16px}
   .paths dd + dt{margin-top:0}
+}
+
+/* Assistant: a panel beside the budget, so its edits stay in view. */
+.chat-btn{display:flex;align-items:center;gap:6px}
+.chat{position:fixed;inset:auto 16px 16px auto;margin:0;z-index:40;padding:14px;
+  width:min(420px,calc(100vw - 32px));height:min(620px,calc(100dvh - 96px));flex-direction:column;gap:8px}
+.chat[open]{display:flex}
+.chat-head{display:flex;align-items:flex-start;gap:8px}
+.chat-head > div{flex:1;min-width:0}
+.chat-head h2{margin:0;font-size:1.05rem}
+.chat-head .muted{margin:2px 0 0;font-size:.8rem}
+.chat-log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0}
+.msg{white-space:pre-wrap;overflow-wrap:anywhere;border-radius:12px;padding:8px 12px;max-width:90%}
+.msg-user{align-self:flex-end;background:var(--tint-info)}
+.msg-assistant{align-self:flex-start;background:var(--field)}
+.msg-tool{align-self:flex-start;color:var(--muted);font-size:.8rem;padding:0 4px}
+.msg-error{align-self:stretch;background:var(--tint-warn);color:var(--neg);font-size:.9rem}
+.chat-state{margin:0;min-height:1.2em;font-size:.8rem}
+.chat form.chat-form{flex-direction:row;align-items:flex-end;gap:8px}
+.chat-form textarea{flex:1;resize:none}
+@media (max-width:959.98px){
+  .chat{inset:auto 8px calc(var(--tabbar-h) + 8px) 8px;width:auto;height:min(560px,calc(100dvh - var(--tabbar-h) - 72px))}
+  .chat-btn span{display:none}
 }
