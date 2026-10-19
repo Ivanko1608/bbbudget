@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -234,6 +235,9 @@ func (p *Plan) MonthStatus(
 	return status, nil
 }
 
+// ErrOutsideWindow means a month is before the budget's start or after its end.
+var ErrOutsideWindow = errors.New("outside the budget's window")
+
 // monthIndex finds a "YYYY-MM" month in the plan's window, and its first day.
 func (p *Plan) monthIndex(month string) (int, time.Time, error) {
 	start, err := time.Parse("2006-01", month)
@@ -242,8 +246,8 @@ func (p *Plan) monthIndex(month string) (int, time.Time, error) {
 	}
 	index := (start.Year()-p.Start.Year())*12 + int(start.Month()-p.Start.Month())
 	if index < 0 || index >= p.Months {
-		return 0, time.Time{}, fmt.Errorf("%s is outside the budget's window (%s for %d months)",
-			month, p.Doc.StartMonth, p.Months)
+		return 0, time.Time{}, fmt.Errorf("%s is %w (%s for %d months)",
+			month, ErrOutsideWindow, p.Doc.StartMonth, p.Months)
 	}
 	return index, start, nil
 }

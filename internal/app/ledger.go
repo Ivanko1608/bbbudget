@@ -404,7 +404,7 @@ func (a *App) MonthStatus(ctx context.Context, id, month string) (*budget.MonthS
 	}
 	status, err := plan.MonthStatus(month, ledger.Transactions, a.Now())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
+		return nil, fmt.Errorf("%w: %w", ErrBadInput, err)
 	}
 	return status, nil
 }
