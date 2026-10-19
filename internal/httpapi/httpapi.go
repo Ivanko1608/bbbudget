@@ -64,6 +64,11 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/budgets/{id}", s.delete)
 	mux.HandleFunc("POST /api/budgets/{id}/ops", s.ops)
 	mux.HandleFunc("GET /api/budgets/{id}/history", s.history)
+	mux.HandleFunc("GET /api/budgets/{id}/transactions", s.listTransactions)
+	mux.HandleFunc("POST /api/budgets/{id}/transactions", s.logTransactions)
+	mux.HandleFunc("PUT /api/budgets/{id}/transactions/{tid}", s.updateTransaction)
+	mux.HandleFunc("DELETE /api/budgets/{id}/transactions/{tid}", s.deleteTransactions)
+	mux.HandleFunc("DELETE /api/budgets/{id}/transactions", s.deleteBatch)
 	mux.HandleFunc("POST /api/budgets/{id}/undo", s.undo)
 	mux.HandleFunc("POST /api/budgets/{id}/what-if", s.whatIf)
 	mux.HandleFunc("POST /api/budgets/{id}/rates/refresh", s.refreshRates)
@@ -374,6 +379,87 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	}
 	app.LocalizeHistory(h, s.reader(r))
 	writeJSON(w, http.StatusOK, h)
+}
+
+func (s *server) listTransactions(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := app.TransactionFilter{
+		From:     q.Get("from"),
+		To:       q.Get("to"),
+		Category: q.Get("category"),
+		Batch:    q.Get("batch"),
+		Limit:    100,
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
+			return
+		}
+		f.Limit = n
+	}
+	txs, err := s.app.ListTransactions(r.Context(), r.PathValue("id"), f)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, txs)
+}
+
+func (s *server) logTransactions(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Transactions []budget.TransactionInput `json:"transactions"`
+	}
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	res, err := s.app.LogTransactions(r.Context(), fromBrowser, r.PathValue("id"), in.Transactions)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, res)
+}
+
+func (s *server) updateTransaction(w http.ResponseWriter, r *http.Request) {
+	var p app.TransactionPatch
+	if err := decode(r, &p); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	t, err := s.app.UpdateTransaction(r.Context(), r.PathValue("id"), r.PathValue("tid"), p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+func (s *server) deleteTransactions(w http.ResponseWriter, r *http.Request) {
+	ids := []string{r.PathValue("tid")}
+	removed, err := s.app.DeleteTransactions(r.Context(), r.PathValue("id"), ids)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
+}
+
+// deleteBatch removes everything one log call added (/transactions?batch=b3).
+func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
+	batch := r.URL.Query().Get("batch")
+	removed, err := s.app.DeleteBatch(r.Context(), r.PathValue("id"), batch)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
+}
+
+// deletedResult is what deleting transactions answers.
+type deletedResult struct {
+	Deleted int `json:"deleted"`
 }
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {
