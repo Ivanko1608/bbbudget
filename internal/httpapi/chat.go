@@ -34,7 +34,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	events := startEventStream(w)
 	conversation, err := s.opts.Assistant.Reply(r.Context(), request, events.send)
 	if err != nil {
-		events.send(assistant.Event{Type: assistant.EventError, Text: err.Error()})
+		events.send(assistant.Event{Type: assistant.EventError, Error: err.Error()})
 	}
 	events.send(assistant.Event{Type: assistant.EventDone, Conversation: conversation})
 }

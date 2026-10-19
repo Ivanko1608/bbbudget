@@ -88,7 +88,7 @@ func TestAFailedReplyEndsWithAnErrorThenDone(t *testing.T) {
 	if types := typesOf(events); !slices.Equal(types, want) {
 		t.Fatalf("events: %v", types)
 	}
-	if events[0].Text == "" {
+	if events[0].Error == "" {
 		t.Error("the error gives no reason")
 	}
 }
