@@ -28,7 +28,16 @@ func TestMissingFileGivesDefaults(t *testing.T) {
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "conf", "settings.json") // directory is created
-	want := Settings{FetchRates: false, DefaultRateSource: "ecb", AutoRefresh: RefreshDaily, CoinGeckoAPIKey: "CG-abc123"}
+	want := Settings{
+		FetchRates:        false,
+		DefaultRateSource: "ecb",
+		AutoRefresh:       RefreshDaily,
+		CoinGeckoAPIKey:   "CG-abc123",
+		AssistantProvider: AssistantOpenAICompatible,
+		AssistantModel:    "llama3.1",
+		AssistantURL:      "http://127.0.0.1:11434/v1",
+		AssistantAPIKey:   "sk-test",
+	}
 	if err := Save(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -119,5 +128,55 @@ func TestDefaultPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/cfg")
 	if DefaultPath() != filepath.Join("/cfg", "bbbudget", "settings.json") {
 		t.Fatal(DefaultPath())
+	}
+}
+
+func TestTheAssistantIsOffByDefault(t *testing.T) {
+	defaults := Defaults()
+
+	if defaults.AssistantProvider != AssistantOff {
+		t.Errorf("provider: %s", defaults.AssistantProvider)
+	}
+}
+
+func TestAssistantPatch(t *testing.T) {
+	patch := Patch{
+		AssistantProvider: ptr(AssistantAnthropic),
+		AssistantModel:    ptr(" claude-opus-5-5 "),
+		AssistantAPIKey:   ptr("sk-ant-test"),
+	}
+
+	patched, err := Defaults().Apply(patch)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched.AssistantProvider != AssistantAnthropic {
+		t.Errorf("provider: %s", patched.AssistantProvider)
+	}
+	if patched.AssistantModel != "claude-opus-5-5" {
+		t.Errorf("model: %q", patched.AssistantModel)
+	}
+	if patched.AssistantAPIKey != "sk-ant-test" {
+		t.Errorf("key: %q", patched.AssistantAPIKey)
+	}
+}
+
+func TestBadAssistantSettingsAreRefused(t *testing.T) {
+	cases := map[string]Patch{
+		"unknown provider": {AssistantProvider: ptr(AssistantProvider("gemini"))},
+		"model with space": {AssistantModel: ptr("llama 3")},
+		"not a web URL":    {AssistantURL: ptr("file:///etc/passwd")},
+		"URL without host": {AssistantURL: ptr("http://")},
+		"key with space":   {AssistantAPIKey: ptr("two words")},
+	}
+	for name, patch := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Defaults().Apply(patch)
+
+			if err == nil {
+				t.Errorf("accepted %+v", patch)
+			}
+		})
 	}
 }

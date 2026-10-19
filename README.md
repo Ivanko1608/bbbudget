@@ -176,6 +176,10 @@ App-wide preferences live on the **Settings** page (top right of the UI), in `bb
 | `auto_refresh` | `off` | `hourly` or `daily`: while `bbbudget serve` runs, refresh every budget's non-manual rates. The page shows the last run. |
 | `coingecko_api_key` | — | Optional CoinGecko demo key. The file is written with mode 0600, and the key is never sent back to the browser or printed. |
 | `locale` | `auto` | The language for text. `auto` follows the browser in the UI, and `$LANG` for the CLI and MCP server. See [Languages](#languages). |
+| `assistant_provider` | `off` | The model behind the in-app assistant: `anthropic` (Claude) or `openai-compatible` (Ollama, LM Studio, llama.cpp, vLLM). |
+| `assistant_model` | — | The model to use. Anthropic defaults to `claude-opus-5-5`; an OpenAI-compatible server needs one, such as `llama3.1`. |
+| `assistant_url` | — | The API root of an OpenAI-compatible server. Empty means Ollama on this machine (`http://127.0.0.1:11434/v1`). |
+| `assistant_api_key` | — | The provider's key. Like the CoinGecko key, it is never sent back to the browser or printed. Without one, the Anthropic provider uses `ANTHROPIC_API_KEY`. |
 
 ```
 bbbudget settings                                   # show
@@ -384,7 +388,8 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `POST /api/budgets/{id}/what-if` `{ops}` | preview, nothing saved |
 | `POST /api/budgets/{id}/rates/refresh` `{codes?}` | fetch and save rates; `502` if no provider answered |
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |
-| `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?, locale?}` | app settings (the key is reported only as `coingecko_api_key_set`) |
+| `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?, locale?, assistant_provider?, assistant_model?, assistant_url?, assistant_api_key?}` | app settings (keys are reported only as `coingecko_api_key_set` and `assistant_api_key_set`, with `assistant_status` saying whether the assistant is ready) |
+| `POST /api/budgets/{id}/chat` `{message, conversation?}` | ask the assistant; server-sent events `text`, `tool`, `changed`, then `error` if the reply failed, and always `done` with the `conversation` to continue |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
 
 The server binds to 127.0.0.1 and accepts only these requests:

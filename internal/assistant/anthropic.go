@@ -12,13 +12,12 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
+
+	"bbbudget/internal/settings"
 )
 
 // DefaultAnthropicModel is used when the settings name no model.
 const DefaultAnthropicModel = "claude-opus-5-5"
-
-// AnthropicName names the provider in settings and status.
-const AnthropicName = "anthropic"
 
 // maxAnswerTokens leaves room for thinking and a long answer without
 // needing streaming.
@@ -55,8 +54,8 @@ func NewAnthropic(config AnthropicConfig, options ...option.RequestOption) *Anth
 	return &Anthropic{client: anthropic.NewClient(options...), model: model}
 }
 
-func (p *Anthropic) Name() string  { return AnthropicName }
-func (p *Anthropic) Model() string { return p.model }
+func (p *Anthropic) Name() settings.AssistantProvider { return settings.AssistantAnthropic }
+func (p *Anthropic) Model() string                    { return p.model }
 
 func (p *Anthropic) Start(system string, tools []Tool) Conversation {
 	// Sorted, so the tool list, and with it the cached prompt prefix, is the

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/settings"
 )
 
 // Tool is one tool the model may call.
@@ -56,7 +57,7 @@ type Conversation interface {
 
 // Provider starts conversations with one model.
 type Provider interface {
-	Name() string
+	Name() settings.AssistantProvider
 	Model() string
 	Start(system string, tools []Tool) Conversation
 }
@@ -72,15 +73,20 @@ const (
 	EventTool EventType = "tool"
 	// EventChanged means the budget was written and the page should reload it.
 	EventChanged EventType = "changed"
+	// EventError is a reply that failed, with the reason as its error.
+	EventError EventType = "error"
+	// EventDone ends a reply, with the conversation to continue.
+	EventDone EventType = "done"
 )
 
 // Event is what the browser receives while the assistant works.
 type Event struct {
-	Type   EventType `json:"type"`
-	Text   string    `json:"text,omitempty"`
-	Tool   string    `json:"tool,omitempty"`
-	Change string    `json:"change,omitempty"`
-	Error  string    `json:"error,omitempty"`
+	Type         EventType `json:"type"`
+	Text         string    `json:"text,omitempty"`
+	Tool         string    `json:"tool,omitempty"`
+	Change       string    `json:"change,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	Conversation string    `json:"conversation,omitempty"`
 }
 
 // MaxToolRounds caps the tool rounds per message, so a confused model can't

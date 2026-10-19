@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/assistant"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 	"bbbudget/web"
@@ -60,6 +61,13 @@ type client struct {
 
 func setup(t *testing.T) *client {
 	t.Helper()
+	return setupWith(t, nil)
+}
+
+// setupWith serves the API with the assistant newAssistant makes over the
+// app, or with none when it is nil.
+func setupWith(t *testing.T, newAssistant func(*app.App) *assistant.Assistant) *client {
+	t.Helper()
 	st, err := store.NewFileStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +77,11 @@ func setup(t *testing.T) *client {
 	a := app.New(st, nil)
 	a.Rates = offlineRates() // tests never touch the network
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
-	c := &client{t, New(a, Options{Static: static, MCP: mcpStub, Paths: map[string]string{"data": "/d"}})}
+	opts := Options{Static: static, MCP: mcpStub, Paths: map[string]string{"data": "/d"}}
+	if newAssistant != nil {
+		opts.Assistant = newAssistant(a)
+	}
+	c := &client{t, New(a, opts)}
 	c.do("POST", "/api/budgets", `{"id":"home","template":"example"}`, 201)
 	return c
 }
