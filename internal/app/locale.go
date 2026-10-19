@@ -26,3 +26,7 @@ func (a *App) Localizer(acceptLanguage string) *i18n.Localizer {
 
 // Localize renders the view's text with l.
 func (v *View) Localize(l *i18n.Localizer) { v.Report.Localize(l) }
+
+// SettingsLocalizer renders text for a reader outside HTTP, who has no
+// browser to ask: in the language the app settings choose, else LANG's.
+func (a *App) SettingsLocalizer() *i18n.Localizer { return a.Localizer("") }

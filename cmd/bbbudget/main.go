@@ -159,7 +159,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		v, err := a.Create(ctx, fromCLI, a.Localizer(""), id, *name, *template)
+		v, err := a.Create(ctx, fromCLI, a.SettingsLocalizer(), id, *name, *template)
 		if err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		reader := a.Localizer("")
+		reader := a.SettingsLocalizer()
 		rep.Localize(reader)
 		printReport(stdout, rep, reader)
 		return nil
@@ -331,9 +331,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		reader := a.Localizer("")
-		status.Localize(reader)
-		printStatus(stdout, status, reader)
+		printStatus(stdout, status, a.SettingsLocalizer())
 		return nil
 
 	case "history":
@@ -350,7 +348,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		app.LocalizeHistory(h, a.Localizer(""))
+		app.LocalizeHistory(h, a.SettingsLocalizer())
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
 		for _, e := range h {
@@ -378,7 +376,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		app.LocalizeHistory(h, a.Localizer(""))
+		app.LocalizeHistory(h, a.SettingsLocalizer())
 		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
 		return nil
 
@@ -586,9 +584,9 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	if err != nil {
 		return err
 	}
-	status.Localize(a.Localizer(""))
+	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", plain(f.Text))
+		fmt.Fprintf(w, "! %s\n", plain(localizer.Render(f.Msg)))
 	}
 	return nil
 }
@@ -603,7 +601,7 @@ func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	}
 	tw.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", plain(f.Text))
+		fmt.Fprintf(w, "\n! %s", plain(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)
