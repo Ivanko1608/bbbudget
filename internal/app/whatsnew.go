@@ -48,7 +48,11 @@ func (a *App) WhatsNew(ctx context.Context, id string, req WhatsNewRequest) (*Wh
 	}
 	fromRevision := req.FromRevision
 	if fromRevision == FromOwnLastChange {
-		fromRevision = findOwnLastChange(history, req.Asker)
+		ownLastChange, found := findOwnLastChange(history, req.Asker)
+		if !found {
+			return nil, fmt.Errorf("%w: the budget has no history", ErrBadInput)
+		}
+		fromRevision = ownLastChange
 	}
 	before, err := a.budgetAsOf(ctx, id, history, fromRevision, now.Revision)
 	if err != nil {
@@ -69,15 +73,16 @@ func (a *App) WhatsNew(ctx context.Context, id string, req WhatsNewRequest) (*Wh
 
 // findOwnLastChange is the revision of the asker's newest change in history
 // (newest first), or of the oldest change kept when the asker made none.
-func findOwnLastChange(history []store.Entry, asker store.Source) int64 {
+// It finds nothing only when the history is empty.
+func findOwnLastChange(history []store.Entry, asker store.Source) (revision int64, found bool) {
 	if len(history) == 0 {
-		return FromOwnLastChange
+		return 0, false
 	}
 	byAsker := func(entry store.Entry) bool { return entry.Source == asker }
 	if i := slices.IndexFunc(history, byAsker); i >= 0 {
-		return history[i].Revision
+		return history[i].Revision, true
 	}
-	return history[len(history)-1].Revision
+	return history[len(history)-1].Revision, true
 }
 
 // budgetAsOf is the budget as it was at fromRevision: the version saved
