@@ -223,7 +223,9 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 }
 
 // deleteTransactions removes the ids or the batch in, whichever it names.
-func (h *handlers) deleteTransactions(ctx context.Context, id string, in DeleteTransactionsIn) (int, error) {
+func (h *handlers) deleteTransactions(
+	ctx context.Context, id string, in DeleteTransactionsIn,
+) (int, error) {
 	byIDs := len(in.IDs) > 0
 	byBatch := in.Batch != ""
 	switch {
