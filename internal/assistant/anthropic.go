@@ -117,8 +117,8 @@ type anthropicConversation struct {
 	messages []anthropic.BetaMessageParam
 }
 
-// SendText forgets the message when the request fails, so the person can send it
-// again.
+// SendText forgets the message when the request fails, so the person can send
+// it again.
 func (c *anthropicConversation) SendText(ctx context.Context, text string) (Turn, error) {
 	kept := len(c.messages)
 	message := anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(text))
