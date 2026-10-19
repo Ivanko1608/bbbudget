@@ -8,9 +8,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// workflow is a common job, offered to the user as a slash command. Its
+// promptTemplate is a common job, offered to the user as a slash command. Its
 // text is a short procedure over the tools the server already has.
-type workflow struct {
+type promptTemplate struct {
 	name        string
 	title       string
 	description string
@@ -23,34 +23,34 @@ type promptArgs map[string]string
 
 func (args promptArgs) get(name string) string { return strings.TrimSpace(args[name]) }
 
-func (args promptArgs) getOr(name, fallback string) string {
+func (args promptArgs) getOrDefault(name, fallback string) string {
 	if value := args.get(name); value != "" {
 		return value
 	}
 	return fallback
 }
 
-func required(name, description string) *mcp.PromptArgument {
+func requiredArgument(name, description string) *mcp.PromptArgument {
 	return &mcp.PromptArgument{Name: name, Description: description, Required: true}
 }
 
-func optional(name, description string) *mcp.PromptArgument {
+func optionalArgument(name, description string) *mcp.PromptArgument {
 	return &mcp.PromptArgument{Name: name, Description: description}
 }
 
 var (
-	budgetArg   = optional("budget", "budget id; omit for the default")
-	languageArg = optional("language", "language to answer in; default: the one the user writes in")
-	monthArg    = optional("month", "YYYY-MM; default this month")
+	budgetArg   = optionalArgument("budget", "budget id; omit for the default")
+	languageArg = optionalArgument("language", "language to answer in; default: the one the user writes in")
+	monthArg    = optionalArgument("month", "YYYY-MM; default this month")
 )
 
-var workflows = []workflow{
+var promptTemplates = []promptTemplate{
 	{
 		name:        "onboard",
 		title:       "Set up a budget by talking",
 		description: "Build a new budget from a short interview instead of filling in forms.",
 		arguments: []*mcp.PromptArgument{
-			optional("id", "id for the new budget, e.g. home"),
+			optionalArgument("id", "id for the new budget, e.g. home"),
 			languageArg,
 		},
 		text: onboardText,
@@ -67,9 +67,9 @@ var workflows = []workflow{
 		title:       "Can I afford it?",
 		description: "Check a purchase against the plan before making it.",
 		arguments: []*mcp.PromptArgument{
-			required("item", "what you want to buy"),
-			required("amount", "price, e.g. 1200 or 1200 USD"),
-			optional("when", "YYYY-MM; default this month"),
+			requiredArgument("item", "what you want to buy"),
+			requiredArgument("amount", "price, e.g. 1200 or 1200 USD"),
+			optionalArgument("when", "YYYY-MM; default this month"),
 			budgetArg,
 			languageArg,
 		},
@@ -87,7 +87,7 @@ var workflows = []workflow{
 		title:       "Import a bank statement",
 		description: "Turn a pasted bank or card statement into logged transactions.",
 		arguments: []*mcp.PromptArgument{
-			optional("statement", "the statement text (CSV or copied rows)"),
+			optionalArgument("statement", "the statement text (CSV or copied rows)"),
 			budgetArg,
 			languageArg,
 		},
@@ -95,14 +95,14 @@ var workflows = []workflow{
 	},
 }
 
-func answerIn(args promptArgs) string {
+func languageInstruction(args promptArgs) string {
 	if language := args.get("language"); language != "" {
 		return "Answer in " + language + "."
 	}
 	return "Answer in the language the user writes in."
 }
 
-func whichBudget(args promptArgs) string {
+func budgetPhrase(args promptArgs) string {
 	if id := args.get("budget"); id != "" {
 		return fmt.Sprintf("the budget %q", id)
 	}
@@ -114,7 +114,7 @@ func onboardText(args promptArgs) string {
 	if id := args.get("id"); id != "" {
 		newBudget = fmt.Sprintf("a new budget with id %q", id)
 	}
-	return `Help me set up a budget in bbbudget by interviewing me. ` + answerIn(args) + `
+	return `Help me set up a budget in bbbudget by interviewing me. ` + languageInstruction(args) + `
 Ask a few questions at a time, in this order, and keep it conversational:
 1. The currency I think in (the base currency), and the other currencies I get paid or pay
    in (crypto counts).
@@ -134,8 +134,8 @@ Mention that every change can be undone.`
 }
 
 func monthlyReviewText(args promptArgs) string {
-	month := args.getOr("month", "this month")
-	return `Review ` + month + ` for ` + whichBudget(args) + `. ` + answerIn(args) + `
+	month := args.getOrDefault("month", "this month")
+	return `Review ` + month + ` for ` + budgetPhrase(args) + `. ` + languageInstruction(args) + `
 1. Call whats_new to see what changed since we last spoke, and month_status for ` + month + `.
 2. Tell me in a few sentences where the month stands: spent versus planned, which
    categories are over or on course to go over, and anything spent that wasn't planned.
@@ -147,9 +147,9 @@ Keep it short. Numbers come from the tool results, never estimated.`
 
 func canIAffordText(args promptArgs) string {
 	purchase := args.get("item") + " for " + args.get("amount")
-	when := args.getOr("when", "this month")
-	return `Can I afford ` + purchase + ` in ` + when + `? Use ` + whichBudget(args) + `. ` +
-		answerIn(args) + `
+	when := args.getOrDefault("when", "this month")
+	return `Can I afford ` + purchase + ` in ` + when + `? Use ` + budgetPhrase(args) + `. ` +
+		languageInstruction(args) + `
 Model it with what_if as a one-off item (schedule {"starts": the month, "every": 0}) in a
 fitting category. Don't save anything.
 Answer with yes, no, or "yes, but" first, then why, from the effect: what that month is
@@ -160,7 +160,7 @@ elsewhere), quantified with one more what_if.`
 }
 
 func debtPlanText(args promptArgs) string {
-	return `Help me plan paying off the debts in ` + whichBudget(args) + `. ` + answerIn(args) + `
+	return `Help me plan paying off the debts in ` + budgetPhrase(args) + `. ` + languageInstruction(args) + `
 1. get_budget with view "debts": balances, rates, minimums, and payoff dates as things stand.
 2. save_scenario for avalanche versus snowball (debt_strategy), and for two or three levels
    of extra_to_debt_pct that the monthly leftover can carry. Then compare_scenarios.
@@ -170,8 +170,8 @@ func debtPlanText(args promptArgs) string {
 }
 
 func importStatementText(args promptArgs) string {
-	statement := args.getOr("statement", "(ask me to paste it)")
-	return `Log my bank statement into ` + whichBudget(args) + `. ` + answerIn(args) + `
+	statement := args.getOrDefault("statement", "(ask me to paste it)")
+	return `Log my bank statement into ` + budgetPhrase(args) + `. ` + languageInstruction(args) + `
 1. get_budget with view "items" for the categories and items.
 2. Read every row: date (YYYY-MM-DD), amount, currency, description. Skip transfers
    between my own accounts and card repayments, and tell me you did.
@@ -188,34 +188,34 @@ Statement:
 }
 
 func registerPrompts(s *mcp.Server) {
-	for _, w := range workflows {
+	for _, t := range promptTemplates {
 		prompt := &mcp.Prompt{
-			Name:        w.name,
-			Title:       w.title,
-			Description: w.description,
-			Arguments:   w.arguments,
+			Name:        t.name,
+			Title:       t.title,
+			Description: t.description,
+			Arguments:   t.arguments,
 		}
-		s.AddPrompt(prompt, w.get)
+		s.AddPrompt(prompt, t.render)
 	}
 }
 
-func (w workflow) get(
+func (t promptTemplate) render(
 	ctx context.Context, req *mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	args := promptArgs(req.Params.Arguments)
-	if missing := w.missingArgument(args); missing != "" {
-		return nil, fmt.Errorf("%s needs %q", w.name, missing)
+	if missing := t.missingArgument(args); missing != "" {
+		return nil, fmt.Errorf("%s needs %q", t.name, missing)
 	}
-	message := &mcp.PromptMessage{Role: "user", Content: &mcp.TextContent{Text: w.text(args)}}
+	message := &mcp.PromptMessage{Role: "user", Content: &mcp.TextContent{Text: t.text(args)}}
 	return &mcp.GetPromptResult{
-		Description: w.description,
+		Description: t.description,
 		Messages:    []*mcp.PromptMessage{message},
 	}, nil
 }
 
 // missingArgument is the first required argument args lacks, or "".
-func (w workflow) missingArgument(args promptArgs) string {
-	for _, argument := range w.arguments {
+func (t promptTemplate) missingArgument(args promptArgs) string {
+	for _, argument := range t.arguments {
 		if argument.Required && args.get(argument.Name) == "" {
 			return argument.Name
 		}

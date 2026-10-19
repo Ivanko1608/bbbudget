@@ -6,7 +6,7 @@ import { t } from "./i18n.js";
 
 const $ = (sel) => document.querySelector(sel);
 const panel = $("#chat");
-const log = $("#chatLog");
+const messageList = $("#chatLog");
 const form = $("#chatForm");
 
 let conversation = "";
@@ -20,55 +20,55 @@ export function initAssistant(status, { budget, changed }) {
   currentBudget = budget;
   onChanged = changed;
   $("#chatBtn").hidden = !status?.ready;
-  $("#chatWhere").textContent = whereItRuns(status);
+  $("#chatWhere").textContent = modelLocationText(status);
 }
 
-function whereItRuns(status) {
+function modelLocationText(status) {
   if (!status?.ready) return "";
   if (status.on_this_machine) return t("chat.where_local", { model: status.model });
   return t("chat.where_remote", { model: status.model });
 }
 
-function startOver() {
+function resetConversation() {
   conversation = "";
   conversationBudget = currentBudget();
-  log.replaceChildren();
+  messageList.replaceChildren();
 }
 
 function openPanel() {
-  if (conversationBudget !== currentBudget()) startOver();
+  if (conversationBudget !== currentBudget()) resetConversation();
   panel.show();
   form.message.focus();
 }
 
-function addLine(kind, text) {
+function appendMessage(kind, text) {
   const line = document.createElement("div");
   line.className = `msg msg-${kind}`;
   line.textContent = text;
-  log.append(line);
+  messageList.append(line);
   line.scrollIntoView({ block: "end" });
 }
 
-function toolLine(event) {
+function toolCallText(event) {
   const call = t("chat.tool", { tool: event.tool });
   const outcome = event.error || event.change;
   if (!outcome) return call;
   return `${call}: ${outcome}`;
 }
 
-const HANDLERS = {
-  text: (event) => addLine("assistant", event.text),
-  tool: (event) => addLine("tool", toolLine(event)),
+const EVENT_HANDLERS = {
+  text: (event) => appendMessage("assistant", event.text),
+  tool: (event) => appendMessage("tool", toolCallText(event)),
   changed: () => onChanged(),
-  error: (event) => addLine("error", event.error),
+  error: (event) => appendMessage("error", event.error),
   done: (event) => { conversation = event.conversation || ""; },
 };
 
-function handle(event) {
-  HANDLERS[event.type]?.(event);
+function handleEvent(event) {
+  EVENT_HANDLERS[event.type]?.(event);
 }
 
-// readEvents calls handle for each server-sent event in the response body.
+// readEvents calls handleEvent for each server-sent event in the response body.
 async function readEvents(body) {
   const reader = body.pipeThrough(new TextDecoderStream()).getReader();
   let buffered = "";
@@ -78,7 +78,7 @@ async function readEvents(body) {
     buffered += value;
     const messages = buffered.split("\n\n");
     buffered = messages.pop();
-    for (const message of messages) handle(JSON.parse(message.replace(/^data: /, "")));
+    for (const message of messages) handleEvent(JSON.parse(message.replace(/^data: /, "")));
   }
 }
 
@@ -101,33 +101,33 @@ function setBusy(busy) {
   $("#chatState").textContent = busy ? t("chat.working") : "";
 }
 
-async function send(e) {
-  e.preventDefault();
+async function submitMessage(event) {
+  event.preventDefault();
   const message = form.message.value.trim();
   if (!message || form.send.disabled) return;
-  if (conversationBudget !== currentBudget()) startOver();
+  if (conversationBudget !== currentBudget()) resetConversation();
   form.message.value = "";
-  addLine("user", message);
+  appendMessage("user", message);
   setBusy(true);
   try {
     await postMessage(message);
   } catch (err) {
-    addLine("error", t("chat.failed", { error: err.message }));
+    appendMessage("error", t("chat.failed", { error: err.message }));
   } finally {
     setBusy(false);
   }
 }
 
 // Enter sends; Shift+Enter starts a new line.
-function sendOnEnter(e) {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
+function sendOnEnter(event) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
     form.requestSubmit();
   }
 }
 
 $("#chatBtn").addEventListener("click", openPanel);
 $("#chatClose").addEventListener("click", () => panel.close());
-$("#chatNew").addEventListener("click", startOver);
-form.addEventListener("submit", send);
+$("#chatNew").addEventListener("click", resetConversation);
+form.addEventListener("submit", submitMessage);
 form.message.addEventListener("keydown", sendOnEnter);

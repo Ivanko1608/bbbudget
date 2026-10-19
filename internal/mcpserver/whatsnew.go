@@ -13,14 +13,14 @@ import (
 
 type WhatsNewIn struct {
 	Ref
-	Since int64 `json:"since_revision,omitempty" jsonschema:"compare against this revision; default: your own last change"`
+	FromRevision int64 `json:"from_revision,omitempty" jsonschema:"a revision number; 0 or omitted means your own last change"`
 }
 
 // whatsNewResult is what happened to a budget while the assistant wasn't
 // looking: who changed what, and what all of it did to the outcome.
 type whatsNewResult struct {
 	Budget          string        `json:"budget"`
-	Since           int64         `json:"since_revision"`
+	FromRevision    int64         `json:"from_revision"`
 	Revision        int64         `json:"revision"`
 	ChangesByOthers []store.Entry `json:"changes_by_others"`
 	Change          string        `json:"change"`
@@ -30,18 +30,18 @@ type whatsNewResult struct {
 }
 
 const whatsNewDescription = `What happened to the budget since your own last change (or ` +
-	`since_revision): changes others made (the person in the browser, the command line, ` +
+	`from_revision): changes others made (the person in the browser, the command line, ` +
 	`rate refreshes), what all of it did to totals, debt payoffs, goal dates and insights, ` +
 	`and this month's plan-versus-actual flags. Call it at the start of a conversation ` +
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	readTool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
+	addReadTool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		return h.whatsNew(ctx, id, in.Since)
+		return h.whatsNew(ctx, id, in.FromRevision)
 	})
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
@@ -57,7 +57,7 @@ func (h *handlers) readWhatsNew(
 ) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
 	id := strings.TrimPrefix(uri, "whats-new://")
-	result, err := h.whatsNew(ctx, id, app.SinceOwnLastChange)
+	result, err := h.whatsNew(ctx, id, app.FromOwnLastChange)
 	if err != nil {
 		return nil, mcp.ResourceNotFoundError(uri)
 	}
@@ -69,8 +69,8 @@ func (h *handlers) readWhatsNew(
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
 }
 
-func (h *handlers) whatsNew(ctx context.Context, id string, since int64) (whatsNewResult, error) {
-	req := app.WhatsNewRequest{Asker: h.origin.Source, Since: since}
+func (h *handlers) whatsNew(ctx context.Context, id string, fromRevision int64) (whatsNewResult, error) {
+	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
 	news, err := h.app.WhatsNew(ctx, id, req)
 	if err != nil {
 		return whatsNewResult{}, err
@@ -79,11 +79,11 @@ func (h *handlers) whatsNew(ctx context.Context, id string, since int64) (whatsN
 	if err != nil {
 		return whatsNewResult{}, err
 	}
-	reader := h.reader()
+	reader := h.localizer()
 	app.LocalizeHistory(news.ByOthers, reader)
 	result := whatsNewResult{
 		Budget:          id,
-		Since:           news.Since,
+		FromRevision:    news.FromRevision,
 		Revision:        news.Now.Revision,
 		ChangesByOthers: news.ByOthers,
 		Change:          change.Change,
@@ -92,7 +92,7 @@ func (h *handlers) whatsNew(ctx context.Context, id string, since int64) (whatsN
 	}
 	if news.ThisMonth != nil {
 		news.ThisMonth.Localize(reader)
-		thisMonth := statusResult(news.ThisMonth)
+		thisMonth := toStatusOut(news.ThisMonth)
 		result.ThisMonth = &thisMonth
 	}
 	return result, nil

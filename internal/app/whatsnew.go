@@ -10,24 +10,24 @@ import (
 	"bbbudget/internal/store"
 )
 
-// SinceOwnLastChange asks WhatsNew to start from the asker's own last change.
-const SinceOwnLastChange int64 = 0
+// FromOwnLastChange asks WhatsNew to start from the asker's own last change.
+const FromOwnLastChange int64 = 0
 
 // WhatsNewRequest says who is asking, and from which revision to compare.
 type WhatsNewRequest struct {
 	Asker store.Source
-	// Since is a revision, or SinceOwnLastChange.
-	Since int64
+	// FromRevision is a revision, or FromOwnLastChange.
+	FromRevision int64
 }
 
 // WhatsNew is what happened to a budget since a revision.
 type WhatsNew struct {
-	// Since is the revision compared against.
-	Since int64
-	// ByOthers are the changes after Since that someone other than the
+	// FromRevision is the revision compared against.
+	FromRevision int64
+	// ByOthers are the changes after FromRevision that someone other than the
 	// asker made, newest first. Summaries are in English.
 	ByOthers []store.Entry
-	// Before is the budget as of Since.
+	// Before is the budget as of FromRevision.
 	Before budget.Budget
 	Now    *View
 	// ThisMonth is this month's plan versus actual, or nil when this month
@@ -46,11 +46,11 @@ func (a *App) WhatsNew(ctx context.Context, id string, req WhatsNewRequest) (*Wh
 	if err != nil {
 		return nil, err
 	}
-	since := req.Since
-	if since == SinceOwnLastChange {
-		since = ownLastChange(history, req.Asker)
+	fromRevision := req.FromRevision
+	if fromRevision == FromOwnLastChange {
+		fromRevision = findOwnLastChange(history, req.Asker)
 	}
-	before, err := a.budgetAsOf(ctx, id, history, since, now.Revision)
+	before, err := a.budgetAsOf(ctx, id, history, fromRevision, now.Revision)
 	if err != nil {
 		return nil, err
 	}
@@ -59,19 +59,19 @@ func (a *App) WhatsNew(ctx context.Context, id string, req WhatsNewRequest) (*Wh
 		return nil, err
 	}
 	return &WhatsNew{
-		Since:     since,
-		ByOthers:  changesByOthers(history, since, req.Asker),
-		Before:    before,
-		Now:       now,
-		ThisMonth: thisMonth,
+		FromRevision: fromRevision,
+		ByOthers:     listChangesByOthers(history, fromRevision, req.Asker),
+		Before:       before,
+		Now:          now,
+		ThisMonth:    thisMonth,
 	}, nil
 }
 
-// ownLastChange is the revision of the asker's newest change in history
+// findOwnLastChange is the revision of the asker's newest change in history
 // (newest first), or of the oldest change kept when the asker made none.
-func ownLastChange(history []store.Entry, asker store.Source) int64 {
+func findOwnLastChange(history []store.Entry, asker store.Source) int64 {
 	if len(history) == 0 {
-		return SinceOwnLastChange
+		return FromOwnLastChange
 	}
 	byAsker := func(entry store.Entry) bool { return entry.Source == asker }
 	if i := slices.IndexFunc(history, byAsker); i >= 0 {
@@ -80,28 +80,28 @@ func ownLastChange(history []store.Entry, asker store.Source) int64 {
 	return history[len(history)-1].Revision
 }
 
-// budgetAsOf is the budget as it was at revision since: the version saved
+// budgetAsOf is the budget as it was at revision fromRevision: the version saved
 // by the newest change at or before it.
 func (a *App) budgetAsOf(
-	ctx context.Context, id string, history []store.Entry, since, current int64,
+	ctx context.Context, id string, history []store.Entry, fromRevision, current int64,
 ) (budget.Budget, error) {
-	if since > current {
+	if fromRevision > current {
 		return budget.Budget{}, fmt.Errorf("%w: r%d is newer than the budget (r%d)",
-			ErrBadInput, since, current)
+			ErrBadInput, fromRevision, current)
 	}
-	notLater := func(entry store.Entry) bool { return entry.Revision <= since }
+	notLater := func(entry store.Entry) bool { return entry.Revision <= fromRevision }
 	i := slices.IndexFunc(history, notLater)
 	if i < 0 {
 		return budget.Budget{}, fmt.Errorf("%w: the history no longer reaches back to r%d",
-			ErrBadInput, since)
+			ErrBadInput, fromRevision)
 	}
 	return a.Store.Snapshot(ctx, id, history[i].Revision)
 }
 
-func changesByOthers(history []store.Entry, since int64, asker store.Source) []store.Entry {
+func listChangesByOthers(history []store.Entry, fromRevision int64, asker store.Source) []store.Entry {
 	others := []store.Entry{}
 	for _, entry := range history {
-		if entry.Revision > since && entry.Source != asker {
+		if entry.Revision > fromRevision && entry.Source != asker {
 			others = append(others, entry)
 		}
 	}

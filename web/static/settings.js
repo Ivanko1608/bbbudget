@@ -99,7 +99,7 @@ function syncAssistantFields() {
   form.assistant_model.placeholder = MODEL_PLACEHOLDERS[provider] || "";
 }
 
-function assistantPatch() {
+function readAssistantSettings() {
   const patch = {
     assistant_provider: form.assistant_provider.value,
     assistant_model: form.assistant_model.value.trim(),
@@ -131,7 +131,7 @@ form.addEventListener("submit", (e) => {
     fetch_rates: form.fetch_rates.checked,
     default_rate_source: form.default_rate_source.value,
     auto_refresh: form.auto_refresh.value,
-    ...assistantPatch(),
+    ...readAssistantSettings(),
   };
   const key = form.coingecko_api_key.value.trim();
   if (key) patch.coingecko_api_key = key; // empty means "keep the current key"

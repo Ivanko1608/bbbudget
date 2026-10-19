@@ -10,7 +10,7 @@ const chrome = findChrome();
 const skip = chrome ? false : "no Chromium found (set CHROME)";
 let srv, page, model;
 
-const SETS_RENT = {
+const SET_RENT_TOOL_CALL = {
   role: "assistant",
   content: "",
   tool_calls: [{
@@ -19,20 +19,20 @@ const SETS_RENT = {
     function: { name: "update_item", arguments: JSON.stringify({ item: "Rent", amount: "1000" }) },
   }],
 };
-const CONFIRMS = { role: "assistant", content: "Rent is now 1000 a month." };
+const CONFIRMATION = { role: "assistant", content: "Rent is now 1000 a month." };
 
-// replyTo answers the person with a tool call, and the tool's result with text.
-function replyTo(request) {
+// fakeModelReply answers the person with a tool call, and the tool's result with text.
+function fakeModelReply(request) {
   const last = request.messages.at(-1);
-  if (last.role === "tool") return CONFIRMS;
-  return SETS_RENT;
+  if (last.role === "tool") return CONFIRMATION;
+  return SET_RENT_TOOL_CALL;
 }
 
-function startModel() {
+function startFakeModel() {
   const server = createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
-    const message = replyTo(JSON.parse(body));
+    const message = fakeModelReply(JSON.parse(body));
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ choices: [{ message }] }));
   });
@@ -41,7 +41,7 @@ function startModel() {
 
 before(async () => {
   if (skip) return;
-  model = await startModel();
+  model = await startFakeModel();
   srv = await startServer();
   page = await startBrowser(chrome);
   await srv.api("PUT", "/api/settings", {
@@ -56,7 +56,7 @@ after(async () => {
   model?.close();
 });
 
-async function ask(message) {
+async function sendChatMessage(message) {
   await page.click("#chatBtn");
   await page.fill("#chatForm textarea", message);
   await page.eval(`document.querySelector("#chatForm").requestSubmit()`);
@@ -68,10 +68,10 @@ test("the assistant changes the budget and the page shows it", { skip }, async (
   await page.goto(`${srv.base}/#${id}/items`);
   const summaryBefore = await page.text("#railSummary");
 
-  await ask("Set rent to 1000");
+  await sendChatMessage("Set rent to 1000");
 
   await waitFor(() => page.exists(".msg-assistant"), "the answer");
-  assert.equal(await page.text(".msg-assistant"), CONFIRMS.content);
+  assert.equal(await page.text(".msg-assistant"), CONFIRMATION.content);
   assert.match(await page.text(".msg-tool"), /update_item/);
   const rent = (await srv.budget(id)).items.find((item) => item.name === "Rent");
   assert.equal(rent.amount, "1000");

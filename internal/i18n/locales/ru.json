@@ -117,7 +117,7 @@
   "issue.date_format": "должно быть в формате ГГГГ-ММ-ДД, а не \"{value}\"",
   "issue.too_long": "слишком длинно (не больше {max} символов)",
   "status.over": "{category}: потрачено {actual} из запланированных {planned}, **перерасход {over}**.",
-  "status.pace": "{category}: в таком темпе к концу месяца будет около **{projected}** при плане {planned}.",
+  "status.projected_over": "{category}: в таком темпе к концу месяца будет около **{projected}** при плане {planned}.",
   "status.unplanned": "{category}: потрачено **{actual}**, хотя ничего не планировалось.",
   "status.short": "{category}: поступило {actual}, **меньше запланированных {planned}**.",
 
