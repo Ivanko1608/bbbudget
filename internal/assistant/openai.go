@@ -124,7 +124,7 @@ type openAIChoice struct {
 func (p *OpenAICompatible) Start(system string, tools []Tool) Conversation {
 	offered := make([]openAITool, 0, len(tools))
 	for _, tool := range tools {
-		offered = append(offered, openAIToolOf(tool))
+		offered = append(offered, toOpenAITool(tool))
 	}
 	return &openAIConversation{
 		provider: p,
@@ -133,7 +133,7 @@ func (p *OpenAICompatible) Start(system string, tools []Tool) Conversation {
 	}
 }
 
-func openAIToolOf(tool Tool) openAITool {
+func toOpenAITool(tool Tool) openAITool {
 	function := openAIToolFunction{
 		Name:        tool.Name,
 		Description: tool.Description,
@@ -188,15 +188,15 @@ func (c *openAIConversation) complete(ctx context.Context) (Turn, error) {
 		return Turn{}, err
 	}
 	reply.Role = roleAssistant
-	nameUnnamedCalls(reply.ToolCalls, len(c.messages))
+	assignMissingCallIDs(reply.ToolCalls, len(c.messages))
 	c.messages = append(c.messages, reply)
-	return turnOf(reply), nil
+	return turnFromOpenAI(reply), nil
 }
 
-// nameUnnamedCalls gives an id to each call the server left without one,
+// assignMissingCallIDs gives an id to each call the server left without one,
 // as some do, so the results can answer it. The ids are unique within the
 // conversation because position is the index of the reply in it.
-func nameUnnamedCalls(calls []openAIToolCall, position int) {
+func assignMissingCallIDs(calls []openAIToolCall, position int) {
 	for i := range calls {
 		if calls[i].ID == "" {
 			calls[i].ID = fmt.Sprintf("call_%d_%d", position, i)
@@ -204,7 +204,7 @@ func nameUnnamedCalls(calls []openAIToolCall, position int) {
 	}
 }
 
-func turnOf(reply openAIMessage) Turn {
+func turnFromOpenAI(reply openAIMessage) Turn {
 	turn := Turn{Text: reply.Content}
 	for _, call := range reply.ToolCalls {
 		turn.Calls = append(turn.Calls, ToolCall{

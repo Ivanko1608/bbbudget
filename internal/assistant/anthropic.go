@@ -66,24 +66,24 @@ func (p *Anthropic) Start(system string, tools []Tool) Conversation {
 	})
 	offered := make([]anthropic.BetaToolUnionParam, 0, len(sorted))
 	for _, tool := range sorted {
-		offered = append(offered, anthropicToolOf(tool))
+		offered = append(offered, toAnthropicTool(tool))
 	}
 	return &anthropicConversation{provider: p, system: system, tools: offered}
 }
 
-func anthropicToolOf(tool Tool) anthropic.BetaToolUnionParam {
+func toAnthropicTool(tool Tool) anthropic.BetaToolUnionParam {
 	param := anthropic.BetaToolParam{
 		Name:        tool.Name,
 		Description: anthropic.String(tool.Description),
-		InputSchema: inputSchemaOf(tool.Schema),
+		InputSchema: toInputSchema(tool.Schema),
 	}
 	return anthropic.BetaToolUnionParam{OfTool: &param}
 }
 
-// inputSchemaOf moves a decoded JSON Schema object into the SDK's type:
+// toInputSchema moves a decoded JSON Schema object into the SDK's type:
 // properties and required have fields of their own, the rest goes along
 // as it is.
-func inputSchemaOf(schema any) anthropic.BetaToolInputSchemaParam {
+func toInputSchema(schema any) anthropic.BetaToolInputSchemaParam {
 	object, _ := schema.(map[string]any)
 	param := anthropic.BetaToolInputSchemaParam{ExtraFields: map[string]any{}}
 	for key, value := range object {
@@ -154,7 +154,7 @@ func (c *anthropicConversation) complete(ctx context.Context) (Turn, error) {
 	// The response goes back into the history unchanged, thinking blocks
 	// included: the API needs them on the next request.
 	c.messages = append(c.messages, response.ToParam())
-	return anthropicTurnOf(response), nil
+	return turnFromAnthropic(response), nil
 }
 
 func (c *anthropicConversation) request() anthropic.BetaMessageNewParams {
@@ -179,7 +179,7 @@ func (c *anthropicConversation) request() anthropic.BetaMessageNewParams {
 	}
 }
 
-func anthropicTurnOf(response *anthropic.BetaMessage) Turn {
+func turnFromAnthropic(response *anthropic.BetaMessage) Turn {
 	var turn Turn
 	for _, block := range response.Content {
 		switch content := block.AsAny().(type) {
