@@ -57,6 +57,11 @@ Few and short.
 - Build strings in named variables before you interpolate them.
 - No ternaries nested inside template literals.
 
+## Tooling
+
+- **Reuse before building.** Before writing a script, hook, CI step or helper, check the standard library, `go.mod`, installed skills and plugins, and well-known tools (gitleaks, pre-commit hooks, GitHub Actions). The leak scan is tinfoil's `leakscan.py`: extend tinfoil, don't copy it here.
+- Write your own only when nothing fits, and say in the PR what you checked and why it didn't fit.
+
 ## Pull requests
 
 - **Keep a PR under 1000 added lines**. 1500 is the hard limit. Split bigger work into stacked PRs, each one reviewable on its own.
