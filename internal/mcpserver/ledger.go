@@ -43,34 +43,16 @@ type StatusIn struct {
 	Month string `json:"month,omitempty" jsonschema:"YYYY-MM; default the current month"`
 }
 
-type txRow struct {
-	ID       string `json:"id"`
-	Date     string `json:"date"`
-	Amount   string `json:"amount"`
-	Currency string `json:"currency"`
-	Base     string `json:"base"`
-	Category string `json:"category"`
-	Item     string `json:"item,omitempty"`
-	Note     string `json:"note,omitempty"`
-	Batch    string `json:"batch"`
+// removedResult is what deleting transactions returns.
+type removedResult struct {
+	Removed int `json:"removed"`
 }
 
-func txRows(txs []budget.Transaction) []txRow {
-	out := make([]txRow, len(txs))
-	for i, t := range txs {
-		out[i] = txRow{
-			ID:       t.ID,
-			Date:     t.Date,
-			Amount:   t.Amount.String(),
-			Currency: t.Currency,
-			Base:     t.Base.String(),
-			Category: t.Category,
-			Item:     t.Item,
-			Note:     t.Note,
-			Batch:    t.Batch,
-		}
-	}
-	return out
+// loggedResult is what logging transactions returns: the ledger's answer,
+// and the flags of each month the transactions fall in.
+type loggedResult struct {
+	*app.LogResult
+	Flags map[string][]string `json:"flags,omitempty"`
 }
 
 type statusRow struct {
@@ -178,22 +160,15 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			res, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
+			logged, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
 			if err != nil {
 				return nil, err
 			}
-			flags, err := h.flagsByMonth(ctx, id, res.Logged)
+			flags, err := h.flagsByMonth(ctx, id, logged.Logged)
 			if err != nil {
 				return nil, err
 			}
-			out := map[string]any{"batch": res.Batch, "logged": txRows(res.Logged)}
-			if len(res.Skipped) > 0 {
-				out["skipped_already_logged"] = res.Skipped
-			}
-			if len(flags) > 0 {
-				out["flags"] = flags
-			}
-			return out, nil
+			return loggedResult{LogResult: logged, Flags: flags}, nil
 		})
 	readTool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
 		func(ctx context.Context, in ListTxIn) (any, error) {
@@ -211,11 +186,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 				Batch:    in.Batch,
 				Limit:    in.Limit,
 			}
-			txs, err := h.app.ListTransactions(ctx, id, filter)
-			if err != nil {
-				return nil, err
-			}
-			return txRows(txs), nil
+			return h.app.ListTransactions(ctx, id, filter)
 		})
 	tool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
 		func(ctx context.Context, in UpdateTxIn) (any, error) {
@@ -223,11 +194,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			t, err := h.app.UpdateTransaction(ctx, id, in.ID, in.TxPatch)
-			if err != nil {
-				return nil, err
-			}
-			return txRows([]budget.Transaction{*t})[0], nil
+			return h.app.UpdateTransaction(ctx, id, in.ID, in.TxPatch)
 		})
 	tool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
 		func(ctx context.Context, in DeleteTxIn) (any, error) {
@@ -235,11 +202,11 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			if err != nil {
 				return nil, err
 			}
-			n, err := h.deleteTransactions(ctx, id, in)
+			removed, err := h.deleteTransactions(ctx, id, in)
 			if err != nil {
 				return nil, err
 			}
-			return map[string]int{"removed": n}, nil
+			return removedResult{Removed: removed}, nil
 		})
 	readTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the pace so far, and flags for overspending, a pace that will overspend, and spending nothing was planned for. Amounts in the base currency.",
 		func(ctx context.Context, in StatusIn) (any, error) {
