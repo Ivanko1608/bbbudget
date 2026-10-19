@@ -36,8 +36,8 @@ func Run(ctx context.Context, c Case, provider assistant.Provider, dir string) R
 		result.Err = err
 		return result
 	}
-	talker := newAssistant(budgetApp, provider)
-	err = playTurns(ctx, talker, c.Turns, &result)
+	budgetAssistant := newAssistant(budgetApp, provider)
+	err = playTurns(ctx, budgetAssistant, c.Turns, &result)
 	if err != nil {
 		result.Err = err
 		return result
@@ -58,21 +58,21 @@ func createApp(ctx context.Context, dir, template string) (*app.App, error) {
 	budgetApp.Now = func() time.Time { return Today }
 	budgetApp.SettingsPath = filepath.Join(dir, "settings.json")
 	fromCLI := store.Origin{Source: store.SourceCLI}
-	lang := budgetApp.SettingsLocalizer()
-	_, err = budgetApp.Create(ctx, fromCLI, lang, budgetID, budgetName, template)
+	localizer := budgetApp.SettingsLocalizer()
+	_, err = budgetApp.Create(ctx, fromCLI, localizer, budgetID, budgetName, template)
 	return budgetApp, err
 }
 
 func newAssistant(budgetApp *app.App, provider assistant.Provider) *assistant.Assistant {
-	talker := assistant.New(budgetApp, func() (assistant.Provider, error) { return provider, nil })
-	talker.Now = func() time.Time { return Today }
-	return talker
+	budgetAssistant := assistant.New(budgetApp, func() (assistant.Provider, error) { return provider, nil })
+	budgetAssistant.Now = func() time.Time { return Today }
+	return budgetAssistant
 }
 
 // playTurns sends each turn in the same conversation and records the tools
 // called and the reply to the last turn in result.
 func playTurns(
-	ctx context.Context, talker *assistant.Assistant, turns []string, result *Result,
+	ctx context.Context, budgetAssistant *assistant.Assistant, turns []string, result *Result,
 ) error {
 	conversation := ""
 	for _, turn := range turns {
@@ -87,7 +87,7 @@ func playTurns(
 		}
 		request := assistant.Request{Conversation: conversation, Budget: budgetID, Message: turn}
 		var err error
-		conversation, err = talker.Reply(ctx, request, record)
+		conversation, err = budgetAssistant.Reply(ctx, request, record)
 		if err != nil {
 			return err
 		}

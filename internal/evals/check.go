@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -71,7 +72,8 @@ func checkWriters(history []store.Entry, want store.Source) []string {
 
 func checkItems(view *app.View, expect Expect) []string {
 	var failures []string
-	for id, wantFields := range expect.Items {
+	for _, id := range slices.Sorted(maps.Keys(expect.Items)) {
+		wantFields := expect.Items[id]
 		item, found := findItem(view.Budget.Items, id)
 		if !found {
 			failures = append(failures, fmt.Sprintf("no item %q", id))
@@ -107,7 +109,8 @@ func compareItem(startMonth string, item budget.Item, want map[ItemField]string)
 		ItemStarts:   budget.MonthKey(startMonth, item.Schedule.Start),
 	}
 	var failures []string
-	for field, wantValue := range want {
+	for _, field := range slices.Sorted(maps.Keys(want)) {
+		wantValue := want[field]
 		got, known := actual[field]
 		switch {
 		case !known:
@@ -126,7 +129,7 @@ func checkTransactions(transactions []budget.Transaction, expect Expect) []strin
 		failures = append(failures,
 			fmt.Sprintf("transactions: %d logged, want %d", len(transactions), *expect.Transactions))
 	}
-	if expect.Transaction != nil && !slices.ContainsFunc(transactions, matches(expect.Transaction)) {
+	if expect.Transaction != nil && !slices.ContainsFunc(transactions, matchesTransaction(expect.Transaction)) {
 		logged, _ := json.Marshal(transactions)
 		failures = append(failures,
 			fmt.Sprintf("no logged transaction matches %v; have %s", expect.Transaction, logged))
@@ -134,7 +137,7 @@ func checkTransactions(transactions []budget.Transaction, expect Expect) []strin
 	return failures
 }
 
-func matches(want map[TransactionField]string) func(budget.Transaction) bool {
+func matchesTransaction(want map[TransactionField]string) func(budget.Transaction) bool {
 	return func(transaction budget.Transaction) bool {
 		actual := map[TransactionField]string{
 			TransactionDate:     transaction.Date,
@@ -143,7 +146,8 @@ func matches(want map[TransactionField]string) func(budget.Transaction) bool {
 			TransactionCategory: transaction.Category,
 			TransactionBase:     transaction.Base.String(),
 		}
-		for field, wantValue := range want {
+		for _, field := range slices.Sorted(maps.Keys(want)) {
+			wantValue := want[field]
 			if !sameValue(actual[field], wantValue) {
 				return false
 			}
