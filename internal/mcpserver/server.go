@@ -3,6 +3,7 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -81,14 +82,14 @@ refuses and lists their changes, so ask before forcing it. Use save_scenario + c
 to explore alternatives side by side. Items/debts/pots/withdrawals can be referenced by id, exact
 name, or an unambiguous part of a name.`
 
-// fromAssistant is the origin of every write made through MCP.
-var fromAssistant = store.Origin{Source: store.SourceMCP}
-
 // Options configures the server.
 type Options struct {
 	// DefaultBudget is used when a tool call omits "budget".
 	DefaultBudget string
 	Version       string
+	// Source is who the history names for every write; default
+	// store.SourceMCP, an outside MCP client.
+	Source store.Source
 }
 
 // New builds an MCP server over the app.
@@ -98,14 +99,20 @@ func New(a *app.App, opts Options) *mcp.Server {
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "bbbudget", Title: "Budget planner", Version: opts.Version},
 		&mcp.ServerOptions{Instructions: instructions})
-	h := &handlers{app: a, def: opts.DefaultBudget}
+	source := cmp.Or(opts.Source, store.SourceMCP)
+	h := &handlers{
+		app:           a,
+		defaultBudget: opts.DefaultBudget,
+		origin:        store.Origin{Source: source},
+	}
 	h.register(s)
 	return s
 }
 
 type handlers struct {
-	app *app.App
-	def string
+	app           *app.App
+	defaultBudget string
+	origin        store.Origin
 }
 
 var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
@@ -113,14 +120,28 @@ var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschem
 	reflect.TypeFor[json.RawMessage](): {Type: "object"},
 }}
 
-// tool registers a handler whose input schema is inferred from In with the
-// money-aware type mapping above. Handlers return any JSON-able value.
-func tool[In any](s *mcp.Server, name, desc string, fn func(context.Context, In) (any, error)) {
+// toolFunc handles a tool call and returns any JSON-able value.
+type toolFunc[In any] func(context.Context, In) (any, error)
+
+// addWriteTool registers a handler whose input schema is inferred from In with the
+// money-aware type mapping above.
+func addWriteTool[In any](s *mcp.Server, name, desc string, fn toolFunc[In]) {
+	addTool(s, &mcp.Tool{Name: name, Description: desc}, fn)
+}
+
+// addReadTool registers a tool that never changes anything.
+func addReadTool[In any](s *mcp.Server, name, desc string, fn toolFunc[In]) {
+	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	addTool(s, &mcp.Tool{Name: name, Description: desc, Annotations: readOnly}, fn)
+}
+
+func addTool[In any](s *mcp.Server, t *mcp.Tool, fn toolFunc[In]) {
 	schema, err := jsonschema.For[In](schemaOpts)
 	if err != nil {
-		panic(fmt.Sprintf("tool %s: %v", name, err))
+		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, InputSchema: schema},
+	t.InputSchema = schema
+	mcp.AddTool(s, t,
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 			out, err := fn(ctx, in)
 			if err != nil {
@@ -138,8 +159,8 @@ func (h *handlers) id(ref string) (string, error) {
 	if ref = strings.TrimSpace(ref); ref != "" {
 		return ref, nil
 	}
-	if h.def != "" {
-		return h.def, nil
+	if h.defaultBudget != "" {
+		return h.defaultBudget, nil
 	}
 	return "", fmt.Errorf(`"budget" is required (no default budget configured); call list_budgets`)
 }
@@ -273,17 +294,17 @@ Item schedules: give calendar months, {"starts":"YYYY-MM","ends":"YYYY-MM","ever
 }
 
 func (h *handlers) register(s *mcp.Server) {
-	tool(s, "list_budgets", "List stored budgets.", func(ctx context.Context, _ struct{}) (any, error) {
+	addReadTool(s, "list_budgets", "List stored budgets.", func(ctx context.Context, _ struct{}) (any, error) {
 		return h.app.List(ctx)
 	})
-	tool(s, "list_templates", "List templates a new budget can start from.", func(ctx context.Context, _ struct{}) (any, error) {
+	addReadTool(s, "list_templates", "List templates a new budget can start from.", func(ctx context.Context, _ struct{}) (any, error) {
 		return h.app.Templates.List(), nil
 	})
-	tool(s, "create_budget", "Create a budget from a template (see list_templates).", func(ctx context.Context, in CreateIn) (any, error) {
-		v, err := h.app.Create(ctx, fromAssistant, h.localizer(), in.ID, in.Name, in.Template)
+	addWriteTool(s, "create_budget", "Create a budget from a template (see list_templates).", func(ctx context.Context, in CreateIn) (any, error) {
+		v, err := h.app.Create(ctx, h.origin, h.localizer(), in.ID, in.Name, in.Template)
 		return h.sum(v, err)
 	})
-	tool(s, "get_budget", "The budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
+	addReadTool(s, "get_budget", "The budget: settings, every item with its base-currency cost, debts, savings pots, withdrawals, shortfalls, goals, scenarios, the month-by-month projection, totals and plain-language insights. Call this first. The default overview shows the first months and the last; use view and from/to for more, or for less.",
 		func(ctx context.Context, in GetIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -297,18 +318,18 @@ func (h *handlers) register(s *mcp.Server) {
 			return part(summarize(v), in)
 		})
 
-	tool(s, "add_item", "Add an income or cost item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddItemIn) (any, error) {
+	addWriteTool(s, "add_item", "Add an income or cost item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddItemIn) (any, error) {
 		l := budget.ItemInput{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
 		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("add_item", "", l))
 	})
-	tool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
+	addWriteTool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
 		p := budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
 		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
 	})
-	tool(s, "remove_item", "Delete one item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in ItemRef) (any, error) {
+	addWriteTool(s, "remove_item", "Delete one item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in ItemRef) (any, error) {
 		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
 	})
-	tool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns what changed and its effect; set detail to full for the whole budget.",
+	addWriteTool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in CurrencyIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -320,16 +341,16 @@ func (h *handlers) register(s *mcp.Server) {
 				TransferFeePct: in.TransferFeePct,
 				CashOutFeePct:  in.CashOutFeePct,
 			}
-			v, err := h.app.SetCurrency(ctx, fromAssistant, id, in.Code, patch)
+			v, err := h.app.SetCurrency(ctx, h.origin, id, in.Code, patch)
 			return h.written(in.WriteRef, v, err)
 		})
-	tool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
+	addWriteTool(s, "refresh_rates", "Fetch current exchange rates (official ECB rates, crypto prices) and save them. Returns old and new rate per currency, plus the updated budget.",
 		func(ctx context.Context, in RatesIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
-			v, updates, err := h.app.RefreshRates(ctx, fromAssistant, id, in.Codes)
+			v, updates, err := h.app.RefreshRates(ctx, h.origin, id, in.Codes)
 			if err != nil {
 				if len(updates) > 0 {
 					return nil, fmt.Errorf("%w; per currency: %+v", err, updates)
@@ -342,11 +363,11 @@ func (h *handlers) register(s *mcp.Server) {
 			}
 			return map[string]any{"rate_updates": updates, "result": result}, nil
 		})
-	tool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns what changed and its effect; set detail to full for the whole budget.",
+	addWriteTool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
 			return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
 		})
-	tool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns what changed and its effect; set detail to full for the whole budget.",
+	addWriteTool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in DebtIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -360,10 +381,10 @@ func (h *handlers) register(s *mcp.Server) {
 				PayoffMonth: in.PayoffMonth,
 				PayoffFrom:  in.PayoffFrom,
 			}
-			v, err := h.app.SetDebt(ctx, fromAssistant, id, in.Debt, patch)
+			v, err := h.app.SetDebt(ctx, h.origin, id, in.Debt, patch)
 			return h.written(in.WriteRef, v, err)
 		})
-	tool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
+	addWriteTool(s, "apply_ops", "Apply any edits atomically (all or nothing) and save. Covers everything the specific tools do plus categories, pots, withdrawals and removals. Op kinds:"+opsHelp(),
 		func(ctx context.Context, in OpsIn) (any, error) {
 			rev := store.AnyRevision
 			if in.ExpectedRevision != nil {
@@ -371,7 +392,7 @@ func (h *handlers) register(s *mcp.Server) {
 			}
 			return h.apply(ctx, in.WriteRef, rev, in.Ops...)
 		})
-	tool(s, "what_if", "Preview edits WITHOUT saving: returns the projection and insights as if the ops were applied. Same op format as apply_ops.",
+	addReadTool(s, "what_if", "Preview edits WITHOUT saving: returns the projection and insights as if the ops were applied. Same op format as apply_ops.",
 		func(ctx context.Context, in OpsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -384,14 +405,14 @@ func (h *handlers) register(s *mcp.Server) {
 			return h.previewed(in.WriteRef, v)
 		})
 
-	tool(s, "save_scenario", "Save a named set of ops as a scenario to compare later. The real budget is not changed.", func(ctx context.Context, in ScenarioIn) (any, error) {
+	addWriteTool(s, "save_scenario", "Save a named set of ops as a scenario to compare later. The real budget is not changed.", func(ctx context.Context, in ScenarioIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		return h.app.SaveScenario(ctx, fromAssistant, id, in.Name, in.Description, in.Ops)
+		return h.app.SaveScenario(ctx, h.origin, id, in.Name, in.Description, in.Ops)
 	})
-	tool(s, "compare_scenarios", "Compare the current budget against saved scenarios: savings, goal dates, debt payoff, interest.", func(ctx context.Context, in CompareIn) (any, error) {
+	addReadTool(s, "compare_scenarios", "Compare the current budget against saved scenarios: savings, goal dates, debt payoff, interest.", func(ctx context.Context, in CompareIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
@@ -402,26 +423,26 @@ func (h *handlers) register(s *mcp.Server) {
 		}
 		return outcomeRows(out), nil
 	})
-	tool(s, "adopt_scenario", "Apply a saved scenario to the real budget and remove it from the scenario list. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AdoptIn) (any, error) {
+	addWriteTool(s, "adopt_scenario", "Apply a saved scenario to the real budget and remove it from the scenario list. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AdoptIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		v, err := h.app.AdoptScenario(ctx, fromAssistant, id, in.Scenario)
+		v, err := h.app.AdoptScenario(ctx, h.origin, id, in.Scenario)
 		return h.written(in.WriteRef, v, err)
 	})
-	tool(s, "delete_scenario", "Delete a saved scenario.", func(ctx context.Context, in ScenarioRef) (any, error) {
+	addWriteTool(s, "delete_scenario", "Delete a saved scenario.", func(ctx context.Context, in ScenarioRef) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
 		}
-		if err := h.app.DeleteScenario(ctx, fromAssistant, id, in.Scenario); err != nil {
+		if err := h.app.DeleteScenario(ctx, h.origin, id, in.Scenario); err != nil {
 			return nil, err
 		}
 		return map[string]string{"deleted": in.Scenario}, nil
 	})
 
-	tool(s, "history", "Recent changes to the budget, newest first: revision, time, who made it (mcp, web, cli, auto-refresh) and what changed.",
+	addReadTool(s, "history", "Recent changes to the budget, newest first: revision, time, who made it (mcp, assistant, web, cli, auto-refresh) and what changed.",
 		func(ctx context.Context, in HistoryIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -437,14 +458,14 @@ func (h *handlers) register(s *mcp.Server) {
 			app.LocalizeHistory(history, h.localizer())
 			return history, nil
 		})
-	tool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns what changed and its effect; set detail to full for the whole budget.",
+	addWriteTool(s, "undo", "Undo a change by restoring the version before it, saved as a new revision (so an undo can be undone too). Refuses if later changes exist unless force. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in UndoIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
 			req := app.UndoRequest{Revision: in.Revision, Force: in.Force, Seen: in.Seen}
-			v, err := h.app.Undo(ctx, fromAssistant, id, req)
+			v, err := h.app.Undo(ctx, h.origin, id, req)
 			return h.written(in.WriteRef, v, err)
 		})
 
@@ -476,7 +497,7 @@ func (h *handlers) apply(
 	if err != nil {
 		return nil, err
 	}
-	v, err := h.app.Apply(ctx, fromAssistant, id, rev, ops)
+	v, err := h.app.Apply(ctx, h.origin, id, rev, ops)
 	return h.written(w, v, err)
 }
 

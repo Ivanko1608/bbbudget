@@ -34,7 +34,7 @@ const whatsNewDescription = `What happened to the budget since your own last cha
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	tool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
+	addReadTool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
 		id, err := h.id(in.Budget)
 		if err != nil {
 			return nil, err
@@ -70,7 +70,7 @@ func (h *handlers) readWhatsNew(
 func (h *handlers) whatsNew(
 	ctx context.Context, id string, fromRevision int64,
 ) (whatsNewResult, error) {
-	req := app.WhatsNewRequest{Asker: fromAssistant.Source, FromRevision: fromRevision}
+	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
 	news, err := h.app.WhatsNew(ctx, id, req)
 	if err != nil {
 		return whatsNewResult{}, err

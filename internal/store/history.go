@@ -23,6 +23,7 @@ type Source string
 const (
 	SourceWeb         Source = "web"          // the browser UI
 	SourceMCP         Source = "mcp"          // an AI assistant over MCP
+	SourceAssistant   Source = "assistant"    // the assistant inside the app
 	SourceCLI         Source = "cli"          // the command line
 	SourceAutoRefresh Source = "auto-refresh" // scheduled exchange-rate refreshes
 	SourceEarlier     Source = "earlier"      // the state of a budget saved before history was kept

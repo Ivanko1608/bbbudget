@@ -1342,7 +1342,7 @@ function renderRecentTransactions(transactions, categories) {
 // ---------- activity ----------
 
 // Who made a change, as the history records it (see store.Change).
-const SOURCES = ["web", "mcp", "cli", "auto-refresh", "earlier"];
+const SOURCES = ["web", "mcp", "assistant", "cli", "auto-refresh", "earlier"];
 const sourceLabel = (s) => t(SOURCES.includes(s) ? `source.${s}` : "source.unknown");
 
 function ago(iso) {

@@ -154,13 +154,13 @@ func (h *handlers) flagsByMonth(
 }
 
 func (h *handlers) registerLedger(s *mcp.Server) {
-	tool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
+	addWriteTool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
 		func(ctx context.Context, in LogTransactionsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
 				return nil, err
 			}
-			logged, err := h.app.LogTransactions(ctx, fromAssistant, id, in.Transactions)
+			logged, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +170,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return loggedResult{LogResult: logged, Flags: flags}, nil
 		})
-	tool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
+	addReadTool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
 		func(ctx context.Context, in ListTransactionsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -188,7 +188,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return h.app.ListTransactions(ctx, id, filter)
 		})
-	tool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
+	addWriteTool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
 		func(ctx context.Context, in UpdateTransactionIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -196,7 +196,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return h.app.UpdateTransaction(ctx, id, in.ID, in.TransactionPatch)
 		})
-	tool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
+	addWriteTool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
 		func(ctx context.Context, in DeleteTransactionsIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
@@ -208,7 +208,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 			}
 			return deletedResult{Deleted: removed}, nil
 		})
-	tool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
+	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
 		func(ctx context.Context, in StatusIn) (any, error) {
 			id, err := h.id(in.Budget)
 			if err != nil {
