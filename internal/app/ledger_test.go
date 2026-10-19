@@ -36,7 +36,7 @@ func mustLog(t *testing.T, a *App, txs ...budget.TransactionInput) *LogResult {
 	return result
 }
 
-func mustList(t *testing.T, a *App, f TxFilter) []budget.Transaction {
+func mustList(t *testing.T, a *App, f TransactionFilter) []budget.Transaction {
 	t.Helper()
 	txs, err := a.ListTransactions(context.Background(), "home", f)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestALaterRateLeavesLoggedValuesAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	education := mustList(t, a, TxFilter{Category: "education"})
+	education := mustList(t, a, TransactionFilter{Category: "education"})
 	if base := education[0].Base.String(); base != "94.45" {
 		t.Errorf("base moved with the rate to %s", base)
 	}
@@ -164,7 +164,7 @@ func TestLoggingIsAllOrNothing(t *testing.T) {
 	if path := invalid.Issues[0].Path; !strings.HasPrefix(path, "transactions[1]") {
 		t.Errorf("issue paths should point at the row: %s", path)
 	}
-	if stored := mustList(t, a, TxFilter{}); len(stored) != 0 {
+	if stored := mustList(t, a, TransactionFilter{}); len(stored) != 0 {
 		t.Errorf("a rejected log stored %d transactions", len(stored))
 	}
 }
@@ -176,7 +176,7 @@ func TestListingByMonthIncludesItsLastDay(t *testing.T) {
 		spent("2026-11-01", "2", "home"),
 	)
 
-	october := mustList(t, a, TxFilter{From: "2026-10", To: "2026-10"})
+	october := mustList(t, a, TransactionFilter{From: "2026-10", To: "2026-10"})
 
 	if len(october) != 1 {
 		t.Fatalf("October: %+v", october)
@@ -189,7 +189,7 @@ func TestListingByMonthIncludesItsLastDay(t *testing.T) {
 func TestListingRejectsABadDate(t *testing.T) {
 	a := testApp(t)
 
-	_, err := a.ListTransactions(context.Background(), "home", TxFilter{From: "October"})
+	_, err := a.ListTransactions(context.Background(), "home", TransactionFilter{From: "October"})
 
 	if !errors.Is(err, ErrBadInput) {
 		t.Fatalf("bad date: %v", err)
@@ -201,7 +201,7 @@ func TestUpdatingTheAmountValuesItAgain(t *testing.T) {
 	mustLog(t, a, spent("2026-10-03", "40", "home"))
 	amount := money.MustDecimal("50")
 	note := "Lidl"
-	patch := TxPatch{Amount: &amount, Note: &note}
+	patch := TransactionPatch{Amount: &amount, Note: &note}
 
 	updated, err := a.UpdateTransaction(context.Background(), "home", "t1", patch)
 
@@ -232,7 +232,7 @@ func TestDeletingABatchLeavesTheOthers(t *testing.T) {
 	if removed != 2 {
 		t.Errorf("removed: %d", removed)
 	}
-	left := mustList(t, a, TxFilter{})
+	left := mustList(t, a, TransactionFilter{})
 	if len(left) != 1 || left[0].ID != "t3" {
 		t.Errorf("left: %+v", left)
 	}
@@ -250,7 +250,7 @@ func TestDeletingTransactionsById(t *testing.T) {
 	if removed != 1 {
 		t.Errorf("removed: %d", removed)
 	}
-	if left := mustList(t, a, TxFilter{}); len(left) != 1 {
+	if left := mustList(t, a, TransactionFilter{}); len(left) != 1 {
 		t.Errorf("left: %+v", left)
 	}
 }
@@ -264,7 +264,7 @@ func TestDeletingAnUnknownTransactionChangesNothing(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleting a missing transaction: %v", err)
 	}
-	if left := mustList(t, a, TxFilter{}); len(left) != 1 {
+	if left := mustList(t, a, TransactionFilter{}); len(left) != 1 {
 		t.Errorf("a failed delete removed something: %+v", left)
 	}
 }

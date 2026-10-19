@@ -80,8 +80,8 @@ func TestDeleteTransactionsTakesBackABatch(t *testing.T) {
 
 	deleted := h.call("delete_transactions", map[string]any{"batch": "b1"}, false)
 
-	if deleted["removed"] != 2.0 {
-		t.Errorf("removed: %v", deleted["removed"])
+	if deleted["deleted"] != 2.0 {
+		t.Errorf("deleted: %v", deleted["deleted"])
 	}
 }
 

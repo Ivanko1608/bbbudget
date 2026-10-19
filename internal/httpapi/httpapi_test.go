@@ -590,7 +590,7 @@ func TestDeleteTransactionThenItsBatch(t *testing.T) {
 	c.do("DELETE", "/api/budgets/home/transactions/t1", "", http.StatusOK)
 	deleted := c.do("DELETE", "/api/budgets/home/transactions?batch=b1", "", http.StatusOK)
 
-	if deleted["removed"] != 1.0 {
-		t.Errorf("removed: %v", deleted["removed"])
+	if deleted["deleted"] != 1.0 {
+		t.Errorf("deleted: %v", deleted["deleted"])
 	}
 }

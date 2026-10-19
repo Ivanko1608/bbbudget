@@ -106,7 +106,7 @@ func (h *handlers) changeOf(
 	if err != nil {
 		return changeResult{}, err
 	}
-	reader := h.reader()
+	reader := h.localizer()
 	differences := budget.Differences(before, after)
 	return changeResult{
 		Change:   reader.Render(budget.DifferencesMsg(differences)),
@@ -145,7 +145,7 @@ func (h *handlers) previewed(w WriteRef, v *app.View) (any, error) {
 		return nil, err
 	}
 	if w.Detail == DetailFull {
-		v.Localize(h.reader())
+		v.Localize(h.localizer())
 		whole := summarize(v)
 		whole.ID = v.ID + " (what-if, not saved)"
 		whole.Revision = 0
