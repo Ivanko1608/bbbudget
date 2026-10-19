@@ -1,0 +1,8 @@
+Can I afford {{.Item}} for {{.Amount}} in {{or .When "this month"}}? Use {{template "budget" .}}. {{template "language" .}}
+Model it with what_if as a one-off item (schedule {"starts": the month, "every": 0}) in a
+fitting category. Don't save anything.
+Answer with yes, no, or "yes, but" first, then why, from the effect: what that month is
+left with, whether savings go negative, and which savings targets or debt payoffs move and
+by how much.
+If it doesn't fit, say what would make it fit (a later month, spreading it, a cut
+elsewhere), quantified with one more what_if.

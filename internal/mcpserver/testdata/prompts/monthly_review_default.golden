@@ -1,0 +1,8 @@
+Review this month for the budget (the default one, or ask which if there are several: list_budgets). Answer in the language the user writes in.
+1. Call whats_new to see what changed since we last spoke, and month_status for this month.
+2. Tell me in a few sentences where the month stands: spent versus planned, which
+   categories are over or on course to go over, and anything spent that wasn't planned.
+3. Mention changes someone else made (in the browser, rate refreshes) only if they matter.
+4. Suggest at most two concrete adjustments, quantified with what_if. Never apply them
+   without asking.
+Keep it short. Numbers come from the tool results, never estimated.
