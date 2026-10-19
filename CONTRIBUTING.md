@@ -15,7 +15,7 @@ You need Go 1.25+ and nothing else: no Node, no database. The UI is plain JS wit
 ```
 git clone https://github.com/Ivanko1608/bbbudget
 cd bbbudget
-make hooks     # optional: pre-commit leak check, see below
+make hooks     # optional: leak checks on commit and push, see below
 make run       # builds and serves http://127.0.0.1:8080
 ```
 
@@ -34,7 +34,7 @@ Use a throwaway data directory while developing, so you don't touch your real bu
 go test ./internal/money -fuzz FuzzParseDecimal -fuzztime 30s
 ```
 
-`make hooks` enables `.githooks/pre-commit`, which scans staged changes for secrets and personal data with leakscan (see [Development](README.md#development) for where it looks for the scanner). If it flags a false positive, either commit with `--no-verify` or add its fingerprint to `.leakscanignore`.
+`make hooks` installs the [pre-commit](https://pre-commit.com) hooks: tinfoil and gitleaks on every commit, and tinfoil's check of commit authors and committers on every push (see [Development](README.md#development)). CI runs the same scans, so a skipped hook still gets caught before merge. If a hook flags a false positive, either commit with `--no-verify` or add its fingerprint to `.leakscanignore`.
 
 ## Ground rules for the code
 
