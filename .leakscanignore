@@ -4,3 +4,14 @@ fp:1baf37dd77c0
 fp:e3f87d76a748
 fp:3aa27dabe73a
 fp:75338f768fc5
+fp:1596a868206d
+fp:2eaef9c3eca3
+fp:2f80e999216e
+fp:3b8961c662a9
+fp:c0f5e0912a80
+fp:db0dc5218c73
+# The fake API key in an old HTTP test.
+fp:aec07e3204e6
+# The noreply identities of GitHub web merges and Claude Code commits.
+fp:47d5d890a8f8
+fp:c70de1355c6f
