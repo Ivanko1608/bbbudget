@@ -30,7 +30,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 3. **Build, on Sonnet.** Spawn one `general-purpose` agent with `model: "sonnet"` and `isolation: "worktree"`. Its prompt holds the full issue text plus these rules:
    - Branch `issue-<n>-<short-slug>` from `origin/main`, unless the issue names another base branch.
    - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
-   - Stay under 1000 added lines. If the work needs more, stop and report how to split it.
+   - Aim for under about 1000 added lines. If the work needs more, make one commit per step, each passing `make check`, and list the steps in the PR body.
    - Never change the git identity. No Claude trailers or mentions in commits or the PR. No personal data anywhere.
    - Don't force-push, rewrite history, run `gh pr ready` or resolve review threads.
    - Push the branch and open a pull request whose body starts with `Closes #<n>`, then lists how each acceptance criterion is met.
@@ -49,4 +49,4 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 
 ## Writing a new ticket
 
-When the user describes work, create the issue with the **Task** form's sections: Goal, Context, Acceptance criteria, Out of scope. Size it for one pull request under 1000 added lines, and split it into several issues if it is bigger. Add `ready` only when the acceptance criteria are checkable, and `needs-user` when only the user can do it.
+When the user describes work, create the issue with the **Task** form's sections: Goal, Context, Acceptance criteria, Out of scope. Size it for one pull request of about 1000 added lines. Split it into several issues only when parts can land on their own. Add `ready` only when the acceptance criteria are checkable, and `needs-user` when only the user can do it.
