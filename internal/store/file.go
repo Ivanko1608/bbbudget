@@ -115,18 +115,19 @@ func (s *FileStore) listLocked() ([]Meta, error) {
 	var metas []Meta
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		return metas, err
+		return nil, err
 	}
 	for _, e := range entries {
 		id, ok := strings.CutSuffix(e.Name(), ".json")
 		if !ok || !ValidID(id) {
 			continue
 		}
-		r, err := s.read(id)
-		if err != nil {
-			return metas, err
+		r, readErr := s.read(id)
+		if readErr != nil {
+			return metas, readErr
 		}
-		metas = append(metas, Meta{ID: id, Name: r.Budget.Name, Revision: r.Revision, UpdatedAt: r.UpdatedAt})
+		meta := Meta{ID: id, Name: r.Budget.Name, Revision: r.Revision, UpdatedAt: r.UpdatedAt}
+		metas = append(metas, meta)
 	}
 	return metas, nil
 }
@@ -161,10 +162,10 @@ func (s *FileStore) createLocked(origin Origin, id string, b budget.Budget) (Rec
 		return Record{}, err
 	}
 	r := Record{ID: id, Revision: 1, UpdatedAt: s.now().UTC(), Budget: b}
-	if _, err := budget.Compile(b); err != nil {
+	if _, err = budget.Compile(b); err != nil {
 		return r, err
 	}
-	if err := s.record(origin, nil, r); err != nil {
+	if err = s.record(origin, nil, r); err != nil {
 		return r, err
 	}
 	return r, s.write(r)
@@ -194,31 +195,30 @@ func (s *FileStore) updateLocked(
 	if err != nil {
 		return Record{}, err
 	}
-	nb, err := fn(work)
+	newBudget, err := fn(work)
 	if err != nil {
 		return Record{}, err
 	}
-	r := Record{ID: id, Revision: cur.Revision + 1, UpdatedAt: s.now().UTC(), Budget: nb}
-	if _, err := budget.Compile(nb); err != nil {
+	r := Record{ID: id, Revision: cur.Revision + 1, UpdatedAt: s.now().UTC(), Budget: newBudget}
+	if _, err = budget.Compile(newBudget); err != nil {
 		return r, err // before recording: an invalid write leaves no trace
 	}
-	if err := s.record(origin, &cur, r); err != nil {
+	if err = s.record(origin, &cur, r); err != nil {
 		return r, err
 	}
 	return r, s.write(r)
 }
 
-func (s *FileStore) Delete(ctx context.Context, id string) (err error) {
+func (s *FileStore) Delete(ctx context.Context, id string) error {
 	if !ValidID(id) {
 		return ErrBadID
 	}
 	return s.withLock(true, func() error {
-		err = s.removeLocked(id)
-		return err
+		return s.deleteLocked(id)
 	})
 }
 
-func (s *FileStore) removeLocked(id string) error {
+func (s *FileStore) deleteLocked(id string) error {
 	err := os.Remove(s.path(id))
 	if errors.Is(err, fs.ErrNotExist) {
 		return ErrNotFound
@@ -227,7 +227,8 @@ func (s *FileStore) removeLocked(id string) error {
 		return err
 	}
 	for _, p := range []string{s.historyPath(id), s.ledgerPath(id)} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		err = os.Remove(p)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
