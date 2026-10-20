@@ -21,17 +21,22 @@ items:
 		t.Fatal(err)
 	}
 	// The old savings_start becomes the General savings pot, exactly.
-	if b.Pots[0].Balance.String() != "0.1" || b.Currencies[0].PerBase.String() != "1.0800000001" || b.Items[0].Amount.String() != "1234567890123.45" {
-		t.Fatalf("precision lost: %s %s %s", b.Pots[0].Balance, b.Currencies[0].PerBase, b.Items[0].Amount)
-	}
+	expectEqual(t, "pot balance", b.Pots[0].Balance.String(), "0.1")
+	expectEqual(t, "rate", b.Currencies[0].PerBase.String(), "1.0800000001")
+	expectEqual(t, "rent amount", b.Items[0].Amount.String(), "1234567890123.45")
 	// Normalization: ids from names/labels, base currency, monthly default, kind, window.
-	if b.Categories[0].ID != "living" || b.Categories[0].Kind != KindExpense || b.Items[0].ID != "rent" ||
-		b.Items[0].Currency != "EUR" || b.Items[0].Schedule != Monthly() || b.Items[1].Schedule.Every != 3 || b.Months != 12 {
-		t.Fatalf("normalize: %+v %+v", b.Categories[0], b.Items)
-	}
-	if b.Debts == nil || b.Pots == nil || b.Withdrawals == nil || b.Scenarios == nil {
-		t.Fatal("lists must be empty, not null")
-	}
+	expectEqual(t, "category id", b.Categories[0].ID, "living")
+	expectEqual(t, "category kind", b.Categories[0].Kind, KindExpense)
+	expectEqual(t, "item id", b.Items[0].ID, "rent")
+	expectEqual(t, "item currency", b.Items[0].Currency, "EUR")
+	expectEqual(t, "item schedule", b.Items[0].Schedule, Monthly())
+	expectEqual(t, "bill period", b.Items[1].Schedule.Every, 3)
+	expectEqual(t, "months", b.Months, 12)
+
+	expectEqual(t, "debts are empty", b.Debts == nil, false)
+	expectEqual(t, "pots are empty", b.Pots == nil, false)
+	expectEqual(t, "withdrawals are empty", b.Withdrawals == nil, false)
+	expectEqual(t, "scenarios are empty", b.Scenarios == nil, false)
 }
 
 func TestDocumentRejectsSurprises(t *testing.T) {
@@ -59,7 +64,12 @@ func TestDocumentRejectsSurprises(t *testing.T) {
 		t.Error("oversized document accepted")
 	}
 	// Alias bombs are bounded rather than expanded without limit.
-	bomb := "a: &a [x,x,x,x,x,x,x,x,x,x]\nb: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]\nc: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]\nd: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c,*c]\ne: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d,*d]\nf: [*e,*e,*e,*e,*e,*e,*e,*e,*e,*e]\n"
+	bomb := "a: &a [x,x,x,x,x,x,x,x,x,x]\n" +
+		"b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]\n" +
+		"c: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]\n" +
+		"d: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c,*c]\n" +
+		"e: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d,*d]\n" +
+		"f: [*e,*e,*e,*e,*e,*e,*e,*e,*e,*e]\n"
 	if _, err := ParseDocument([]byte(bomb), "yaml"); err == nil {
 		t.Error("alias bomb accepted")
 	}
