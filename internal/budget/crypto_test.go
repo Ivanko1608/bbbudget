@@ -10,7 +10,7 @@ import (
 // 1% cash-out loss, and €2,500 of rent.
 func cryptoBudget() Budget {
 	b := blank()
-	b.Currencies = []CurrencyRate{{Code: "BTC", PerBase: d("0.00001"), TransferFeePct: d("0"), CashOutFeePct: d("1"), Source: SourceAuto}}
+	b.Currencies = []CurrencyRate{{Code: "BTC", PerBase: d("0.00001"), TransferFeePct: d("0"), CashOutFeePct: d("1"), Source: RateSourceAuto}}
 	b.Items = []Item{
 		{ID: "salary", Name: "Salary", Amount: d("2000"), Currency: "EUR", Category: "income", Schedule: Monthly()},
 		{ID: "mining", Name: "Mining payout", Amount: d("0.015"), Currency: "BTC", Category: "income", Schedule: Monthly()},
@@ -71,12 +71,12 @@ func TestTypedRateBecomesManual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := nb.Currencies[0]; c.Source != SourceManual || c.RateDate != "" || c.RateFrom != "" || c.PerBase.String() != "0.000012" {
+	if c := nb.Currencies[0]; c.Source != RateSourceManual || c.RateDate != "" || c.RateFrom != "" || c.PerBase.String() != "0.000012" {
 		t.Fatalf("got %+v", c)
 	}
 	// A fetched rate names its source and keeps it.
-	nb, err = Apply(b, NewOp("set_currency", "BTC", CurrencyPatch{PerBase: decp("0.000013"), Source: strp(SourceAuto), RateDate: strp("2026-10-08")}))
-	if err != nil || nb.Currencies[0].Source != SourceAuto || nb.Currencies[0].RateDate != "2026-10-08" {
+	nb, err = Apply(b, NewOp("set_currency", "BTC", CurrencyPatch{PerBase: decp("0.000013"), Source: rateSourcep(RateSourceAuto), RateDate: strp("2026-10-08")}))
+	if err != nil || nb.Currencies[0].Source != RateSourceAuto || nb.Currencies[0].RateDate != "2026-10-08" {
 		t.Fatalf("got %+v, %v", nb.Currencies[0], err)
 	}
 }
@@ -192,8 +192,8 @@ func TestManualRateHasNoFetchMetadata(t *testing.T) {
 	b := cryptoBudget()
 	b.Currencies[0].RateDate, b.Currencies[0].RateFrom = "2026-10-01", "ecb"
 	for _, p := range []CurrencyPatch{
-		{Source: strp(SourceManual)},
-		{PerBase: decp("0.00002"), Source: strp(SourceManual)},
+		{Source: rateSourcep(RateSourceManual)},
+		{PerBase: decp("0.00002"), Source: rateSourcep(RateSourceManual)},
 		{PerBase: decp("0.00002")},
 	} {
 		nb, err := Apply(b, NewOp("set_currency", "BTC", p))

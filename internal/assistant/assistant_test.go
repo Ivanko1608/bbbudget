@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bbbudget/internal/app"
+	"bbbudget/internal/budget"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
@@ -74,7 +75,7 @@ func newAssistant(t *testing.T, model *script) *Assistant {
 		t.Fatal(err)
 	}
 	a := app.New(st, nil)
-	a.Rates = map[string]rates.Provider{}
+	a.Rates = map[budget.RateSource]rates.Provider{}
 	a.Now = func() time.Time { return testNow }
 	fromCLI := store.Origin{Source: store.SourceCLI}
 	_, err = a.Create(context.Background(), fromCLI, a.SettingsLocalizer(), "home", "Home", "example")

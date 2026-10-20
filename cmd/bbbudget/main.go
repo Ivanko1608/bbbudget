@@ -507,7 +507,8 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 			}
 			p.FetchRates = &b
 		case "default_rate_source":
-			p.DefaultRateSource = &v
+			rateSource := budget.RateSource(v)
+			p.DefaultRateSource = &rateSource
 		case "auto_refresh":
 			p.AutoRefresh = &v
 		case "locale":

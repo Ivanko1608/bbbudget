@@ -367,11 +367,11 @@
   "cur.help": "Потери на платежах добавляются к каждому платежу в этой валюте. Потери на конвертации вычитаются из дохода в ней, например комиссии за продажу криптовалюты. Введённый курс становится ручным.",
   "cur.in_use": "{code} всё ещё используется в «{name}».",
 
-  "source_opt.manual": "Вручную",
-  "source_opt.auto": "Авто: ЕЦБ, иначе рынок",
-  "source_opt.ecb": "ЕЦБ (официальный)",
-  "source_opt.currency-api": "currency-api (фиат + крипто)",
-  "source_opt.coingecko": "CoinGecko (крипто)",
+  "rate_source_opt.manual": "Вручную",
+  "rate_source_opt.auto": "Авто: ЕЦБ, иначе рынок",
+  "rate_source_opt.ecb": "ЕЦБ (официальный)",
+  "rate_source_opt.currency-api": "currency-api (фиат + крипто)",
+  "rate_source_opt.coingecko": "CoinGecko (крипто)",
 
   "rate.worth": "{units} {code} = {value}",
   "rate.typed": "введён вручную",

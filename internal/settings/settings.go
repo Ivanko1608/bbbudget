@@ -60,7 +60,7 @@ type Settings struct {
 	FetchRates bool `json:"fetch_rates"`
 	// DefaultRateSource is the source a new currency gets ("auto", "ecb",
 	// "currency-api", "coingecko" or "manual").
-	DefaultRateSource string `json:"default_rate_source"`
+	DefaultRateSource budget.RateSource `json:"default_rate_source"`
 	// AutoRefresh refreshes every budget's non-manual rates while `bbbudget
 	// serve` runs: "off", "hourly" or "daily".
 	AutoRefresh string `json:"auto_refresh"`
@@ -87,7 +87,7 @@ type Settings struct {
 func Defaults() Settings {
 	return Settings{
 		FetchRates:        false,
-		DefaultRateSource: budget.SourceAuto,
+		DefaultRateSource: budget.RateSourceAuto,
 		AutoRefresh:       RefreshOff,
 		Locale:            LocaleAuto,
 		AssistantProvider: AssistantOff,
@@ -116,7 +116,7 @@ func (s Settings) Interval() time.Duration {
 func (s Settings) Validate() error {
 	var errs []error
 	if !slices.Contains(budget.RateSources, s.DefaultRateSource) {
-		sources := strings.Join(budget.RateSources, ", ")
+		sources := budget.FormatRateSources()
 		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", sources))
 	}
 	if !slices.Contains([]string{RefreshOff, RefreshHourly, RefreshDaily}, s.AutoRefresh) {
@@ -163,11 +163,11 @@ func isWebURL(text string) bool {
 // Patch changes some settings; nil fields stay as they are. An empty key
 // removes it.
 type Patch struct {
-	FetchRates        *bool   `json:"fetch_rates,omitempty"`
-	DefaultRateSource *string `json:"default_rate_source,omitempty"`
-	AutoRefresh       *string `json:"auto_refresh,omitempty"`
-	CoinGeckoAPIKey   *string `json:"coingecko_api_key,omitempty"`
-	Locale            *string `json:"locale,omitempty"`
+	FetchRates        *bool              `json:"fetch_rates,omitempty"`
+	DefaultRateSource *budget.RateSource `json:"default_rate_source,omitempty"`
+	AutoRefresh       *string            `json:"auto_refresh,omitempty"`
+	CoinGeckoAPIKey   *string            `json:"coingecko_api_key,omitempty"`
+	Locale            *string            `json:"locale,omitempty"`
 
 	AssistantProvider *AssistantProvider `json:"assistant_provider,omitempty"`
 	AssistantModel    *string            `json:"assistant_model,omitempty"`
@@ -185,7 +185,9 @@ func (s Settings) Apply(p Patch) (Settings, error) {
 	if p.FetchRates != nil {
 		s.FetchRates = *p.FetchRates
 	}
-	set(&s.DefaultRateSource, p.DefaultRateSource)
+	if p.DefaultRateSource != nil {
+		s.DefaultRateSource = budget.RateSource(strings.TrimSpace(string(*p.DefaultRateSource)))
+	}
 	set(&s.AutoRefresh, p.AutoRefresh)
 	set(&s.CoinGeckoAPIKey, p.CoinGeckoAPIKey)
 	set(&s.Locale, p.Locale)

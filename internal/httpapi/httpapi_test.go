@@ -22,10 +22,10 @@ import (
 	"bbbudget/web"
 )
 
-func offlineRates() map[string]rates.Provider {
-	f := rates.Fixed{ID: budget.SourceCurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
-	down := rates.Fixed{ID: budget.SourceECB, Err: errors.New("HTTP 503")}
-	return map[string]rates.Provider{budget.SourceAuto: f, budget.SourceCurrencyAPI: f, budget.SourceECB: down, budget.SourceCoinGecko: down}
+func offlineRates() map[budget.RateSource]rates.Provider {
+	f := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
+	down := rates.Fixed{ID: budget.RateSourceECB, Err: errors.New("HTTP 503")}
+	return map[budget.RateSource]rates.Provider{budget.RateSourceAuto: f, budget.RateSourceCurrencyAPI: f, budget.RateSourceECB: down, budget.RateSourceCoinGecko: down}
 }
 
 func TestRates(t *testing.T) {

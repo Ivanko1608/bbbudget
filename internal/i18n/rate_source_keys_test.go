@@ -16,7 +16,7 @@ func TestEveryRateSourceHasUILabel(t *testing.T) {
 	}
 
 	for _, source := range budget.RateSources {
-		key := "source_opt." + source
+		key := "rate_source_opt." + string(source)
 		if !strings.Contains(string(catalog), `"`+key+`":`) {
 			t.Errorf("missing UI key %s", key)
 		}

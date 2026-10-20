@@ -22,11 +22,11 @@ const rateDigits = 10
 type RateUpdate struct {
 	Code string `json:"code"`
 	// Source is the configured source; From is the provider that answered.
-	Source string        `json:"source"`
-	From   string        `json:"from,omitempty"`
-	Date   string        `json:"date,omitempty"`
-	Old    money.Decimal `json:"old,omitzero"`
-	New    money.Decimal `json:"new,omitzero"`
+	Source budget.RateSource `json:"source"`
+	From   budget.RateSource `json:"from,omitempty"`
+	Date   string            `json:"date,omitempty"`
+	Old    money.Decimal     `json:"old,omitzero"`
+	New    money.Decimal     `json:"new,omitzero"`
 	// Error is set when this currency could not be priced; the rest still update.
 	Error string `json:"error,omitempty"`
 }
@@ -40,25 +40,31 @@ func (e *RateError) Unwrap() error { return e.Err }
 // ErrBadInput marks a request the caller got wrong (unknown currency or source).
 var ErrBadInput = errors.New("bad input")
 
-func (a *App) provider(source string) (rates.Provider, error) {
+func (a *App) provider(source budget.RateSource) (rates.Provider, error) {
 	if s, err := a.Settings(); err != nil {
 		return nil, err
 	} else if !s.FetchRates {
 		return nil, ErrRatesOff
 	}
-	if source == "" || source == budget.SourceManual {
-		source = budget.SourceAuto
+	if source == "" || source == budget.RateSourceManual {
+		source = budget.RateSourceAuto
 	}
 	p, ok := a.Rates[source]
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown rate source %q (use one of %s)", ErrBadInput, source, strings.Join(budget.RateSources, ", "))
+		sources := budget.FormatRateSources()
+		return nil, fmt.Errorf("%w: unknown rate source %q (use one of %s)", ErrBadInput, source, sources)
 	}
 	return p, nil
 }
 
 // Quote fetches current rates without touching any budget: codes per 1 base,
 // from source ("" means auto). Codes no provider could price come back with Error set.
-func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([]RateUpdate, error) {
+func (a *App) Quote(
+	ctx context.Context,
+	base string,
+	source budget.RateSource,
+	codes []string,
+) ([]RateUpdate, error) {
 	if _, err := money.Lookup(base); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
 	}
@@ -67,7 +73,7 @@ func (a *App) Quote(ctx context.Context, base, source string, codes []string) ([
 		return nil, err
 	}
 	if source == "" {
-		source = budget.SourceAuto
+		source = budget.RateSourceAuto
 	}
 	codes = slices.Clone(codes)
 	for i, c := range codes {
@@ -208,7 +214,7 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 		return r, nil, nil, ErrRatesOff
 	}
 
-	bySource := map[string][]string{}
+	bySource := map[budget.RateSource][]string{}
 	for _, c := range targets {
 		bySource[c.Source] = append(bySource[c.Source], c.Code)
 	}
@@ -264,7 +270,7 @@ func (a *App) SetCurrency(
 		if patch.Source != nil {
 			src = *patch.Source
 		}
-		if src != budget.SourceManual {
+		if src != budget.RateSourceManual {
 			q, err := a.Quote(ctx, r.Budget.BaseCurrency, src, []string{code})
 			if err != nil {
 				return nil, err

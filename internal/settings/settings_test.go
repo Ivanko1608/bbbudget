@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -83,14 +85,14 @@ func TestBadFilesAreErrors(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(" coingecko "), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
+	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(budget.RateSource(" coingecko ")), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
 	if err != nil || s.DefaultRateSource != "coingecko" || s.CoinGeckoAPIKey != "k1" || s.FetchRates || s.AutoRefresh != RefreshOff {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 	if s, _ = s.Apply(Patch{CoinGeckoAPIKey: ptr("")}); s.CoinGeckoAPIKey != "" {
 		t.Fatal("an empty key removes it")
 	}
-	for _, p := range []Patch{{DefaultRateSource: ptr("yahoo")}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
+	for _, p := range []Patch{{DefaultRateSource: ptr(budget.RateSource("yahoo"))}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
 		if _, err := Defaults().Apply(p); err == nil {
 			t.Errorf("accepted %+v", p)
 		}

@@ -132,14 +132,14 @@ type CurrencyPatch struct {
 	PerBase        *money.Decimal `json:"per_base,omitempty"`
 	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty"`
 	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty"`
-	Source         *string        `json:"source,omitempty"`
+	Source         *RateSource    `json:"source,omitempty"`
 	RateDate       *string        `json:"rate_date,omitempty"`
-	RateFrom       *string        `json:"rate_from,omitempty"`
+	RateFrom       *RateSource    `json:"rate_from,omitempty"`
 }
 
 func (v CurrencyPatch) apply(c *CurrencyRate) {
 	if v.PerBase != nil && v.Source == nil {
-		c.Source = SourceManual
+		c.Source = RateSourceManual
 	}
 	setIf(&c.PerBase, v.PerBase)
 	setIf(&c.TransferFeePct, v.TransferFeePct)
