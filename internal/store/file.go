@@ -102,28 +102,33 @@ func (s *FileStore) writeFile(path string, data []byte) error {
 	return syncDir(s.dir)
 }
 
-func (s *FileStore) List(ctx context.Context) ([]Meta, error) {
-	var out []Meta
-	err := s.withLock(false, func() error {
-		entries, err := os.ReadDir(s.dir)
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			id, ok := strings.CutSuffix(e.Name(), ".json")
-			if !ok || !ValidID(id) {
-				continue
-			}
-			r, err := s.read(id)
-			if err != nil {
-				return err
-			}
-			out = append(out, Meta{ID: id, Name: r.Budget.Name, Revision: r.Revision, UpdatedAt: r.UpdatedAt})
-		}
-		return nil
+func (s *FileStore) List(ctx context.Context) (metas []Meta, err error) {
+	err = s.withLock(false, func() error {
+		metas, err = s.listLocked()
+		return err
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, err
+	sort.Slice(metas, func(i, j int) bool { return metas[i].ID < metas[j].ID })
+	return metas, err
+}
+
+func (s *FileStore) listLocked() ([]Meta, error) {
+	var metas []Meta
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return metas, err
+	}
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || !ValidID(id) {
+			continue
+		}
+		r, err := s.read(id)
+		if err != nil {
+			return metas, err
+		}
+		metas = append(metas, Meta{ID: id, Name: r.Budget.Name, Revision: r.Revision, UpdatedAt: r.UpdatedAt})
+	}
+	return metas, nil
 }
 
 func (s *FileStore) Get(ctx context.Context, id string) (r Record, err error) {
@@ -141,73 +146,92 @@ func (s *FileStore) Create(
 		return Record{}, ErrBadID
 	}
 	err = s.withLock(true, func() error {
-		if _, err := s.read(id); err == nil {
-			return ErrExists
-		} else if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		r = Record{ID: id, Revision: 1, UpdatedAt: s.now().UTC(), Budget: b}
-		if _, err := budget.Compile(b); err != nil {
-			return err
-		}
-		if err := s.record(origin, nil, r); err != nil {
-			return err
-		}
-		return s.write(r)
+		r, err = s.createLocked(origin, id, b)
+		return err
 	})
 	return r, err
+}
+
+func (s *FileStore) createLocked(origin Origin, id string, b budget.Budget) (Record, error) {
+	_, err := s.read(id)
+	if err == nil {
+		return Record{}, ErrExists
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Record{}, err
+	}
+	r := Record{ID: id, Revision: 1, UpdatedAt: s.now().UTC(), Budget: b}
+	if _, err := budget.Compile(b); err != nil {
+		return r, err
+	}
+	if err := s.record(origin, nil, r); err != nil {
+		return r, err
+	}
+	return r, s.write(r)
 }
 
 func (s *FileStore) Update(
 	ctx context.Context, origin Origin, id string, expected int64, fn EditFunc,
 ) (r Record, err error) {
 	err = s.withLock(true, func() error {
-		cur, err := s.read(id)
-		if err != nil {
-			return err
-		}
-		if expected != AnyRevision && expected != cur.Revision {
-			return &ConflictError{Expected: expected, Actual: cur.Revision}
-		}
-		work, err := budget.Clone(cur.Budget) // fn may edit in place; cur stays the "before"
-		if err != nil {
-			return err
-		}
-		nb, err := fn(work)
-		if err != nil {
-			return err
-		}
-		r = Record{ID: id, Revision: cur.Revision + 1, UpdatedAt: s.now().UTC(), Budget: nb}
-		if _, err := budget.Compile(nb); err != nil {
-			return err // before recording: an invalid write leaves no trace
-		}
-		if err := s.record(origin, &cur, r); err != nil {
-			return err
-		}
-		return s.write(r)
+		r, err = s.updateLocked(origin, id, expected, fn)
+		return err
 	})
 	return r, err
 }
 
-func (s *FileStore) Delete(ctx context.Context, id string) error {
+func (s *FileStore) updateLocked(
+	origin Origin, id string, expected int64, fn EditFunc,
+) (Record, error) {
+	cur, err := s.read(id)
+	if err != nil {
+		return Record{}, err
+	}
+	if expected != AnyRevision && expected != cur.Revision {
+		return Record{}, &ConflictError{Expected: expected, Actual: cur.Revision}
+	}
+	work, err := budget.Clone(cur.Budget) // fn may edit in place; cur stays the "before"
+	if err != nil {
+		return Record{}, err
+	}
+	nb, err := fn(work)
+	if err != nil {
+		return Record{}, err
+	}
+	r := Record{ID: id, Revision: cur.Revision + 1, UpdatedAt: s.now().UTC(), Budget: nb}
+	if _, err := budget.Compile(nb); err != nil {
+		return r, err // before recording: an invalid write leaves no trace
+	}
+	if err := s.record(origin, &cur, r); err != nil {
+		return r, err
+	}
+	return r, s.write(r)
+}
+
+func (s *FileStore) Delete(ctx context.Context, id string) (err error) {
 	if !ValidID(id) {
 		return ErrBadID
 	}
 	return s.withLock(true, func() error {
-		err := os.Remove(s.path(id))
-		if errors.Is(err, fs.ErrNotExist) {
-			return ErrNotFound
-		}
-		if err != nil {
+		err = s.removeLocked(id)
+		return err
+	})
+}
+
+func (s *FileStore) removeLocked(id string) error {
+	err := os.Remove(s.path(id))
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	for _, p := range []string{s.historyPath(id), s.ledgerPath(id)} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		for _, p := range []string{s.historyPath(id), s.ledgerPath(id)} {
-			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // DefaultDir is $BBBUDGET_DIR, else $XDG_DATA_HOME/bbbudget, else ~/.local/share/bbbudget.
