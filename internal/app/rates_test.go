@@ -34,8 +34,18 @@ func testApp(t *testing.T) *App {
 	}
 	a := New(st, nil)
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
-	ecb := rates.Fixed{ID: budget.RateSourceECB, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"}}
-	capi := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Base: "EUR", Date: "2026-10-08", Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"}}
+	ecb := rates.Fixed{
+		ID:    budget.RateSourceECB,
+		Base:  "EUR",
+		Date:  "2026-10-07",
+		Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"},
+	}
+	capi := rates.Fixed{
+		ID:    budget.RateSourceCurrencyAPI,
+		Base:  "EUR",
+		Date:  "2026-10-08",
+		Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"},
+	}
 	a.Rates = map[budget.RateSource]rates.Provider{
 		budget.RateSourceECB: ecb, budget.RateSourceCurrencyAPI: capi,
 		budget.RateSourceCoinGecko: rates.Fixed{
@@ -47,11 +57,19 @@ func testApp(t *testing.T) *App {
 			Providers: []rates.Provider{ecb, capi},
 		},
 	}
-	if _, err := a.Create(context.Background(), byTest, english, "home", "Home", "example"); err != nil {
+	ctx := context.Background()
+	if _, err := a.Create(ctx, byTest, english, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{FetchRates: ptr(true)}) // off by default; these tests fetch
 	return a
+}
+
+func eq[T comparable](t *testing.T, what string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", what, got, want)
+	}
 }
 
 func setCurrency(code string, patch budget.CurrencyPatch) []budget.Op {
@@ -85,31 +103,33 @@ func TestRegistryCoversEverySource(t *testing.T) {
 func TestRefreshSkipsManualUnlessNamed(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	v, updates, err := a.RefreshRates(ctx, byTest, "home", nil)
-	if err != nil || len(updates) != 0 || currency(t, a, "USD").PerBase.String() != "1.08" {
-		t.Fatalf("manual rates must not change: %v %v", updates, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "updates", len(updates), 0)
+	eq(t, "USD per base", currency(t, a, "USD").PerBase.String(), "1.08")
 	rev := v.Revision
 
 	v, updates, err = a.RefreshRates(ctx, byTest, "home", []string{"usd"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updates) != 1 || updates[0].Old.String() != "1.08" || updates[0].New.String() != "1.1186" || updates[0].From != budget.RateSourceECB {
-		t.Fatalf("updates: %+v", updates)
-	}
+	eq(t, "updates", len(updates), 1)
+	eq(t, "old rate", updates[0].Old.String(), "1.08")
+	eq(t, "new rate", updates[0].New.String(), "1.1186")
+	eq(t, "update provider", updates[0].From, budget.RateSourceECB)
 	usd := currency(t, a, "USD")
-	if usd.Source != budget.RateSourceAuto || usd.RateDate != "2026-10-07" || usd.RateFrom != budget.RateSourceECB || usd.PerBase.String() != "1.1186" {
-		t.Fatalf("saved: %+v", usd)
-	}
-	if v.Revision != rev+1 || currency(t, a, "CHF").PerBase.String() != "0.94" {
-		t.Fatal("only USD should change, in one write")
-	}
+	eq(t, "USD source", usd.Source, budget.RateSourceAuto)
+	eq(t, "USD rate date", usd.RateDate, "2026-10-07")
+	eq(t, "USD rate provider", usd.RateFrom, budget.RateSourceECB)
+	eq(t, "USD per base", usd.PerBase.String(), "1.1186")
+	eq(t, "revision after refresh", v.Revision, rev+1)
+	eq(t, "CHF per base", currency(t, a, "CHF").PerBase.String(), "0.94")
 
 	// From now on a plain refresh includes USD.
 	_, updates, _ = a.RefreshRates(ctx, byTest, "home", nil)
-	if len(updates) != 1 || updates[0].Code != "USD" {
-		t.Fatalf("%+v", updates)
-	}
+	eq(t, "updates", len(updates), 1)
+	eq(t, "updated code", updates[0].Code, "USD")
 	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"JPY"}); err == nil {
 		t.Fatal("refreshing a currency the budget doesn't have")
 	}
@@ -122,9 +142,9 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	}
 	btc := currency(t, a, "BTC")
 	// ECB has no BTC, so auto falls back; the rate keeps 10 significant digits.
-	if btc.PerBase.String() != "0.00001352115801" || btc.Source != budget.RateSourceAuto || btc.RateFrom != budget.RateSourceCurrencyAPI {
-		t.Fatalf("got %+v", btc)
-	}
+	eq(t, "BTC per base", btc.PerBase.String(), "0.00001352115801")
+	eq(t, "BTC source", btc.Source, budget.RateSourceAuto)
+	eq(t, "BTC rate provider", btc.RateFrom, budget.RateSourceCurrencyAPI)
 
 	// No provider prices it: a clear error, nothing saved.
 	_, err := a.SetCurrency(ctx, byTest, "home", "ETH", budget.CurrencyPatch{})
@@ -160,9 +180,11 @@ func TestPartialAndTotalFailure(t *testing.T) {
 		t.Fatalf("one currency failing must not fail the rest: %v", err)
 	}
 	i := slices.IndexFunc(updates, func(u RateUpdate) bool { return u.Code == "BTC" })
-	if updates[i].Error == "" || currency(t, a, "BTC").PerBase.String() != before || currency(t, a, "USD").PerBase.String() != "1.1186" {
-		t.Fatalf("%+v", updates)
+	if updates[i].Error == "" {
+		t.Fatalf("BTC update has no error: %+v", updates)
 	}
+	eq(t, "BTC per base", currency(t, a, "BTC").PerBase.String(), before)
+	eq(t, "USD per base", currency(t, a, "USD").PerBase.String(), "1.1186")
 
 	v, _ := a.Get(ctx, "home")
 	_, _, err = a.RefreshRates(ctx, byTest, "home", []string{"BTC"})
@@ -177,12 +199,18 @@ func TestPartialAndTotalFailure(t *testing.T) {
 
 func TestQuoteRejectsBadInput(t *testing.T) {
 	a := testApp(t)
-	for _, c := range []struct {
+	badQuotes := []struct {
 		base   string
 		source budget.RateSource
 		code   string
-	}{{"EUR", "google", "USD"}, {"EUR", "", "XXX"}, {"ZZZ", "", "USD"}} {
-		if _, err := a.Quote(context.Background(), c.base, c.source, []string{c.code}); !errors.Is(err, ErrBadInput) {
+	}{
+		{"EUR", "google", "USD"},
+		{"EUR", "", "XXX"},
+		{"ZZZ", "", "USD"},
+	}
+	for _, c := range badQuotes {
+		_, err := a.Quote(context.Background(), c.base, c.source, []string{c.code})
+		if !errors.Is(err, ErrBadInput) {
 			t.Errorf("%v: want ErrBadInput, got %v", c, err)
 		}
 	}
@@ -195,7 +223,11 @@ type hook struct {
 	during func()
 }
 
-func (h hook) Quotes(ctx context.Context, base string, codes []string) (map[string]rates.Quote, error) {
+func (h hook) Quotes(
+	ctx context.Context,
+	base string,
+	codes []string,
+) (map[string]rates.Quote, error) {
 	h.during()
 	return h.Provider.Quotes(ctx, base, codes)
 }
@@ -218,9 +250,8 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	usd := currency(t, a, "USD")
-	if usd.PerBase.String() != "1.05" || usd.Source != budget.RateSourceManual {
-		t.Fatalf("the typed rate was overwritten: %+v", usd)
-	}
+	eq(t, "typed USD per base", usd.PerBase.String(), "1.05")
+	eq(t, "typed USD source", usd.Source, budget.RateSourceManual)
 	for _, u := range updates {
 		if (u.Code == "USD") != (u.Error != "") {
 			t.Errorf("%s: %q", u.Code, u.Error)
@@ -247,9 +278,8 @@ func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Same source as the real refresh: the default from settings, not plain auto.
-	if preview[0].Source != "currency-api" || fmt.Sprintf("%+v", preview[0]) != fmt.Sprintf("%+v", real[0]) {
-		t.Fatalf("preview %+v vs refresh %+v", preview[0], real[0])
-	}
+	eq(t, "preview source", preview[0].Source, "currency-api")
+	eq(t, "preview", fmt.Sprintf("%+v", preview[0]), fmt.Sprintf("%+v", real[0]))
 	if _, err := a.PreviewRates(ctx, "home", []string{"XYZ"}); err == nil {
 		t.Fatal("unknown currency accepted by preview")
 	}
@@ -262,20 +292,28 @@ func TestEmptySourceMeansDefault(t *testing.T) {
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", defaultSource); err != nil {
 		t.Fatal(err)
 	}
-	if c := currency(t, a, "BTC"); c.Source != budget.RateSourceAuto || c.IsManual() {
-		t.Fatalf("a fetched rate must not be saved as manual: %+v", c)
-	}
+	c := currency(t, a, "BTC")
+	eq(t, "BTC source", c.Source, budget.RateSourceAuto)
+	eq(t, "BTC is manual", c.IsManual(), false)
 }
 
 func TestOutageIsNotReportedAsUnsupported(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	ecb := a.Rates[budget.RateSourceECB]
-	a.Rates[budget.RateSourceAuto] = rates.Chain{ID: budget.RateSourceAuto, Providers: []rates.Provider{ecb, rates.Fixed{ID: budget.RateSourceCurrencyAPI, Err: errors.New("HTTP 503")}}}
+	down := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Err: errors.New("HTTP 503")}
+	a.Rates[budget.RateSourceAuto] = rates.Chain{
+		ID:        budget.RateSourceAuto,
+		Providers: []rates.Provider{ecb, down},
+	}
 	q, err := a.Quote(ctx, "EUR", "auto", []string{"USD", "BTC"})
 	if err != nil {
 		t.Fatalf("USD was fetched, so this is not a total failure: %v", err)
 	}
-	if q[0].Error != "" || !strings.Contains(q[1].Error, "try again") || !strings.Contains(q[1].Error, "503") {
-		t.Fatalf("%+v", q)
+	eq(t, "USD error", q[0].Error, "")
+	if !strings.Contains(q[1].Error, "try again") {
+		t.Fatalf("BTC error %q does not say to try again", q[1].Error)
+	}
+	if !strings.Contains(q[1].Error, "503") {
+		t.Fatalf("BTC error %q does not name the HTTP status", q[1].Error)
 	}
 }
