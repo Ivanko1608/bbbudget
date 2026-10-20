@@ -21,7 +21,7 @@ type App struct {
 	Store     store.Store
 	Templates *templates.Registry
 	// Rates are the exchange-rate providers by source name (see budget.RateSources).
-	Rates map[string]rates.Provider
+	Rates map[budget.RateSource]rates.Provider
 	// SettingsPath is the app settings file; "" means defaults, read-only.
 	SettingsPath string
 	Now          func() time.Time

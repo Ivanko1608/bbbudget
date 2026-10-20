@@ -37,8 +37,8 @@ func setupWith(t *testing.T, opts Options) *harness {
 		t.Fatal(err)
 	}
 	a := app.New(st, nil)
-	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001"}}
-	a.Rates = map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: f, rates.CoinGecko: f}
+	f := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001"}}
+	a.Rates = map[budget.RateSource]rates.Provider{budget.RateSourceAuto: f, budget.RateSourceCurrencyAPI: f, budget.RateSourceECB: f, budget.RateSourceCoinGecko: f}
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
 	on := true // fetching is off by default; these tests fetch

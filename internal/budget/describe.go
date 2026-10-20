@@ -150,7 +150,7 @@ func currencyFields(c CurrencyRate) []field {
 		{"per_base", c.PerBase.String()},
 		{"transfer_fee_pct", c.TransferFeePct.String()},
 		{"cash_out_fee_pct", optionalDecimal(c.CashOutFeePct)},
-		{"source", c.Source},
+		{"source", string(c.Source)},
 	}
 }
 
