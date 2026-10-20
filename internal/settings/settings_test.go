@@ -4,12 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
-
-	"bbbudget/internal/budget"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -108,14 +105,6 @@ func TestInterval(t *testing.T) {
 		if got := (Settings{AutoRefresh: v}).Interval(); got != want {
 			t.Errorf("%s: %v", v, got)
 		}
-	}
-}
-
-// The settings package can't import budget (it sits below it), so its copy of
-// the source names is checked here.
-func TestRateSourcesMatchBudget(t *testing.T) {
-	if !slices.Equal(slices.Sorted(slices.Values(RateSources)), slices.Sorted(slices.Values(budget.RateSources))) {
-		t.Fatalf("settings %v vs budget %v", RateSources, budget.RateSources)
 	}
 }
 

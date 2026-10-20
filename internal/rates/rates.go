@@ -17,14 +17,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 // Provider names. They match the budget's currency "source" values.
 const (
-	Auto        = "auto"
-	ECB         = "ecb"
-	CurrencyAPI = "currency-api"
-	CoinGecko   = "coingecko"
+	Auto        = budget.SourceAuto
+	ECB         = budget.SourceECB
+	CurrencyAPI = budget.SourceCurrencyAPI
+	CoinGecko   = budget.SourceCoinGecko
 )
 
 // Quote is one exchange rate.

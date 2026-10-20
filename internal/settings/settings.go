@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 // Auto-refresh intervals.
@@ -99,10 +101,6 @@ const LocaleAuto = "auto"
 // the i18n package; a tag it lacks falls back to English.
 var localeRe = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
-// RateSources is the set DefaultRateSource must come from. The app checks it
-// against budget.RateSources in a test; this package depends on nothing.
-var RateSources = []string{"manual", "auto", "ecb", "currency-api", "coingecko"}
-
 // Interval is AutoRefresh as a duration; zero means off.
 func (s Settings) Interval() time.Duration {
 	switch s.AutoRefresh {
@@ -117,8 +115,8 @@ func (s Settings) Interval() time.Duration {
 // Validate reports every bad field.
 func (s Settings) Validate() error {
 	var errs []error
-	if !slices.Contains(RateSources, s.DefaultRateSource) {
-		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", strings.Join(RateSources, ", ")))
+	if !slices.Contains(budget.RateSources, s.DefaultRateSource) {
+		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", strings.Join(budget.RateSources, ", ")))
 	}
 	if !slices.Contains([]string{RefreshOff, RefreshHourly, RefreshDaily}, s.AutoRefresh) {
 		errs = append(errs, errors.New("auto_refresh must be off, hourly or daily"))
