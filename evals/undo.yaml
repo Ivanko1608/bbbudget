@@ -1,0 +1,9 @@
+template: example
+turns:
+  - Set rent to 1300.
+  - Actually, undo that.
+expect:
+  saved: true
+  writes_by: assistant
+  items:
+    rent: {amount: "1150"}

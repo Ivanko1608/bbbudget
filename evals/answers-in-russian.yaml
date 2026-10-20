@@ -1,0 +1,7 @@
+template: example
+turns:
+  - Сколько я откладываю в этом месяце?
+expect:
+  saved: false
+  reply_script: cyrillic
+  reply_contains: ["317"]

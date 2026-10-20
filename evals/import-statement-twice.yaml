@@ -1,0 +1,17 @@
+template: example
+turns:
+  - |
+    Log this card statement:
+    date,description,amount
+    2026-10-02,LIDL 4412,-38.40
+    2026-10-03,SHELL FUEL,-60.00
+    2026-10-04,BOOKSHOP SCHOOL BOOKS,-22.90
+  - |
+    Oops, here it is again, I'm not sure it went through:
+    date,description,amount
+    2026-10-02,LIDL 4412,-38.40
+    2026-10-03,SHELL FUEL,-60.00
+    2026-10-04,BOOKSHOP SCHOOL BOOKS,-22.90
+expect:
+  transactions: 3
+  transaction: {category: education, amount: "22.9"}
