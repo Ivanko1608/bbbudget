@@ -68,7 +68,10 @@ Few and short.
 
 ## Pull requests
 
-- **Keep a PR under 1000 added lines**. 1500 is the hard limit. Split bigger work into stacked PRs, each one reviewable on its own.
+- **Aim for under about 1000 added lines.** It's a target, not a limit. When a PR is bigger, its description says why.
+- **A big PR is reviewed commit by commit.** Each commit is one step that passes `make check` on its own, and the description lists the steps in order.
+- **Mechanical changes don't count** toward the size: renames, moved files, goldens, fixtures and generated files.
+- **Stack PRs only when part of the work should land first**, not to stay under a line count.
 
 ## Before you finish
 
