@@ -209,7 +209,7 @@ func setOrAddDebt(ref string, patch budget.DebtPatch) store.EditFunc {
 		_, err := budget.FindDebt(b, ref)
 		var nm *budget.NoMatchError
 		if !errors.As(err, &nm) {
-			return budget.Apply(b, budget.NewOp("set_debt", ref, patch))
+			return budget.Apply(b, budget.NewOp(budget.OpSetDebt, ref, patch))
 		}
 		zero := money.MustDecimal("0")
 		d := budget.Debt{Name: ref, Currency: b.BaseCurrency, Balance: zero, APRPct: zero, MinPayment: zero}
@@ -225,10 +225,10 @@ func setOrAddDebt(ref string, patch budget.DebtPatch) store.EditFunc {
 		if patch.Currency != nil {
 			d.Currency = *patch.Currency
 		}
-		ops := []budget.Op{budget.NewOp("add_debt", "", d)}
+		ops := []budget.Op{budget.NewOp(budget.OpAddDebt, "", d)}
 		if patch.PayoffMonth != nil || patch.PayoffFrom != nil {
 			payoff := budget.DebtPatch{PayoffMonth: patch.PayoffMonth, PayoffFrom: patch.PayoffFrom}
-			ops = append(ops, budget.NewOp("set_debt", ref, payoff))
+			ops = append(ops, budget.NewOp(budget.OpSetDebt, ref, payoff))
 		}
 		return budget.Apply(b, ops...)
 	}
