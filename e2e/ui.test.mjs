@@ -7,7 +7,9 @@ import { findChrome, startServer, startBrowser, waitFor } from "./harness.mjs";
 
 const chrome = findChrome();
 const skip = chrome ? false : "no Chromium found (set CHROME)";
-let srv, page, n = 0;
+let srv;
+let page;
+let n = 0;
 
 before(async () => {
   if (skip) return;
