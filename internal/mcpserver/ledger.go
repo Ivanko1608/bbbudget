@@ -121,8 +121,10 @@ func newStatusRow(category budget.CategoryStatus) statusRow {
 	return row
 }
 
-// monthStatus is a month's status with its flags in the user's language.
-func (h *handlers) monthStatus(ctx context.Context, id, month string) (*budget.MonthStatus, error) {
+// getMonthStatus is a month's status with its flags in the user's language.
+func (h *handlers) getMonthStatus(
+	ctx context.Context, id, month string,
+) (*budget.MonthStatus, error) {
 	status, err := h.app.MonthStatus(ctx, id, month)
 	if err != nil {
 		return nil, err
@@ -141,7 +143,7 @@ func (h *handlers) flagsByMonth(
 	}
 	flags := map[string][]string{}
 	for _, month := range slices.Sorted(maps.Keys(months)) {
-		status, err := h.monthStatus(ctx, id, month)
+		status, err := h.getMonthStatus(ctx, id, month)
 		if errors.Is(err, app.ErrBadInput) {
 			continue // a month outside the budget's window has no plan to compare with
 		}
@@ -163,9 +165,9 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 	addWriteTool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
 		h.updateTransaction)
 	addWriteTool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
-		h.deleteTransactionsTool)
+		h.deleteTransactions)
 	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
-		h.monthStatusTool)
+		h.monthStatus)
 }
 
 func (h *handlers) logTransactions(ctx context.Context, in LogTransactionsIn) (any, error) {
@@ -210,34 +212,34 @@ func (h *handlers) updateTransaction(ctx context.Context, in UpdateTransactionIn
 	return h.app.UpdateTransaction(ctx, id, in.ID, in.TransactionPatch)
 }
 
-func (h *handlers) deleteTransactionsTool(
+func (h *handlers) deleteTransactions(
 	ctx context.Context, in DeleteTransactionsIn,
 ) (any, error) {
 	id, err := h.id(in.Budget)
 	if err != nil {
 		return nil, err
 	}
-	removed, err := h.deleteTransactions(ctx, id, in)
+	removed, err := h.deleteByIDsOrBatch(ctx, id, in)
 	if err != nil {
 		return nil, err
 	}
 	return deletedResult{Deleted: removed}, nil
 }
 
-func (h *handlers) monthStatusTool(ctx context.Context, in StatusIn) (any, error) {
+func (h *handlers) monthStatus(ctx context.Context, in StatusIn) (any, error) {
 	id, err := h.id(in.Budget)
 	if err != nil {
 		return nil, err
 	}
-	status, err := h.monthStatus(ctx, id, in.Month)
+	status, err := h.getMonthStatus(ctx, id, in.Month)
 	if err != nil {
 		return nil, err
 	}
 	return toStatusOut(status), nil
 }
 
-// deleteTransactions removes the ids or the batch in, whichever it names.
-func (h *handlers) deleteTransactions(
+// deleteByIDsOrBatch removes the ids or the batch in, whichever it names.
+func (h *handlers) deleteByIDsOrBatch(
 	ctx context.Context, id string, in DeleteTransactionsIn,
 ) (int, error) {
 	byIDs := len(in.IDs) > 0

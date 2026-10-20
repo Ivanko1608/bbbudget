@@ -34,7 +34,7 @@ const whatsNewDescription = `What happened to the budget since your own last cha
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	addReadTool(s, "whats_new", whatsNewDescription, h.whatsNewTool)
+	addReadTool(s, "whats_new", whatsNewDescription, h.whatsNew)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
 		URITemplate: "whats-new://{id}",
@@ -44,12 +44,12 @@ func (h *handlers) registerWhatsNew(s *mcp.Server) {
 	}, h.readWhatsNew)
 }
 
-func (h *handlers) whatsNewTool(ctx context.Context, in WhatsNewIn) (any, error) {
+func (h *handlers) whatsNew(ctx context.Context, in WhatsNewIn) (any, error) {
 	id, err := h.id(in.Budget)
 	if err != nil {
 		return nil, err
 	}
-	return h.whatsNew(ctx, id, in.FromRevision)
+	return h.getWhatsNew(ctx, id, in.FromRevision)
 }
 
 func (h *handlers) readWhatsNew(
@@ -57,7 +57,7 @@ func (h *handlers) readWhatsNew(
 ) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
 	id := strings.TrimPrefix(uri, "whats-new://")
-	result, err := h.whatsNew(ctx, id, app.FromOwnLastChange)
+	result, err := h.getWhatsNew(ctx, id, app.FromOwnLastChange)
 	if err != nil {
 		return nil, mcp.ResourceNotFoundError(uri)
 	}
@@ -69,7 +69,7 @@ func (h *handlers) readWhatsNew(
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
 }
 
-func (h *handlers) whatsNew(
+func (h *handlers) getWhatsNew(
 	ctx context.Context, id string, fromRevision int64,
 ) (whatsNewResult, error) {
 	request := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
