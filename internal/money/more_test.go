@@ -7,27 +7,38 @@ import (
 	"testing"
 )
 
+func eq[T comparable](t *testing.T, what string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", what, got, want)
+	}
+}
+
 func TestComparisonsAndSums(t *testing.T) {
 	a, b := New(150, EUR), New(-25, EUR)
-	if a.Cmp(b) != 1 || b.Cmp(a) != -1 || a.Cmp(a) != 0 {
-		t.Fatal("Cmp")
-	}
-	if Min(a, b) != b || Max(a, b) != a {
-		t.Fatal("Min/Max")
-	}
+	eq(t, "a.Cmp(b)", a.Cmp(b), 1)
+	eq(t, "b.Cmp(a)", b.Cmp(a), -1)
+	eq(t, "a.Cmp(a)", a.Cmp(a), 0)
+	eq(t, "Min(a, b)", Min(a, b), b)
+	eq(t, "Max(a, b)", Max(a, b), a)
 	if got := Sum(EUR, a, b, New(1, EUR)); got.Minor() != 126 {
 		t.Fatalf("Sum = %d", got.Minor())
 	}
-	if !Zero(EUR).IsZero() || a.Sign() != 1 || b.Sign() != -1 || !b.IsNegative() || !a.IsPositive() || a.Neg().Minor() != -150 {
-		t.Fatal("sign helpers")
-	}
-	if a.Currency().Code != "EUR" || a.Decimal().String() != "1.5" {
-		t.Fatal("accessors")
-	}
+	eq(t, "Zero(EUR).IsZero()", Zero(EUR).IsZero(), true)
+	eq(t, "a.Sign()", a.Sign(), 1)
+	eq(t, "b.Sign()", b.Sign(), -1)
+	eq(t, "b.IsNegative()", b.IsNegative(), true)
+	eq(t, "a.IsPositive()", a.IsPositive(), true)
+	eq(t, "a.Neg().Minor()", a.Neg().Minor(), -150)
+	eq(t, "a.Currency().Code", a.Currency().Code, "EUR")
+	eq(t, "a.Decimal().String()", a.Decimal().String(), "1.5")
 	var err error
 	func() { defer Recover(&err); New(math.MinInt64, EUR).Neg() }()
-	if err == nil || err.Error() == "" {
+	if err == nil {
 		t.Fatal("Neg(MinInt64) must overflow")
+	}
+	if err.Error() == "" {
+		t.Fatal("Neg(MinInt64) overflow error has no message")
 	}
 	func() { defer Recover(&err); New(1, EUR).Cmp(New(1, CHF)) }()
 	if err == nil {
@@ -46,19 +57,15 @@ func TestRecoverRepanicsForeignPanics(t *testing.T) {
 }
 
 func TestDecimalHelpers(t *testing.T) {
-	if DecimalFromInt(-7).String() != "-7" || (Decimal{}).Sign() != 0 || (Decimal{}).String() != "0" {
-		t.Fatal("zero/int decimals")
-	}
-	if MustDecimal("1.50").Cmp(MustDecimal("1.5")) != 0 || MustDecimal("2").Cmp(MustDecimal("1.99")) != 1 {
-		t.Fatal("Cmp")
-	}
+	eq(t, "DecimalFromInt(-7)", DecimalFromInt(-7).String(), "-7")
+	eq(t, "zero Decimal sign", (Decimal{}).Sign(), 0)
+	eq(t, "zero Decimal string", (Decimal{}).String(), "0")
+	eq(t, "1.50 vs 1.5", MustDecimal("1.50").Cmp(MustDecimal("1.5")), 0)
+	eq(t, "2 vs 1.99", MustDecimal("2").Cmp(MustDecimal("1.99")), 1)
 	third := Decimal{big.NewRat(1, 3)} // non-terminating: rendered at MaxScale, never looping
-	if third.Scale() != MaxScale || third.String() != "0."+strings.Repeat("3", MaxScale) {
-		t.Fatalf("1/3 = %s", third)
-	}
-	if RoundInt(big.NewRat(5, 2), HalfEven).Int64() != 2 {
-		t.Fatal("RoundInt")
-	}
+	eq(t, "1/3 scale", third.Scale(), MaxScale)
+	eq(t, "1/3 string", third.String(), "0."+strings.Repeat("3", MaxScale))
+	eq(t, "RoundInt(5/2)", RoundInt(big.NewRat(5, 2), HalfEven).Int64(), 2)
 }
 
 func TestCurrencies(t *testing.T) {
@@ -70,8 +77,17 @@ func TestCurrencies(t *testing.T) {
 		if codes[i-1] >= codes[i] {
 			t.Fatal("Codes not sorted")
 		}
-		if c := MustLookup(codes[i]); c.Code != codes[i] || c.String() != codes[i] || c.Digits < 0 || (c.Digits > 3 && !c.Crypto) || c.Digits > 9 {
-			t.Fatalf("bad table entry %+v", c)
+		c := MustLookup(codes[i])
+		eq(t, codes[i]+" code", c.Code, codes[i])
+		eq(t, codes[i]+" string", c.String(), codes[i])
+		if c.Digits < 0 {
+			t.Fatalf("%s has negative digits %d", codes[i], c.Digits)
+		}
+		if c.Digits > 3 && !c.Crypto {
+			t.Fatalf("%s is not crypto but has %d digits", codes[i], c.Digits)
+		}
+		if c.Digits > 9 {
+			t.Fatalf("%s has %d digits, more than 9", codes[i], c.Digits)
 		}
 	}
 	defer func() {
@@ -93,8 +109,11 @@ func FuzzParseDecimal(f *testing.F) {
 			return
 		}
 		back, err := ParseDecimal(d.String())
-		if err != nil || back.Cmp(d) != 0 {
-			t.Fatalf("%q -> %s does not round-trip (%v)", s, d, err)
+		if err != nil {
+			t.Fatalf("%q -> %s does not parse back: %v", s, d, err)
+		}
+		if back.Cmp(d) != 0 {
+			t.Fatalf("%q -> %s does not round-trip to %s", s, d, back)
 		}
 		if m, err := FromDecimal(d, EUR); err == nil && m.Rat().Cmp(d.Rat()) != 0 {
 			t.Fatalf("FromDecimal(%s) changed the value to %s", d, m)
@@ -113,8 +132,14 @@ func FuzzRounding(f *testing.F) {
 		r := big.NewRat(num, den)
 		fl, ce, he := new(big.Rat).SetInt(RoundInt(r, Floor)), new(big.Rat).SetInt(RoundInt(r, Ceil)), new(big.Rat).SetInt(RoundInt(r, HalfEven))
 		one := big.NewRat(1, 1)
-		if fl.Cmp(r) > 0 || ce.Cmp(r) < 0 || new(big.Rat).Sub(ce, fl).Cmp(one) > 0 {
-			t.Fatalf("%s: floor %s ceil %s", r, fl, ce)
+		if fl.Cmp(r) > 0 {
+			t.Fatalf("%s: floor %s is above it", r, fl)
+		}
+		if ce.Cmp(r) < 0 {
+			t.Fatalf("%s: ceil %s is below it", r, ce)
+		}
+		if new(big.Rat).Sub(ce, fl).Cmp(one) > 0 {
+			t.Fatalf("%s: floor %s and ceil %s are more than 1 apart", r, fl, ce)
 		}
 		if he.Cmp(fl) != 0 && he.Cmp(ce) != 0 {
 			t.Fatalf("%s: half-even %s is neither floor nor ceil", r, he)
@@ -148,16 +173,17 @@ func TestRoundSignificant(t *testing.T) {
 
 func TestCrypto(t *testing.T) {
 	btc := MustLookup("BTC")
-	if !btc.Crypto || btc.Stable || !MustLookup("USDT").Stable || MustLookup("EUR").Crypto {
-		t.Fatal("crypto flags")
-	}
+	eq(t, "BTC crypto", btc.Crypto, true)
+	eq(t, "BTC stable", btc.Stable, false)
+	eq(t, "USDT stable", MustLookup("USDT").Stable, true)
+	eq(t, "EUR crypto", MustLookup("EUR").Crypto, false)
 	m, err := Parse("0.015", btc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Minor() != 1_500_000 || m.Display() != "0.015 BTC" || m.Format() != "0.01500000 BTC" {
-		t.Fatalf("got %d %q %q", m.Minor(), m.Display(), m.Format())
-	}
+	eq(t, "minor", m.Minor(), 1_500_000)
+	eq(t, "display", m.Display(), "0.015 BTC")
+	eq(t, "format", m.Format(), "0.01500000 BTC")
 	if _, err := Parse("0.000000001", btc); err == nil {
 		t.Fatal("9 places of BTC accepted")
 	}
@@ -168,9 +194,10 @@ func TestCrypto(t *testing.T) {
 		t.Fatal(d)
 	}
 	codes := CryptoCodes()
-	if len(codes) == 0 || codes[0] != "ADA" {
-		t.Fatal(codes)
+	if len(codes) == 0 {
+		t.Fatal("no crypto codes")
 	}
+	eq(t, "first crypto code", codes[0], "ADA")
 }
 
 func TestDecimalAbs(t *testing.T) {

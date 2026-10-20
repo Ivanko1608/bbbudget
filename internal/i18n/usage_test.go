@@ -12,14 +12,28 @@ import (
 	"bbbudget/web"
 )
 
+func isProductionGoFile(path string) bool {
+	return strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+}
+
+func isWebSourceFile(path string) bool {
+	return strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".html")
+}
+
 // Every key the Go code names must be in the English server catalog.
 // Keys built at run time ("month.short."+m) are checked by family below.
 func TestGoKeysExist(t *testing.T) {
 	keyRe := regexp.MustCompile(`"((?:insight|issue|schedule|change|part|compare|cli|category|month)\.[a-z0-9_.-]*[a-z0-9_-])"`)
 	en := Catalogs()[Default]
 	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !isProductionGoFile(path) {
+			return nil
 		}
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -69,8 +83,14 @@ func TestUIKeysExist(t *testing.T) {
 		regexp.MustCompile(`[:;]\s*([a-z]+\.[a-z0-9_.-]+)`), // inside data-i18n-attr="attr:key;…"
 	}
 	err = fs.WalkDir(web.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".html")) {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !isWebSourceFile(path) {
+			return nil
 		}
 		src, err := fs.ReadFile(web.FS(), path)
 		if err != nil {
