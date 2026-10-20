@@ -40,12 +40,18 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - Read the diff with `gh pr diff <pr>`. Check out the branch in a fresh worktree and run `make check`.
    - Check each acceptance criterion: met, partly met or not met, with evidence.
    - Check correctness, the rules in `CONTRIBUTING.md` and the readability rules in `CLAUDE.md`.
+   - Run `gh pr checks <pr>`. A failing check is a blocking finding.
    - Post the review with `gh pr review <pr> --comment --body-file <file>`. Approving isn't possible, because the same account opened the PR.
    - Reply with a verdict, `merge` or `changes needed`, and the blocking findings.
 
 5. **Fix, at most twice.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. After two rounds, stop and hand the rest to the user.
 
-6. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`. Comment on the issue with the PR link and the verdict. Tell the user the PR number, the verdict and the next command, usually `gh pr merge <pr> --squash`.
+6. **Check CI.** Run `gh pr checks <pr> --watch` yourself, and don't take the reviewer's word for it. A local `make check` doesn't count as CI.
+   - Every check passes: the verdict stands.
+   - A check fails: send the failure to the Sonnet agent. This counts as a fix round.
+   - A check never started (no steps, failed within seconds, or an annotation about billing or runners): the verdict is `waiting on CI`. Tell the user why, quoting the annotation.
+
+7. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`. Comment on the issue with the PR link, the verdict and the CI result. Tell the user the PR number, the verdict and the CI result. Give `gh pr merge <pr> --squash` only when every check passed.
 
 ## Writing a new ticket
 
