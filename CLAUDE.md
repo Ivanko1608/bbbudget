@@ -27,12 +27,14 @@ This file is about one thing: **code that a stranger understands on the first re
 - **Use the standard library** (`slices.Equal`, `slices.Sort`, `maps.Keys`, `strings.Cut`) instead of hand-rolled loops that do the same thing.
 - **Keep lines under about 100 characters.** Split long calls one argument per line, and pull long closures out into named functions.
 - **Don't shadow.** In particular, don't declare `err` inside a closure when the outer function has a named `err` result.
+- **Keyed struct literals.** A literal with more than three fields, or any bool field, names its fields. `{"EUR", 2, "€", true, false, false}` tells the reader nothing.
+- **Don't name variables after packages.** No `fs`, `log`, `errors` or `time` as locals.
 
 ## Names
 
 - **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`.
 - **Use domain words, consistently.** Don't invent metaphors ("doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
-- **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals.
+- **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals. Every other layer consumes them, JS included: a literal `"set_item"` outside `internal/budget` is a bug.
 - **Unnamed results of the same type** (`func(T) (string, string)`) need names or a small struct.
 
 ## Comments
@@ -56,6 +58,8 @@ Few and short.
 - Small render functions.
 - Build strings in named variables before you interpolate them.
 - No ternaries nested inside template literals.
+- No money arithmetic. Floats are for pixels only. Every number shown as money arrives from the server already computed: totals, remainders, percentages.
+- No copies of server lists. Rate sources, strategies and other option lists come from `/api/meta`, never from a literal array in JS.
 
 ## Tooling
 
