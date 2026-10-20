@@ -200,7 +200,7 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 			}
 			c := b.Currencies[i]
 			if c.IsManual() {
-				c.Source = a.defaultSource()
+				c.Source = a.defaultRateSource()
 			}
 			targets = append(targets, c)
 		}
@@ -214,13 +214,13 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 		return r, nil, nil, ErrRatesOff
 	}
 
-	bySource := map[budget.RateSource][]string{}
+	byRateSource := map[budget.RateSource][]string{}
 	for _, c := range targets {
-		bySource[c.Source] = append(bySource[c.Source], c.Code)
+		byRateSource[c.Source] = append(byRateSource[c.Source], c.Code)
 	}
 	got := map[string]RateUpdate{}
 	var fetchErrs []error
-	for src, cs := range bySource {
+	for src, cs := range byRateSource {
 		q, err := a.Quote(ctx, b.BaseCurrency, src, cs)
 		if err != nil {
 			fetchErrs = append(fetchErrs, err)
@@ -266,7 +266,7 @@ func (a *App) SetCurrency(
 	}
 	i := slices.IndexFunc(r.Budget.Currencies, func(c budget.CurrencyRate) bool { return c.Code == code })
 	if patch.PerBase == nil && (i < 0 || patch.Source != nil) {
-		src := a.defaultSource()
+		src := a.defaultRateSource()
 		if patch.Source != nil {
 			src = *patch.Source
 		}

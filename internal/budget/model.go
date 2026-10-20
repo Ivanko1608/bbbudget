@@ -74,10 +74,11 @@ type CurrencyRate struct {
 	RateFrom RateSource `json:"rate_from,omitempty"`
 }
 
-// Rate sources. RateSourceAuto tries the official ECB rate first and falls back
-// to a provider that also covers crypto and the currencies ECB doesn't quote.
+// RateSource names where a currency's exchange rate comes from.
 type RateSource string
 
+// RateSourceAuto tries the official ECB rate first and falls back to a provider
+// that also covers crypto and the currencies ECB doesn't quote.
 const (
 	RateSourceManual      RateSource = "manual"
 	RateSourceAuto        RateSource = "auto"
