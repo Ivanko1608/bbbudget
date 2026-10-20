@@ -10,16 +10,18 @@
 package templates
 
 import (
+	"cmp"
 	"embed"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -123,11 +125,8 @@ func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
 
 // List returns templates sorted by name.
 func (r *Registry) List() []Template {
-	out := make([]Template, 0, len(r.byName))
-	for _, t := range r.byName {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	out := slices.Collect(maps.Values(r.byName))
+	slices.SortFunc(out, func(a, b Template) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

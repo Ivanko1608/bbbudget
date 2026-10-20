@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -107,7 +108,7 @@ func (s *FileStore) List(ctx context.Context) (metas []Meta, err error) {
 		metas, err = s.listLocked()
 		return err
 	})
-	sort.Slice(metas, func(i, j int) bool { return metas[i].ID < metas[j].ID })
+	slices.SortFunc(metas, func(a, b Meta) int { return cmp.Compare(a.ID, b.ID) })
 	return metas, err
 }
 
