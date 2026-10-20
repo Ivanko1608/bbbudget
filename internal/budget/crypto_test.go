@@ -2,6 +2,7 @@ package budget
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -32,8 +33,8 @@ func TestCryptoIncomeAfterCashOutLoss(t *testing.T) {
 	r := mustReport(t, cryptoBudget())
 	m := r.Months[0]
 	// 0.015 BTC = €1,500 at the mid rate, less 1% = €1,485.
-	eq(t, "income", m.Income, "3485.00")
-	eq(t, "left", m.Left, "985.00")
+	eqMoney(t, "income", m.Income, "3485.00")
+	eqMoney(t, "left", m.Left, "985.00")
 }
 
 func TestCryptoInsights(t *testing.T) {
@@ -60,6 +61,7 @@ func TestCryptoInsights(t *testing.T) {
 			name:   "income share and a 30% fall",
 			budget: cryptoBudget,
 			id:     "crypto_income",
+			tone:   ToneInfo,
 			// 1,485 is 43% of 3,485; a 30% fall costs €445.50 → €446;
 			// €985 − €445.50 = €539.50 → €540 shown.
 			texts: []string{"**43%**", "BTC", "**€446**"},
@@ -68,12 +70,14 @@ func TestCryptoInsights(t *testing.T) {
 			name:   "cash-out loss",
 			budget: cryptoBudget,
 			id:     "cash_out_loss_btc",
+			tone:   ToneInfo,
 			texts:  []string{"0.015 BTC", "**€15**", "€180 a year"},
 		},
 		{
 			name:   "small rates are not rounded to 0.00",
 			budget: withNode,
 			id:     "fx_risk_btc",
+			tone:   ToneInfo,
 			texts:  []string{"0.000009 per EUR", "0.000011"},
 		},
 		{
@@ -90,11 +94,9 @@ func TestCryptoInsights(t *testing.T) {
 			if in == nil {
 				t.Fatalf("no %s insight", c.id)
 			}
-			if c.tone != "" {
-				expectEqual(t, "tone", in.Tone, c.tone)
-			}
+			eq(t, "tone", in.Tone, c.tone)
 			for _, text := range c.texts {
-				expectContains(t, c.id, in.Text, text)
+				contains(t, c.id, in.Text, text)
 			}
 		})
 	}
@@ -105,7 +107,7 @@ func TestCryptoValidation(t *testing.T) {
 	b.BaseCurrency = "BTC"
 	b.Currencies = nil
 	_, err := Compile(b)
-	expectErrorContaining(t, "crypto base currency", err, "cryptocurrency")
+	errorContains(t, "crypto base currency", err, "cryptocurrency")
 
 	b = cryptoBudget()
 	b.Items[1].Amount = d("20000000") // 2×10^15 satoshi: over MaxAmountMinor
@@ -113,7 +115,7 @@ func TestCryptoValidation(t *testing.T) {
 	b.Currencies[0].Source = "google"
 	_, err = Compile(b)
 	for _, want := range []string{"items[1].amount", "cash_out_fee_pct", "currencies[0].source"} {
-		expectErrorContaining(t, "issue at "+want, err, want)
+		errorContains(t, "issue at "+want, err, want)
 	}
 }
 
@@ -125,10 +127,10 @@ func TestTypedRateBecomesManual(t *testing.T) {
 		t.Fatal(err)
 	}
 	typed := nb.Currencies[0]
-	expectEqual(t, "typed source", typed.Source, SourceManual)
-	expectEqual(t, "typed rate date", typed.RateDate, "")
-	expectEqual(t, "typed rate from", typed.RateFrom, "")
-	expectEqual(t, "typed rate", typed.PerBase.String(), "0.000012")
+	eq(t, "typed source", typed.Source, SourceManual)
+	eq(t, "typed rate date", typed.RateDate, "")
+	eq(t, "typed rate from", typed.RateFrom, "")
+	eq(t, "typed rate", typed.PerBase.String(), "0.000012")
 
 	// A fetched rate names its source and keeps it.
 	fetched := CurrencyPatch{
@@ -140,8 +142,8 @@ func TestTypedRateBecomesManual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectEqual(t, "fetched source", nb.Currencies[0].Source, SourceAuto)
-	expectEqual(t, "fetched rate date", nb.Currencies[0].RateDate, "2026-10-08")
+	eq(t, "fetched source", nb.Currencies[0].Source, SourceAuto)
+	eq(t, "fetched rate date", nb.Currencies[0].RateDate, "2026-10-08")
 }
 
 func TestReportCurrencies(t *testing.T) {
@@ -159,10 +161,10 @@ func TestReportCurrencies(t *testing.T) {
 		{"KRW", "1000", "0.61"},   // 1 KRW would show as €0.00: 1,000 / 1642.5 = 0.6088…
 	} {
 		c := r.Currencies[i]
-		expectEqual(t, "code", c.Code, want.code)
-		expectEqual(t, want.code+" units", c.Units.String(), want.units)
-		expectEqual(t, want.code+" value", c.BaseValue.String(), want.value)
-		expectEqual(t, want.code+" crypto", c.Crypto, want.code == "BTC")
+		eq(t, "code", c.Code, want.code)
+		eq(t, want.code+" units", c.Units.String(), want.units)
+		eq(t, want.code+" value", c.BaseValue.String(), want.value)
+		eq(t, want.code+" crypto", c.Crypto, want.code == "BTC")
 	}
 	if r := mustReport(t, blank()); r.Currencies == nil {
 		t.Error("currencies must be [] rather than null in JSON")
@@ -197,19 +199,19 @@ items:
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectEqual(t, "BTC rate", b.Currencies[0].PerBase.String(), "0.0000135211580123")
-	expectEqual(t, "payout", b.Items[0].Amount.String(), "0.00012345")
-	expectEqual(t, "stable", b.Items[1].Amount.String(), "250.123456")
-	expectEqual(t, "omitted source", b.Currencies[1].Source, "")
-	expectEqual(t, "omitted source means manual", b.Currencies[1].IsManual(), true)
-	expectEqual(t, "omitted cash-out loss means 0", b.Currencies[1].CashOutFeePct.IsZero(), true)
+	eq(t, "BTC rate", b.Currencies[0].PerBase.String(), "0.0000135211580123")
+	eq(t, "payout", b.Items[0].Amount.String(), "0.00012345")
+	eq(t, "stable", b.Items[1].Amount.String(), "250.123456")
+	eq(t, "omitted source", b.Currencies[1].Source, "")
+	eq(t, "omitted source means manual", b.Currencies[1].IsManual(), true)
+	eq(t, "omitted cash-out loss means 0", b.Currencies[1].CashOutFeePct.IsZero(), true)
 	if _, err := Compile(b); err != nil {
 		t.Fatal(err)
 	}
 	// Omitted optional fields stay omitted when written back.
 	raw, _ := json.Marshal(b.Currencies[1])
-	expectNotContains(t, "written currency", string(raw), "cash_out_fee_pct")
-	expectNotContains(t, "written currency", string(raw), "source")
+	notContains(t, "written currency", string(raw), "cash_out_fee_pct")
+	notContains(t, "written currency", string(raw), "source")
 }
 
 func TestStablecoinIncomeIsNotCryptoRisk(t *testing.T) {
@@ -237,9 +239,9 @@ func TestManualRateHasNoFetchMetadata(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := nb.Currencies[0]
-		expectEqual(t, "rate date", c.RateDate, "")
-		expectEqual(t, "rate from", c.RateFrom, "")
-		expectEqual(t, "is manual", c.IsManual(), true)
+		eq(t, fmt.Sprintf("%+v rate date", p), c.RateDate, "")
+		eq(t, fmt.Sprintf("%+v rate from", p), c.RateFrom, "")
+		eq(t, fmt.Sprintf("%+v is manual", p), c.IsManual(), true)
 	}
 }
 

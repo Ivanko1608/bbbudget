@@ -2,6 +2,8 @@ package budget
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -34,34 +36,40 @@ func insight(r *Report, id string) *Insight {
 	return nil
 }
 
+func hasInsightWithPrefix(r *Report, prefix string) bool {
+	return slices.ContainsFunc(r.Insights, func(in Insight) bool {
+		return strings.HasPrefix(in.ID, prefix)
+	})
+}
+
 func TestPayoffFromPotAfterRoutedIncome(t *testing.T) {
 	r := mustReport(t, saleBudget())
 	m0, m1 := r.Months[0], r.Months[1]
 	// Month 0 still pays the minimum and interest: 5000 + 50 − 100 − 50 extra.
-	eq(t, "m0 min", m0.DebtMinCost, "100.00")
-	eq(t, "m0 balance", m0.Debts[0].Balance, "4900.00")
-	eq(t, "m0 savings", m0.Savings, "50.00")
+	eqMoney(t, "m0 min", m0.DebtMinCost, "100.00")
+	eqMoney(t, "m0 balance", m0.Debts[0].Balance, "4900.00")
+	eqMoney(t, "m0 savings", m0.Savings, "50.00")
 
 	// Month 1: 49 interest, then the whole 4949 from the pot the sale just landed in.
-	eq(t, "m1 interest", m1.Debts[0].Interest, "49.00")
-	eq(t, "m1 payoff", m1.Debts[0].Payoff, "4949.00")
-	eq(t, "m1 no minimum on top", m1.DebtMinCost, "0.00")
-	eq(t, "m1 balance", m1.Debts[0].Balance, "0.00")
-	eq(t, "m1 payoff cost", m1.Payoff, "4949.00")
-	eq(t, "m1 from pots", m1.PayoffFromPots, "4949.00")
-	eq(t, "m1 from savings", m1.FromSavings, "4949.00")
-	eq(t, "m1 debt payments", m1.DebtPayments, "4949.00")
+	eqMoney(t, "m1 interest", m1.Debts[0].Interest, "49.00")
+	eqMoney(t, "m1 payoff", m1.Debts[0].Payoff, "4949.00")
+	eqMoney(t, "m1 no minimum on top", m1.DebtMinCost, "0.00")
+	eqMoney(t, "m1 balance", m1.Debts[0].Balance, "0.00")
+	eqMoney(t, "m1 payoff cost", m1.Payoff, "4949.00")
+	eqMoney(t, "m1 from pots", m1.PayoffFromPots, "4949.00")
+	eqMoney(t, "m1 from savings", m1.FromSavings, "4949.00")
+	eqMoney(t, "m1 debt payments", m1.DebtPayments, "4949.00")
 	// The month's own money is untouched by the payoff, and with no debt left
 	// the whole 200 is saved.
-	eq(t, "m1 left", m1.Left, "200.00")
-	eq(t, "m1 extra", m1.ExtraCost, "0.00")
-	eq(t, "m1 general", m1.Pots[0].Balance, "5301.00") // 50 + 10000 − 4949 + 200
+	eqMoney(t, "m1 left", m1.Left, "200.00")
+	eqMoney(t, "m1 extra", m1.ExtraCost, "0.00")
+	eqMoney(t, "m1 general", m1.Pots[0].Balance, "5301.00") // 50 + 10000 − 4949 + 200
 
 	paidOff := r.Debts[0].PaidOffMonth
 	if paidOff == nil {
 		t.Fatal("debt not paid off")
 	}
-	expectEqual(t, "paid off month", *paidOff, 1)
+	eq(t, "paid off month", *paidOff, 1)
 }
 
 // A pot that holds less pays what it can; the rest stays owed and pays its minimum.
@@ -70,12 +78,12 @@ func TestPayoffFromPotThatFallsShort(t *testing.T) {
 	b.Items[2].Amount = d("3000")
 	r := mustReport(t, b)
 	m1 := r.Months[1]
-	eq(t, "paid from pot", m1.Debts[0].Payoff, "3050.00") // all the pot holds: 50 + 3000
-	eq(t, "pot emptied", m1.PayoffFromPots, "3050.00")
-	eq(t, "minimum on the rest", m1.Debts[0].MinPaid, "100.00")
-	eq(t, "left", m1.Left, "100.00")
-	eq(t, "extra", m1.Debts[0].Extra, "50.00")
-	eq(t, "balance", m1.Debts[0].Balance, "1749.00") // 4949 − 3050 − 100 − 50
+	eqMoney(t, "paid from pot", m1.Debts[0].Payoff, "3050.00") // all the pot holds: 50 + 3000
+	eqMoney(t, "pot emptied", m1.PayoffFromPots, "3050.00")
+	eqMoney(t, "minimum on the rest", m1.Debts[0].MinPaid, "100.00")
+	eqMoney(t, "left", m1.Left, "100.00")
+	eqMoney(t, "extra", m1.Debts[0].Extra, "50.00")
+	eqMoney(t, "balance", m1.Debts[0].Balance, "1749.00") // 4949 − 3050 − 100 − 50
 }
 
 // An empty pot pays nothing, and the plan says so.
@@ -85,8 +93,8 @@ func TestPayoffFromEmptyPot(t *testing.T) {
 	b.Pots = append(b.Pots, Pot{ID: "move", Name: "Move fund", Kind: PotSinking, Balance: d("0")})
 	b.Debts[0].PayoffFrom = "move"
 	r := mustReport(t, b)
-	eq(t, "payoff", r.Months[1].Payoff, "0.00")
-	eq(t, "minimum still paid", r.Months[1].Debts[0].MinPaid, "100.00")
+	eqMoney(t, "payoff", r.Months[1].Payoff, "0.00")
+	eqMoney(t, "minimum still paid", r.Months[1].Debts[0].MinPaid, "100.00")
 }
 
 func TestPayoffInsights(t *testing.T) {
@@ -132,9 +140,9 @@ func TestPayoffInsights(t *testing.T) {
 			if in == nil {
 				t.Fatal("no payoff insight")
 			}
-			expectEqual(t, "tone", in.Tone, c.tone)
+			eq(t, "tone", in.Tone, c.tone)
 			for _, text := range c.texts {
-				expectContains(t, "payoff insight", in.Text, text)
+				contains(t, "payoff insight", in.Text, text)
 			}
 		})
 	}
@@ -147,11 +155,11 @@ func TestPayoffFromTheMonth(t *testing.T) {
 	b.Debts[0].PayoffFrom = ""
 	r := mustReport(t, b)
 	m1 := r.Months[1]
-	eq(t, "payoff", m1.Payoff, "4949.00")
-	eq(t, "from pots", m1.PayoffFromPots, "0.00")
-	eq(t, "left", m1.Left, "-4749.00")
-	eq(t, "short", m1.Short, "4749.00")
-	eq(t, "savings untouched", m1.Savings, "50.00")
+	eqMoney(t, "payoff", m1.Payoff, "4949.00")
+	eqMoney(t, "from pots", m1.PayoffFromPots, "0.00")
+	eqMoney(t, "left", m1.Left, "-4749.00")
+	eqMoney(t, "short", m1.Short, "4749.00")
+	eqMoney(t, "savings untouched", m1.Savings, "50.00")
 	if insight(r, "shortfall") == nil {
 		t.Error("a payoff the month can't afford must show as a short month")
 	}
@@ -164,7 +172,7 @@ func TestPayoffLateOrOutsideWindow(t *testing.T) {
 	b.Debts[0].PayoffMonth = &late
 	r := mustReport(t, b)
 	for _, m := range r.Months {
-		eq(t, m.Label+" payoff", m.Payoff, "0.00")
+		eqMoney(t, m.Label+" payoff", m.Payoff, "0.00")
 	}
 	if insight(r, "debt_payoff_card") != nil {
 		t.Error("no payoff insight outside the window")
@@ -182,11 +190,14 @@ func TestPayoffOps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set payoff by pot name: %v", err)
 	}
-	expectEqual(t, "payoff pot", nb.Debts[0].PayoffFrom, "move")
-	expectEqual(t, "payoff month", *nb.Debts[0].PayoffMonth, 2)
+	eq(t, "payoff pot", nb.Debts[0].PayoffFrom, "move")
+	if nb.Debts[0].PayoffMonth == nil {
+		t.Fatal("payoff month not set")
+	}
+	eq(t, "payoff month", *nb.Debts[0].PayoffMonth, 2)
 
 	_, err = Apply(nb, NewOp("remove_pot", "move", nil))
-	expectErrorContaining(t, "removing a pot a payoff uses", err, "Card")
+	errorContains(t, "removing a pot a payoff uses", err, "Card")
 
 	_, err = Apply(nb, NewOp("set_debt", "card", DebtPatch{PayoffFrom: strp("nowhere")}))
 	if err == nil {
@@ -201,7 +212,7 @@ func TestPayoffOps(t *testing.T) {
 	if nb.Debts[0].PayoffMonth != nil {
 		t.Errorf("payoff month = %d, want none", *nb.Debts[0].PayoffMonth)
 	}
-	expectEqual(t, "payoff pot after removal", nb.Debts[0].PayoffFrom, "")
+	eq(t, "payoff pot after removal", nb.Debts[0].PayoffFrom, "")
 
 	loan := Debt{Name: "Loan", Balance: d("100"), APRPct: d("0"), MinPayment: d("10"),
 		PayoffMonth: &two, PayoffFrom: "General"}
@@ -209,7 +220,7 @@ func TestPayoffOps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add debt with payoff: %v", err)
 	}
-	expectEqual(t, "new debt payoff pot", nb.Debts[1].PayoffFrom, "savings")
+	eq(t, "new debt payoff pot", nb.Debts[1].PayoffFrom, "savings")
 }
 
 func TestPayoffValidation(t *testing.T) {
@@ -248,16 +259,16 @@ func TestPayoffInForeignCurrency(t *testing.T) {
 	b.Debts = []Debt{{ID: "loan", Name: "Loan", Currency: "USD", Balance: d("1100"),
 		APRPct: d("0"), MinPayment: d("0"), PayoffMonth: &zero, PayoffFrom: "savings"}}
 	m0 := mustReport(t, b).Months[0]
-	eq(t, "paid in USD", m0.Debts[0].Payoff, "1100.00")
-	eq(t, "cost: 1100 / 1.1 × 1.02", m0.Payoff, "1020.00")
-	eq(t, "pot", m0.Pots[0].Balance, "980.00")
+	eqMoney(t, "paid in USD", m0.Debts[0].Payoff, "1100.00")
+	eqMoney(t, "cost: 1100 / 1.1 × 1.02", m0.Payoff, "1020.00")
+	eqMoney(t, "pot", m0.Pots[0].Balance, "980.00")
 
 	b.Pots[0].Balance = d("510")
 	m0 = mustReport(t, b).Months[0]
-	eq(t, "what 510 buys: 510 × 1.1 / 1.02", m0.Debts[0].Payoff, "550.00")
-	eq(t, "cost never exceeds the pot", m0.PayoffFromPots, "510.00")
-	eq(t, "rest owed", m0.Debts[0].Balance, "550.00")
-	eq(t, "pot emptied", m0.Pots[0].Balance, "0.00")
+	eqMoney(t, "what 510 buys: 510 × 1.1 / 1.02", m0.Debts[0].Payoff, "550.00")
+	eqMoney(t, "cost never exceeds the pot", m0.PayoffFromPots, "510.00")
+	eqMoney(t, "rest owed", m0.Debts[0].Balance, "550.00")
+	eqMoney(t, "pot emptied", m0.Pots[0].Balance, "0.00")
 }
 
 // A payoff comes before planned transfers from the same pot that month, and a
@@ -272,9 +283,9 @@ func TestPayoffBeforeTransferFromSamePot(t *testing.T) {
 		Amount: d("600"), Schedule: Once(0)}}
 	r := mustReport(t, b)
 	m0 := r.Months[0]
-	eq(t, "payoff", m0.Payoff, "600.00")
-	eq(t, "transfer gets the rest", m0.Transfers, "400.00")
-	eq(t, "from savings", m0.FromSavings, "1000.00")
+	eqMoney(t, "payoff", m0.Payoff, "600.00")
+	eqMoney(t, "transfer gets the rest", m0.Transfers, "400.00")
+	eqMoney(t, "from savings", m0.FromSavings, "1000.00")
 	if insight(r, "withdrawal_cut_tyres") == nil {
 		t.Error("a transfer the pot can't fully pay after a payoff must be flagged")
 	}

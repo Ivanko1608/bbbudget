@@ -61,41 +61,41 @@ func mustReport(t *testing.T, b Budget) *Report {
 	return r
 }
 
-func eq(t *testing.T, what string, got money.Money, want string) {
+func eqMoney(t *testing.T, what string, got money.Money, want string) {
 	t.Helper()
 	if got.String() != want {
 		t.Errorf("%s = %s, want %s", what, got, want)
 	}
 }
 
-func expectEqual[T comparable](t *testing.T, what string, got, want T) {
+func eq[T comparable](t *testing.T, what string, got, want T) {
 	t.Helper()
 	if got != want {
 		t.Errorf("%s = %v, want %v", what, got, want)
 	}
 }
 
-func expectContains(t *testing.T, what, text, want string) {
+func contains(t *testing.T, what, text, want string) {
 	t.Helper()
 	if !strings.Contains(text, want) {
 		t.Errorf("%s lacks %q: %s", what, want, text)
 	}
 }
 
-func expectNotContains(t *testing.T, what, text, unwanted string) {
+func notContains(t *testing.T, what, text, unwanted string) {
 	t.Helper()
 	if strings.Contains(text, unwanted) {
 		t.Errorf("%s has %q: %s", what, unwanted, text)
 	}
 }
 
-func expectErrorContaining(t *testing.T, what string, err error, want string) {
+func errorContains(t *testing.T, what string, err error, want string) {
 	t.Helper()
 	if err == nil {
 		t.Errorf("%s: no error, want one containing %q", what, want)
 		return
 	}
-	expectContains(t, what, err.Error(), want)
+	contains(t, what, err.Error(), want)
 }
 
 // Hand-computed with the rounding policy (costs round up to the cent):
@@ -108,22 +108,22 @@ func expectErrorContaining(t *testing.T, what string, err error, want string) {
 func TestFixtureGolden(t *testing.T) {
 	r := mustReport(t, fixture(t))
 	m0, m1 := r.Months[0], r.Months[1]
-	eq(t, "m0 income", m0.Income, "3900.00")
-	eq(t, "m0 expenses", m0.Expenses, "3582.51") // + 600 holiday
-	eq(t, "m0 left", m0.Left, "317.49")
-	eq(t, "m1 left", m1.Left, "917.49")
-	eq(t, "home", m0.ByCategory["home"], "1853.41")
-	eq(t, "education", m1.ByCategory["education"], "892.98")
-	eq(t, "end savings", r.Totals.EndSavings, "10409.88") // 317.49 + 11 × 917.49
+	eqMoney(t, "m0 income", m0.Income, "3900.00")
+	eqMoney(t, "m0 expenses", m0.Expenses, "3582.51") // + 600 holiday
+	eqMoney(t, "m0 left", m0.Left, "317.49")
+	eqMoney(t, "m1 left", m1.Left, "917.49")
+	eqMoney(t, "home", m0.ByCategory["home"], "1853.41")
+	eqMoney(t, "education", m1.ByCategory["education"], "892.98")
+	eqMoney(t, "end savings", r.Totals.EndSavings, "10409.88") // 317.49 + 11 × 917.49
 	goal := r.Goals[0]
 	if goal.ReachedMonth == nil {
 		t.Error("goal never reached")
 	} else {
-		expectEqual(t, "goal reached month", *goal.ReachedMonth, 2)
+		eq(t, "goal reached month", *goal.ReachedMonth, 2)
 	}
-	expectEqual(t, "goal reached label", goal.ReachedLabel, "Dec 2026")
-	expectEqual(t, "first month label", m0.Label, "Oct 2026")
-	expectEqual(t, "last month key", r.Months[11].Key, "2027-09")
+	eq(t, "goal reached label", goal.ReachedLabel, "Dec 2026")
+	eq(t, "first month label", m0.Label, "Oct 2026")
+	eq(t, "last month key", r.Months[11].Key, "2027-09")
 }
 
 // A single EUR debt, worked by hand month by month.
@@ -152,16 +152,16 @@ func TestDebtPayoffGolden(t *testing.T) {
 	}
 	for i, w := range want {
 		m := r.Months[i]
-		eq(t, fmt.Sprintf("m%d interest", i), m.Debts[0].Interest, w[0])
-		eq(t, fmt.Sprintf("m%d balance", i), m.Debts[0].Balance, w[1])
-		eq(t, fmt.Sprintf("m%d saved", i), m.Saved, w[2])
+		eqMoney(t, fmt.Sprintf("m%d interest", i), m.Debts[0].Interest, w[0])
+		eqMoney(t, fmt.Sprintf("m%d balance", i), m.Debts[0].Balance, w[1])
+		eqMoney(t, fmt.Sprintf("m%d saved", i), m.Saved, w[2])
 	}
 	summary := r.Debts[0]
 	if summary.PaidOffMonth == nil {
 		t.Fatalf("not paid off: %+v", summary)
 	}
-	expectEqual(t, "paid off month", *summary.PaidOffMonth, 5)
-	eq(t, "total interest", summary.TotalInterest, "31.14")
+	eq(t, "paid off month", *summary.PaidOffMonth, 5)
+	eqMoney(t, "total interest", summary.TotalInterest, "31.14")
 }
 
 func TestForeignDebtExtraNeverOverspends(t *testing.T) {
@@ -172,15 +172,15 @@ func TestForeignDebtExtraNeverOverspends(t *testing.T) {
 	r := mustReport(t, b)
 	m0 := r.Months[0]
 	// interest 4000 × 24/1200 = 80.00 USD
-	eq(t, "interest", m0.Debts[0].Interest, "80.00")
+	eqMoney(t, "interest", m0.Debts[0].Interest, "80.00")
 	// min 250 USD costs 250/1.08×1.02 = 236.111 -> 236.12
-	eq(t, "min cost", m0.DebtMinCost, "236.12")
+	eqMoney(t, "min cost", m0.DebtMinCost, "236.12")
 	// left = 3900 − 3346.39 − 236.12 = 317.49; extra budget = floor(158.745) = 158.74
-	eq(t, "left", m0.Left, "317.49")
+	eqMoney(t, "left", m0.Left, "317.49")
 	// 158.74 € buys floor(158.74 × 1.08 / 1.02) = floor(168.0776…) = 168.07 USD
-	eq(t, "extra paid", m0.Debts[0].Extra, "168.07")
+	eqMoney(t, "extra paid", m0.Debts[0].Extra, "168.07")
 	// whose cost is ceil(168.07/1.08×1.02) = ceil(158.7327…) = 158.74, within budget
-	eq(t, "extra cost", m0.ExtraCost, "158.74")
+	eqMoney(t, "extra cost", m0.ExtraCost, "158.74")
 }
 
 func TestScheduleActiveIn(t *testing.T) {
@@ -245,7 +245,8 @@ func TestStrategies(t *testing.T) {
 		t.Errorf("listed paid %s first", got)
 	}
 	// Avalanche must never pay more interest than snowball here.
-	if mk(StrategyAvalanche).Totals.TotalInterest.Cmp(mk(StrategySnowball).Totals.TotalInterest) > 0 {
+	avalancheInterest := mk(StrategyAvalanche).Totals.TotalInterest
+	if avalancheInterest.Cmp(mk(StrategySnowball).Totals.TotalInterest) > 0 {
 		t.Error("avalanche paid more interest than snowball")
 	}
 }
@@ -400,15 +401,15 @@ func TestInvariantsHoldExactly(t *testing.T) {
 				fail("overdraft %s negative", m.Overdraft)
 			}
 			if spendsLeftoverWhileOwing(m) {
-				left := m.ToSavings.Sub(m.IncomeToPots)
-				fail("saved %s / extra %s while %s is owed", left, m.ExtraCost, m.Overdraft)
+				saved := m.ToSavings.Sub(m.IncomeToPots)
+				fail("saved %s / extra %s while %s is owed", saved, m.ExtraCost, m.Overdraft)
 			}
 			flow := m.Left.Add(m.Transfers)
 			if flow.IsNegative() != m.Short.IsPositive() {
-				fail("short %s for flow %s", m.Short, flow)
+				fail("short %s disagrees with the sign of flow %s", m.Short, flow)
 			}
 			if flow.IsNegative() && m.Short.Cmp(flow.Neg()) != 0 {
-				fail("short %s for flow %s", m.Short, flow)
+				fail("short %s != shortfall of flow %s", m.Short, flow)
 			}
 			prevOwed = m.Overdraft
 			cats := money.Zero(p.Base)
@@ -427,12 +428,15 @@ func TestInvariantsHoldExactly(t *testing.T) {
 				if dm.Balance.IsNegative() {
 					fail("negative balance")
 				}
-				owedAfter := prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra).Sub(dm.Payoff)
+				owedAfter := prevBal[i].Add(dm.Interest).Sub(dm.MinPaid).Sub(dm.Extra)
+				owedAfter = owedAfter.Sub(dm.Payoff)
 				if owedAfter.Cmp(dm.Balance) != 0 {
 					fail("debt %s does not reconcile", dm.ID)
 				}
 				// A payoff from the month's own money always clears the debt.
-				if d := p.Debts[i]; d.PaysOffIn(m.Index) && d.PotIdx < 0 && dm.Balance.IsPositive() {
+				debt := p.Debts[i]
+				paysOffFromMonth := debt.PaysOffIn(m.Index) && debt.PotIdx < 0
+				if paysOffFromMonth && dm.Balance.IsPositive() {
 					fail("debt %s not cleared by its payoff", dm.ID)
 				}
 				if dm.Payoff.IsPositive() && !p.Debts[i].PaysOffIn(m.Index) {
@@ -512,8 +516,10 @@ func TestValidationReportsEverything(t *testing.T) {
 	b.Items = []Item{
 		{ID: "a", Name: "A", Amount: d("1.234"), Currency: "EUR",
 			Category: "living", Schedule: Monthly()},
-		{ID: "a", Name: "B", Amount: d("1"), Currency: "XXX", Category: "nope", Schedule: Monthly()},
-		{ID: "c", Name: "C", Amount: d("-5"), Currency: "EUR", Category: "living", Schedule: Monthly()},
+		{ID: "a", Name: "B", Amount: d("1"), Currency: "XXX", Category: "nope",
+			Schedule: Monthly()},
+		{ID: "c", Name: "C", Amount: d("-5"), Currency: "EUR", Category: "living",
+			Schedule: Monthly()},
 	}
 	_, err := Compile(b)
 	ve, ok := err.(*ValidationError)

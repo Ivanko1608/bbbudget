@@ -40,15 +40,15 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("Apply mutated its input")
 	}
-	expectEqual(t, "rent", itemByID(nb, "rent").Amount.String(), "1200")
-	expectEqual(t, "item count", len(nb.Items), len(b.Items)-1)
-	expectEqual(t, "USD rate", nb.Currencies[1].PerBase.String(), "1.1")
+	eq(t, "rent", itemByID(nb, "rent").Amount.String(), "1200")
+	eq(t, "item count", len(nb.Items), len(b.Items)-1)
+	eq(t, "USD rate", nb.Currencies[1].PerBase.String(), "1.1")
 }
 
 func TestFindIsStrictAboutAmbiguity(t *testing.T) {
 	b := fixture(t)
 	_, err := Apply(b, NewOp("set_item", "school", ItemPatch{Amount: decp("1")}))
-	expectErrorContaining(t, "ambiguous ref", err, "matches several")
+	errorContains(t, "ambiguous ref", err, "matches several")
 	for _, ref := range []string{"supplies", "School supplies", "SCHOOL SUPPLIES", "suppl"} {
 		nb, err := Apply(b, NewOp("set_item", ref, ItemPatch{Amount: decp("60")}))
 		if err != nil {
@@ -78,11 +78,11 @@ func TestAddItemDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	g1, g2 := nb.Items[len(nb.Items)-2], nb.Items[len(nb.Items)-1]
-	expectEqual(t, "first id", g1.ID, "gym")
-	expectEqual(t, "first currency", g1.Currency, "EUR")
-	expectEqual(t, "first schedule", g1.Schedule, Monthly())
-	expectEqual(t, "second id", g2.ID, "gym-2")
-	expectEqual(t, "second schedule", g2.Schedule, Once(3))
+	eq(t, "first id", g1.ID, "gym")
+	eq(t, "first currency", g1.Currency, "EUR")
+	eq(t, "first schedule", g1.Schedule, Monthly())
+	eq(t, "second id", g2.ID, "gym-2")
+	eq(t, "second schedule", g2.Schedule, Once(3))
 }
 
 func TestOpsRejectBadInput(t *testing.T) {
@@ -139,12 +139,12 @@ func TestDebtAndGoalOps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectEqual(t, "debt id", nb.Debts[0].ID, "credit-card")
-	expectEqual(t, "debt rate", nb.Debts[0].APRPct.String(), "19.9")
+	eq(t, "debt id", nb.Debts[0].ID, "credit-card")
+	eq(t, "debt rate", nb.Debts[0].APRPct.String(), "19.9")
 	// The old goal ops still work, on pots.
-	expectEqual(t, "goal pot id", nb.Pots[2].ID, "new-laptop")
-	expectEqual(t, "goal pot kind", nb.Pots[2].Kind, PotSinking)
-	expectEqual(t, "emergency target", nb.Pots[1].Target.String(), "3000")
+	eq(t, "goal pot id", nb.Pots[2].ID, "new-laptop")
+	eq(t, "goal pot kind", nb.Pots[2].Kind, PotSinking)
+	eq(t, "emergency target", nb.Pots[1].Target.String(), "3000")
 }
 
 func TestScenarios(t *testing.T) {
@@ -174,7 +174,7 @@ func TestScenarios(t *testing.T) {
 	if len(out) != 3 {
 		t.Fatalf("outcomes: %+v", out)
 	}
-	expectEqual(t, "first outcome", out[0].ID, "baseline")
+	eq(t, "first outcome", out[0].ID, "baseline")
 	if out[1].DeltaEndSavings.Sign() >= 0 {
 		t.Errorf("a stronger dollar should cost money: %s", out[1].DeltaEndSavings)
 	}
@@ -197,13 +197,13 @@ func TestScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectEqual(t, "adopted tuition", itemByID(adopted, "tuition").Amount.String(), "450")
-	expectEqual(t, "scenarios left after adopt", len(adopted.Scenarios), 1)
+	eq(t, "adopted tuition", itemByID(adopted, "tuition").Amount.String(), "450")
+	eq(t, "scenarios left after adopt", len(adopted.Scenarios), 1)
 	removed, err := RemoveScenario(b, "dollar-at-1-00")
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	expectEqual(t, "scenarios left after remove", len(removed.Scenarios), 1)
+	eq(t, "scenarios left after remove", len(removed.Scenarios), 1)
 	if !reflect.DeepEqual(removed.Items, b.Items) {
 		t.Error("removing a scenario changed the items")
 	}
@@ -215,8 +215,8 @@ func TestBudgetJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectContains(t, "amounts must serialise as exact strings", string(raw), `"amount":"45.5"`)
-	expectContains(t, "rates must serialise as exact strings", string(raw), `"per_base":"1.08"`)
+	contains(t, "amounts must serialise as exact strings", string(raw), `"amount":"45.5"`)
+	contains(t, "rates must serialise as exact strings", string(raw), `"per_base":"1.08"`)
 	var back Budget
 	if err := json.Unmarshal(raw, &back); err != nil {
 		t.Fatal(err)
@@ -247,12 +247,12 @@ func TestScheduleByCalendarMonth(t *testing.T) {
 		t.Fatal(err)
 	}
 	insurance := itemByID(nb, "insurance").Schedule
-	expectEqual(t, "insurance start", insurance.Start, 2)
-	expectEqual(t, "insurance period", insurance.Every, 3)
+	eq(t, "insurance start", insurance.Start, 2)
+	eq(t, "insurance period", insurance.Every, 3)
 	if insurance.End == nil {
 		t.Error("insurance has no end")
 	} else {
-		expectEqual(t, "insurance end", *insurance.End, 11)
+		eq(t, "insurance end", *insurance.End, 11)
 	}
 	if got := itemByID(nb, "course").Schedule; got != (Schedule{Start: 4, Every: 1}) {
 		t.Errorf("course: %+v", got)
@@ -278,14 +278,15 @@ func TestSetItemSchedulePatchesByMonth(t *testing.T) {
 		t.Fatal(err)
 	}
 	ended := itemByID(nb, "gym").Schedule
-	expectEqual(t, "start after setting the end", ended.Start, 3)
-	expectEqual(t, "period after setting the end", ended.Every, 1)
+	eq(t, "start after setting the end", ended.Start, 3)
+	eq(t, "period after setting the end", ended.Every, 1)
 	if ended.End == nil {
 		t.Fatal("setting the end left no end")
 	}
-	expectEqual(t, "end", *ended.End, 8)
+	eq(t, "end", *ended.End, 8)
 	// An empty ends removes the end.
-	nb, err = Apply(nb, NewOp("set_item", "gym", ItemPatch{Schedule: &ScheduleSpec{Ends: strp("")}}))
+	clearEnd := ItemPatch{Schedule: &ScheduleSpec{Ends: strp("")}}
+	nb, err = Apply(nb, NewOp("set_item", "gym", clearEnd))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,14 +345,14 @@ func TestItemPotWithMonthSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	added := itemByID(nb, "bonus")
-	expectEqual(t, "added pot", added.Pot, "emergency")
-	expectEqual(t, "added schedule", added.Schedule, Schedule{Start: 5})
+	eq(t, "added pot", added.Pot, "emergency")
+	eq(t, "added schedule", added.Schedule, Schedule{Start: 5})
 	move := ItemPatch{Schedule: &ScheduleSpec{Starts: "2026-07"}, Pot: strp("")}
 	nb, err = Apply(nb, NewOp("set_item", "bonus", move))
 	if err != nil {
 		t.Fatal(err)
 	}
 	moved := itemByID(nb, "bonus")
-	expectEqual(t, "moved pot", moved.Pot, "")
-	expectEqual(t, "moved schedule", moved.Schedule, Schedule{Start: 6})
+	eq(t, "moved pot", moved.Pot, "")
+	eq(t, "moved schedule", moved.Schedule, Schedule{Start: 6})
 }

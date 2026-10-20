@@ -21,22 +21,22 @@ items:
 		t.Fatal(err)
 	}
 	// The old savings_start becomes the General savings pot, exactly.
-	expectEqual(t, "pot balance", b.Pots[0].Balance.String(), "0.1")
-	expectEqual(t, "rate", b.Currencies[0].PerBase.String(), "1.0800000001")
-	expectEqual(t, "rent amount", b.Items[0].Amount.String(), "1234567890123.45")
+	eq(t, "pot balance", b.Pots[0].Balance.String(), "0.1")
+	eq(t, "rate", b.Currencies[0].PerBase.String(), "1.0800000001")
+	eq(t, "rent amount", b.Items[0].Amount.String(), "1234567890123.45")
 	// Normalization: ids from names/labels, base currency, monthly default, kind, window.
-	expectEqual(t, "category id", b.Categories[0].ID, "living")
-	expectEqual(t, "category kind", b.Categories[0].Kind, KindExpense)
-	expectEqual(t, "item id", b.Items[0].ID, "rent")
-	expectEqual(t, "item currency", b.Items[0].Currency, "EUR")
-	expectEqual(t, "item schedule", b.Items[0].Schedule, Monthly())
-	expectEqual(t, "bill period", b.Items[1].Schedule.Every, 3)
-	expectEqual(t, "months", b.Months, 12)
+	eq(t, "category id", b.Categories[0].ID, "living")
+	eq(t, "category kind", b.Categories[0].Kind, KindExpense)
+	eq(t, "item id", b.Items[0].ID, "rent")
+	eq(t, "item currency", b.Items[0].Currency, "EUR")
+	eq(t, "item schedule", b.Items[0].Schedule, Monthly())
+	eq(t, "bill period", b.Items[1].Schedule.Every, 3)
+	eq(t, "months", b.Months, 12)
 
-	expectEqual(t, "debts are empty", b.Debts == nil, false)
-	expectEqual(t, "pots are empty", b.Pots == nil, false)
-	expectEqual(t, "withdrawals are empty", b.Withdrawals == nil, false)
-	expectEqual(t, "scenarios are empty", b.Scenarios == nil, false)
+	eq(t, "debts is nil", b.Debts == nil, false)
+	eq(t, "pots is nil", b.Pots == nil, false)
+	eq(t, "withdrawals is nil", b.Withdrawals == nil, false)
+	eq(t, "scenarios is nil", b.Scenarios == nil, false)
 }
 
 func TestDocumentRejectsSurprises(t *testing.T) {
@@ -60,7 +60,8 @@ func TestDocumentRejectsSurprises(t *testing.T) {
 	if _, err := ParseDocument([]byte("{}"), "toml"); err == nil {
 		t.Error("unknown format accepted")
 	}
-	if _, err := ParseDocument([]byte(strings.Repeat(" ", MaxDocumentBytes+1)), "json"); err == nil {
+	oversized := strings.Repeat(" ", MaxDocumentBytes+1)
+	if _, err := ParseDocument([]byte(oversized), "json"); err == nil {
 		t.Error("oversized document accepted")
 	}
 	// Alias bombs are bounded rather than expanded without limit.
