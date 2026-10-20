@@ -149,7 +149,7 @@ func addTool[In any](s *mcp.Server, t *mcp.Tool, fn toolFunc[In]) {
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
-	if err := describeProperties[In](schema); err != nil {
+	if err = describeProperties[In](schema); err != nil {
 		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
 	t.InputSchema = schema
