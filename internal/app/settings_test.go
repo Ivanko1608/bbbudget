@@ -32,14 +32,17 @@ func withSettings(t *testing.T, a *App, p settings.Patch) {
 func TestUpdateSettings(t *testing.T) {
 	a := testApp(t)
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json") // no file yet
-	if s, err := a.Settings(); err != nil || s != settings.Defaults() {
-		t.Fatalf("no file: %+v %v", s, err)
+	noFile, err := a.Settings()
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "settings without a file", noFile, settings.Defaults())
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
-	if s, _ := a.Settings(); s.AutoRefresh != "daily" || s.FetchRates {
-		t.Fatalf("%+v", s)
-	}
-	if _, err := a.UpdateSettings(settings.Patch{DefaultRateSource: ptr("google")}); !errors.Is(err, ErrBadInput) {
+	updated, _ := a.Settings()
+	eq(t, "auto refresh", updated.AutoRefresh, "daily")
+	eq(t, "fetch rates", updated.FetchRates, false)
+	badSource := settings.Patch{DefaultRateSource: ptr("google")}
+	if _, err := a.UpdateSettings(badSource); !errors.Is(err, ErrBadInput) {
 		t.Fatalf("want ErrBadInput, got %v", err)
 	}
 	if s, _ := a.Settings(); s.AutoRefresh != "daily" {
@@ -79,16 +82,16 @@ func TestDefaultSourceFromSettings(t *testing.T) {
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
-	if c := currency(t, a, "BTC"); c.Source != "currency-api" || c.RateFrom != "currency-api" {
-		t.Fatalf("new currency: %+v", c)
-	}
+	btc := currency(t, a, "BTC")
+	eq(t, "BTC source", btc.Source, "currency-api")
+	eq(t, "BTC rate provider", btc.RateFrom, "currency-api")
 	// Naming a manual currency in a refresh switches it to the default too.
 	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"USD"}); err != nil {
 		t.Fatal(err)
 	}
-	if c := currency(t, a, "USD"); c.Source != "currency-api" || c.PerBase.String() != "1.12" {
-		t.Fatalf("USD: %+v", c)
-	}
+	usd := currency(t, a, "USD")
+	eq(t, "USD source", usd.Source, "currency-api")
+	eq(t, "USD per base", usd.PerBase.String(), "1.12")
 	// A "manual" default still fetches when a fetch is asked for, via auto.
 	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("manual")})
 	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"CHF"}); err != nil {
@@ -116,17 +119,22 @@ func TestRefreshIfDue(t *testing.T) {
 		t.Fatal("coingecko is down in the test app") // so USD stays manual
 	}
 
-	if ran, err := a.RefreshIfDue(ctx); ran || err != nil {
-		t.Fatalf("auto-refresh is off by default: %v %v", ran, err)
+	ran, err := a.RefreshIfDue(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "ran with auto-refresh off by default", ran, false)
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("hourly")})
-	if ran, err := a.RefreshIfDue(ctx); !ran || err != nil {
-		t.Fatalf("first run: %v %v", ran, err)
+	ran, err = a.RefreshIfDue(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "first run happened", ran, true)
 	st := a.AutoRefresh()
-	if !st.LastRun.Equal(now) || st.Budgets != 1 || st.Updated != 1 || len(st.Failures) != 0 {
-		t.Fatalf("status: %+v", st)
-	}
+	eq(t, "last run", st.LastRun, now)
+	eq(t, "budgets refreshed", st.Budgets, 1)
+	eq(t, "currencies updated", st.Updated, 1)
+	eq(t, "failures", len(st.Failures), 0)
 	now = now.Add(59 * time.Minute)
 	if ran, _ := a.RefreshIfDue(ctx); ran {
 		t.Fatal("ran before the hour was up")
@@ -137,12 +145,14 @@ func TestRefreshIfDue(t *testing.T) {
 	if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, btcToGecko); err != nil {
 		t.Fatal(err)
 	}
-	if ran, err := a.RefreshIfDue(ctx); !ran || err != nil {
-		t.Fatalf("second run: %v %v", ran, err)
+	ran, err = a.RefreshIfDue(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if st := a.AutoRefresh(); len(st.Failures) != 1 || st.Updated != 0 {
-		t.Fatalf("status: %+v", st)
-	}
+	eq(t, "second run happened", ran, true)
+	st = a.AutoRefresh()
+	eq(t, "failures", len(st.Failures), 1)
+	eq(t, "currencies updated", st.Updated, 0)
 
 	withSettings(t, a, settings.Patch{FetchRates: ptr(false)})
 	now = now.Add(2 * time.Hour)
@@ -165,9 +175,10 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 	cg := a.Rates[rates.CoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
 	cg.URL = srv.URL
 	q, err := a.Quote(context.Background(), "EUR", "coingecko", []string{"BTC"})
-	if err != nil || q[0].New.String() != "0.00001428571429" {
-		t.Fatalf("%+v %v", q, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "BTC quote", q[0].New.String(), "0.00001428571429")
 	if k := <-got; k != "CG-test" {
 		t.Fatalf("key header %q", k)
 	}
@@ -185,20 +196,18 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 	up := a.Rates[rates.Auto]
 	a.Rates[rates.Auto] = down
 
-	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 0 {
-		t.Fatal("first run should run and fail")
-	}
+	ran, _ := a.RefreshIfDue(ctx)
+	eq(t, "first run happened", ran, true)
+	eq(t, "currencies updated while down", a.AutoRefresh().Updated, 0)
 	now = now.Add(9 * time.Minute)
-	if ran, _ := a.RefreshIfDue(ctx); ran {
-		t.Fatal("retried too soon")
-	}
+	ran, _ = a.RefreshIfDue(ctx)
+	eq(t, "retried too soon", ran, false)
 	a.Rates[rates.Auto] = up
 	now = now.Add(time.Minute)
-	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 1 {
-		t.Fatalf("a failed run must be retried after 10 minutes, not a day: %+v", a.AutoRefresh())
-	}
+	ran, _ = a.RefreshIfDue(ctx)
+	eq(t, "retried after 10 minutes", ran, true)
+	eq(t, "currencies updated after retry", a.AutoRefresh().Updated, 1)
 	now = now.Add(time.Hour)
-	if ran, _ := a.RefreshIfDue(ctx); ran {
-		t.Fatal("after a good run the full interval applies again")
-	}
+	ran, _ = a.RefreshIfDue(ctx)
+	eq(t, "ran again within the full interval", ran, false)
 }
