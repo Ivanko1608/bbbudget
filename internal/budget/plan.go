@@ -165,33 +165,35 @@ func (c *checker) id(path, id string, seen map[string]bool) {
 // Compile validates a budget and converts it to a Plan. All problems are
 // reported together in a *ValidationError.
 func Compile(b Budget) (*Plan, error) {
-	cm := newCompiler(b)
-	cm.checkName()
-	cm.compileBase()
-	cm.compileStartMonth()
-	cm.compileHorizon()
-	cm.compileDebtStrategy()
-	cm.compileRates()
-	cm.compileCategories()
-	cm.compileItems()
-	cm.compileDebts()
-	cm.compilePots()
-	cm.linkItemPots()
-	cm.linkDebtPots()
-	cm.compileWithdrawals()
-	cm.checkScenarios()
+	c := newCompiler(b)
+	c.checkName()
+	c.compileBase()
+	c.compileStartMonth()
+	c.compileMonths()
+	c.compileOverdraftStart()
+	c.checkExtraToDebtPct()
+	c.compileDebtStrategy()
+	c.compileRates()
+	c.compileCategories()
+	c.compileItems()
+	c.compileDebts()
+	c.compilePots()
+	c.linkItemPots()
+	c.linkDebtPots()
+	c.compileWithdrawals()
+	c.checkScenarios()
 
-	if len(cm.issues) > 0 {
-		return nil, &ValidationError{cm.issues}
+	if len(c.issues) > 0 {
+		return nil, &ValidationError{c.issues}
 	}
-	return cm.plan, nil
+	return c.plan, nil
 }
 
 type compiler struct {
 	checker
-	budget  Budget
-	plan    *Plan
-	potIdxs map[string]int
+	budget       Budget
+	plan         *Plan
+	potIndexByID map[string]int
 }
 
 func newCompiler(b Budget) *compiler {
@@ -203,93 +205,100 @@ func newCompiler(b Budget) *compiler {
 		ExtraPct:   b.ExtraToDebtPct,
 		DefaultPot: -1,
 	}
-	return &compiler{budget: b, plan: plan, potIdxs: map[string]int{}}
+	return &compiler{budget: b, plan: plan, potIndexByID: map[string]int{}}
 }
 
-func (cm *compiler) checkName() {
-	if strings.TrimSpace(cm.budget.Name) == "" {
-		cm.add("name", "issue.required", nil)
+func (c *compiler) checkName() {
+	if strings.TrimSpace(c.budget.Name) == "" {
+		c.add("name", "issue.required", nil)
 	}
 }
 
-func (cm *compiler) compileBase() {
-	base, err := money.Lookup(cm.budget.BaseCurrency)
+func (c *compiler) compileBase() {
+	base, err := money.Lookup(c.budget.BaseCurrency)
 	if err != nil {
-		cm.add("base_currency", "issue.error", errArg(err))
+		c.add("base_currency", "issue.error", errArg(err))
 		base = money.MustLookup("EUR")
 	}
 	if base.Crypto {
-		cm.add("base_currency", "issue.base_crypto", args{"code": i18n.Text(base.Code)})
+		c.add("base_currency", "issue.base_crypto", args{"code": i18n.Text(base.Code)})
 	}
 	one := big.NewRat(1, 1)
-	cm.plan.Base = base
-	cm.plan.rates[base.Code] = fx{cur: base, perBase: one, feeMul: one, keepMul: one}
+	c.plan.Base = base
+	c.plan.rates[base.Code] = fx{cur: base, perBase: one, feeMul: one, keepMul: one}
 }
 
-func (cm *compiler) compileStartMonth() {
-	start, err := time.Parse("2006-01", cm.budget.StartMonth)
+func (c *compiler) compileStartMonth() {
+	start, err := time.Parse("2006-01", c.budget.StartMonth)
 	if err != nil {
-		cm.add("start_month", "issue.month_format", args{"value": i18n.Text(cm.budget.StartMonth)})
+		c.add("start_month", "issue.month_format", args{"value": i18n.Text(c.budget.StartMonth)})
 		return
 	}
-	cm.plan.Start = start
+	c.plan.Start = start
 }
 
-func (cm *compiler) compileHorizon() {
-	b := cm.budget
-	if b.Months < 1 || b.Months > MaxMonths {
-		cm.add("months", "issue.between", args{"min": i18n.Int(1), "max": i18n.Int(MaxMonths)})
+func (c *compiler) compileMonths() {
+	months := c.budget.Months
+	if months < 1 || months > MaxMonths {
+		c.add("months", "issue.between", args{"min": i18n.Int(1), "max": i18n.Int(MaxMonths)})
 	}
-	cm.plan.Months = b.Months
-	cm.plan.OverdraftStart = cm.amount("overdraft_start", b.OverdraftStart, cm.plan.Base, false)
-	cm.pct("extra_to_debt_pct", b.ExtraToDebtPct, 100)
+	c.plan.Months = months
 }
 
-func (cm *compiler) compileDebtStrategy() {
-	switch cm.budget.DebtStrategy {
+func (c *compiler) compileOverdraftStart() {
+	overdraft := c.budget.OverdraftStart
+	c.plan.OverdraftStart = c.amount("overdraft_start", overdraft, c.plan.Base, false)
+}
+
+func (c *compiler) checkExtraToDebtPct() {
+	c.pct("extra_to_debt_pct", c.budget.ExtraToDebtPct, 100)
+}
+
+func (c *compiler) compileDebtStrategy() {
+	switch c.budget.DebtStrategy {
 	case StrategyAvalanche, StrategySnowball, StrategyListed:
 	case "":
-		cm.plan.Strategy = StrategyAvalanche
+		c.plan.Strategy = StrategyAvalanche
 	default:
-		cm.add("debt_strategy", "issue.strategy", nil)
+		c.add("debt_strategy", "issue.strategy", nil)
 	}
 }
 
-func (cm *compiler) compileRates() {
-	for i, rate := range cm.budget.Currencies {
-		cm.compileRate(fmt.Sprintf("currencies[%d]", i), rate)
+func (c *compiler) compileRates() {
+	for i, rate := range c.budget.Currencies {
+		c.compileRate(fmt.Sprintf("currencies[%d]", i), rate)
 	}
 }
 
-func (cm *compiler) compileRate(path string, rate CurrencyRate) {
+func (c *compiler) compileRate(path string, rate CurrencyRate) {
 	cur, err := money.Lookup(rate.Code)
 	switch {
 	case err != nil:
-		cm.add(path+".code", "issue.error", errArg(err))
+		c.add(path+".code", "issue.error", errArg(err))
 		return
-	case rate.Code == cm.plan.Base.Code:
-		cm.add(path+".code", "issue.is_base", args{"code": i18n.Text(rate.Code)})
+	case rate.Code == c.plan.Base.Code:
+		c.add(path+".code", "issue.is_base", args{"code": i18n.Text(rate.Code)})
 		return
-	case cm.plan.rates[rate.Code].cur.Code != "":
-		cm.add(path+".code", "issue.duplicate_currency", args{"code": i18n.Text(rate.Code)})
+	case c.plan.rates[rate.Code].cur.Code != "":
+		c.add(path+".code", "issue.duplicate_currency", args{"code": i18n.Text(rate.Code)})
 		return
 	}
 	if rate.PerBase.Sign() <= 0 {
-		cm.add(path+".per_base", "issue.positive", nil)
+		c.add(path+".per_base", "issue.positive", nil)
 		return
 	}
-	cm.checkRateFees(path, rate)
-	cm.plan.rates[rate.Code] = fxFromRate(cur, rate)
+	c.checkRateFees(path, rate)
+	c.plan.rates[rate.Code] = fxFromRate(cur, rate)
 }
 
-func (cm *compiler) checkRateFees(path string, rate CurrencyRate) {
-	cm.pct(path+".transfer_fee_pct", rate.TransferFeePct, 100)
+func (c *compiler) checkRateFees(path string, rate CurrencyRate) {
+	c.pct(path+".transfer_fee_pct", rate.TransferFeePct, 100)
 	if rate.CashOutFeePct.Sign() < 0 || rate.CashOutFeePct.Rat().Cmp(big.NewRat(100, 1)) >= 0 {
-		cm.add(path+".cash_out_fee_pct", "issue.cash_out_range", nil)
+		c.add(path+".cash_out_fee_pct", "issue.cash_out_range", nil)
 	}
 	if rate.Source != "" && !slices.Contains(RateSources, rate.Source) {
 		values := i18n.Text(strings.Join(RateSources, ", "))
-		cm.add(path+".source", "issue.one_of", args{"values": values})
+		c.add(path+".source", "issue.one_of", args{"values": values})
 	}
 }
 
@@ -306,201 +315,210 @@ func fxFromRate(cur money.Currency, rate CurrencyRate) fx {
 	}
 }
 
-func (cm *compiler) currency(path, code string) (money.Currency, bool) {
-	rate, ok := cm.plan.rates[code]
+func (c *compiler) currency(path, code string) (money.Currency, bool) {
+	rate, ok := c.plan.rates[code]
 	if !ok {
-		cm.add(path, "issue.no_rate", args{"code": i18n.Text(code)})
+		c.add(path, "issue.no_rate", args{"code": i18n.Text(code)})
 	}
 	return rate.cur, ok
 }
 
-func (cm *compiler) compileCategories() {
+func (c *compiler) compileCategories() {
 	seen := map[string]bool{}
-	for i, cat := range cm.budget.Categories {
+	for i, cat := range c.budget.Categories {
 		path := fmt.Sprintf("categories[%d]", i)
-		cm.id(path+".id", cat.ID, seen)
+		c.id(path+".id", cat.ID, seen)
 		if cat.Kind != KindIncome && cat.Kind != KindExpense {
-			cm.add(path+".kind", "issue.kind", nil)
+			c.add(path+".kind", "issue.kind", nil)
 		}
 		if strings.TrimSpace(cat.Label) == "" {
-			cm.add(path+".label", "issue.required", nil)
+			c.add(path+".label", "issue.required", nil)
 		}
-		cm.plan.Categories[cat.ID] = cat
+		c.plan.Categories[cat.ID] = cat
 	}
 }
 
-func (cm *compiler) compileItems() {
-	if len(cm.budget.Items) > MaxItems {
-		cm.add("items", "issue.max_items", args{"max": i18n.Int(MaxItems)})
+func (c *compiler) compileItems() {
+	if len(c.budget.Items) > MaxItems {
+		c.add("items", "issue.max_items", args{"max": i18n.Int(MaxItems)})
 	}
 	seen := map[string]bool{}
-	for i, item := range cm.budget.Items {
+	for i, item := range c.budget.Items {
 		path := fmt.Sprintf("items[%d]", i)
-		cm.id(path+".id", item.ID, seen)
-		cm.compileItem(path, item)
+		c.id(path+".id", item.ID, seen)
+		c.compileItem(path, item)
 	}
 }
 
-func (cm *compiler) compileItem(path string, item Item) {
-	cat, ok := cm.plan.Categories[item.Category]
+func (c *compiler) compileItem(path string, item Item) {
+	cat, ok := c.plan.Categories[item.Category]
 	if !ok {
-		cm.add(path+".category", "issue.unknown_category", args{"id": i18n.Text(item.Category)})
+		c.add(path+".category", "issue.unknown_category", args{"id": i18n.Text(item.Category)})
 	}
-	cm.checkSchedule(path+".schedule", item.Schedule)
-	cur, ok := cm.currency(path+".currency", item.Currency)
+	c.checkSchedule(path+".schedule", item.Schedule)
+	cur, ok := c.currency(path+".currency", item.Currency)
 	if !ok {
 		return
 	}
-	cm.plan.Items = append(cm.plan.Items, PlanItem{
+	c.plan.Items = append(c.plan.Items, PlanItem{
 		Item:   item,
-		Amt:    cm.amount(path+".amount", item.Amount, cur, false),
+		Amt:    c.amount(path+".amount", item.Amount, cur, false),
 		Income: cat.Kind == KindIncome,
 		PotIdx: -1,
 	})
 }
 
-func (cm *compiler) checkSchedule(path string, s Schedule) {
+func (c *compiler) checkSchedule(path string, s Schedule) {
 	if s.Start < 0 || s.Every < 0 || (s.End != nil && *s.End < s.Start) {
-		cm.add(path, "issue.schedule", nil)
+		c.add(path, "issue.schedule", nil)
 	}
 }
 
-func (cm *compiler) compileDebts() {
+func (c *compiler) compileDebts() {
 	seen := map[string]bool{}
-	for i, debt := range cm.budget.Debts {
+	for i, debt := range c.budget.Debts {
 		path := fmt.Sprintf("debts[%d]", i)
-		cm.id(path+".id", debt.ID, seen)
-		cm.pct(path+".apr_pct", debt.APRPct, 1000)
-		cm.compileDebt(path, debt)
+		c.id(path+".id", debt.ID, seen)
+		c.compileDebt(path, debt)
 	}
 }
 
-func (cm *compiler) compileDebt(path string, debt Debt) {
-	cur, ok := cm.currency(path+".currency", debt.Currency)
+func (c *compiler) compileDebt(path string, debt Debt) {
+	c.pct(path+".apr_pct", debt.APRPct, 1000)
+	cur, ok := c.currency(path+".currency", debt.Currency)
 	if !ok {
 		return
 	}
-	cm.plan.Debts = append(cm.plan.Debts, PlanDebt{
+	c.plan.Debts = append(c.plan.Debts, PlanDebt{
 		Debt:        debt,
-		Bal:         cm.amount(path+".balance", debt.Balance, cur, false),
-		Min:         cm.amount(path+".min_payment", debt.MinPayment, cur, false),
+		Bal:         c.amount(path+".balance", debt.Balance, cur, false),
+		Min:         c.amount(path+".min_payment", debt.MinPayment, cur, false),
 		MonthlyRate: new(big.Rat).Quo(debt.APRPct.Rat(), big.NewRat(1200, 1)),
 		PotIdx:      -1,
 	})
-	cm.checkPayoff(path, debt)
+	c.checkPayoff(path, debt)
 }
 
-func (cm *compiler) checkPayoff(path string, debt Debt) {
+func (c *compiler) checkPayoff(path string, debt Debt) {
 	if debt.PayoffMonth != nil && (*debt.PayoffMonth < 0 || *debt.PayoffMonth >= MaxMonths) {
 		bounds := args{"min": i18n.Int(0), "max": i18n.Int(MaxMonths - 1)}
-		cm.add(path+".payoff_month", "issue.between", bounds)
+		c.add(path+".payoff_month", "issue.between", bounds)
 	}
 	if debt.PayoffFrom != "" && debt.PayoffMonth == nil {
-		cm.add(path+".payoff_from", "issue.needs_payoff_month", nil)
+		c.add(path+".payoff_from", "issue.needs_payoff_month", nil)
 	}
 }
 
-func (cm *compiler) compilePots() {
-	if len(cm.budget.Pots) == 0 {
-		cm.add("pots", "issue.no_pots", nil)
+func (c *compiler) compilePots() {
+	if len(c.budget.Pots) == 0 {
+		c.add("pots", "issue.no_pots", nil)
 	}
 	seen := map[string]bool{}
-	for i, pot := range cm.budget.Pots {
+	for i, pot := range c.budget.Pots {
 		path := fmt.Sprintf("pots[%d]", i)
-		cm.id(path+".id", pot.ID, seen)
-		cm.compilePot(path, i, pot)
+		c.id(path+".id", pot.ID, seen)
+		c.compilePot(path, i, pot)
 	}
-	if cm.plan.DefaultPot < 0 {
-		cm.plan.DefaultPot = len(cm.plan.Pots) - 1
+	if c.plan.DefaultPot < 0 {
+		c.plan.DefaultPot = len(c.plan.Pots) - 1
 	}
 }
 
-func (cm *compiler) compilePot(path string, index int, pot Pot) {
+func (c *compiler) compilePot(path string, index int, pot Pot) {
 	if strings.TrimSpace(pot.Name) == "" {
-		cm.add(path+".name", "issue.required", nil)
+		c.add(path+".name", "issue.required", nil)
 	}
 	if !slices.Contains(PotKinds, pot.Kind) {
-		cm.add(path+".kind", "issue.one_of", args{"values": i18n.Text(strings.Join(PotKinds, ", "))})
+		kinds := i18n.Text(strings.Join(PotKinds, ", "))
+		c.add(path+".kind", "issue.one_of", args{"values": kinds})
 	}
-	if pot.Kind == PotGeneral && cm.plan.DefaultPot < 0 {
-		cm.plan.DefaultPot = index
+	if pot.Kind == PotGeneral && c.plan.DefaultPot < 0 {
+		c.plan.DefaultPot = index
 	}
-	cm.potIdxs[pot.ID] = index
-	base := cm.plan.Base
-	cm.plan.Pots = append(cm.plan.Pots, PlanPot{
+	c.potIndexByID[pot.ID] = index
+	base := c.plan.Base
+	c.plan.Pots = append(c.plan.Pots, PlanPot{
 		Pot:     pot,
-		Bal:     cm.amount(path+".balance", pot.Balance, base, false),
-		Target:  cm.amount(path+".target", pot.Target, base, false),
-		Monthly: cm.amount(path+".monthly", pot.Monthly, base, false),
+		Bal:     c.amount(path+".balance", pot.Balance, base, false),
+		Target:  c.amount(path+".target", pot.Target, base, false),
+		Monthly: c.amount(path+".monthly", pot.Monthly, base, false),
 	})
 }
 
-func (cm *compiler) linkItemPots() {
-	items := cm.plan.Items
+func (c *compiler) linkItemPots() {
+	items := c.plan.Items
 	for i := range items {
-		ref := items[i].Pot
-		if ref == "" {
+		if items[i].Pot == "" {
 			continue
 		}
-		idx, ok := cm.potIdxs[ref]
-		if !ok {
-			docIdx := indexWhere(cm.budget.Items, func(item Item) bool { return item.ID == items[i].ID })
-			path := fmt.Sprintf("items[%d].pot", docIdx)
-			cm.add(path, "issue.unknown_pot", args{"id": i18n.Text(ref)})
-			continue
+		path := func() string { return c.itemPotPath(items[i].ID) }
+		if idx, ok := c.findPot(items[i].Pot, path); ok {
+			items[i].PotIdx = idx
 		}
-		items[i].PotIdx = idx
 	}
 }
 
-func (cm *compiler) linkDebtPots() {
-	debts := cm.plan.Debts
+func (c *compiler) linkDebtPots() {
+	debts := c.plan.Debts
 	for i := range debts {
-		ref := debts[i].PayoffFrom
-		if ref == "" {
+		if debts[i].PayoffFrom == "" {
 			continue
 		}
-		idx, ok := cm.potIdxs[ref]
-		if !ok {
-			docIdx := indexWhere(cm.budget.Debts, func(debt Debt) bool { return debt.ID == debts[i].ID })
-			path := fmt.Sprintf("debts[%d].payoff_from", docIdx)
-			cm.add(path, "issue.unknown_pot", args{"id": i18n.Text(ref)})
-			continue
+		path := func() string { return c.debtPotPath(debts[i].ID) }
+		if idx, ok := c.findPot(debts[i].PayoffFrom, path); ok {
+			debts[i].PotIdx = idx
 		}
-		debts[i].PotIdx = idx
 	}
 }
 
-func (cm *compiler) compileWithdrawals() {
-	seen := map[string]bool{}
-	for i, w := range cm.budget.Withdrawals {
-		path := fmt.Sprintf("withdrawals[%d]", i)
-		cm.id(path+".id", w.ID, seen)
-		cm.compileWithdrawal(path, w)
-	}
+func (c *compiler) itemPotPath(itemID string) string {
+	budgetIndex := indexWhere(c.budget.Items, func(item Item) bool { return item.ID == itemID })
+	return fmt.Sprintf("items[%d].pot", budgetIndex)
 }
 
-func (cm *compiler) compileWithdrawal(path string, w Withdrawal) {
-	potIdx, ok := cm.potIdxs[w.Pot]
+func (c *compiler) debtPotPath(debtID string) string {
+	budgetIndex := indexWhere(c.budget.Debts, func(debt Debt) bool { return debt.ID == debtID })
+	return fmt.Sprintf("debts[%d].payoff_from", budgetIndex)
+}
+
+func (c *compiler) findPot(ref string, path func() string) (int, bool) {
+	idx, ok := c.potIndexByID[ref]
 	if !ok {
-		cm.add(path+".pot", "issue.unknown_pot", args{"id": i18n.Text(w.Pot)})
+		c.add(path(), "issue.unknown_pot", args{"id": i18n.Text(ref)})
 	}
-	cm.checkSchedule(path+".schedule", w.Schedule)
-	amt := cm.amount(path+".amount", w.Amount, cm.plan.Base, false)
+	return idx, ok
+}
+
+func (c *compiler) compileWithdrawals() {
+	seen := map[string]bool{}
+	for i, w := range c.budget.Withdrawals {
+		path := fmt.Sprintf("withdrawals[%d]", i)
+		c.id(path+".id", w.ID, seen)
+		c.compileWithdrawal(path, w)
+	}
+}
+
+func (c *compiler) compileWithdrawal(path string, w Withdrawal) {
+	potIdx, ok := c.potIndexByID[w.Pot]
+	if !ok {
+		c.add(path+".pot", "issue.unknown_pot", args{"id": i18n.Text(w.Pot)})
+	}
+	c.checkSchedule(path+".schedule", w.Schedule)
+	amt := c.amount(path+".amount", w.Amount, c.plan.Base, false)
 	if !amt.IsPositive() {
-		cm.add(path+".amount", "issue.positive", nil)
+		c.add(path+".amount", "issue.positive", nil)
 	}
-	cm.plan.Withdrawals = append(cm.plan.Withdrawals, PlanWithdrawal{
+	c.plan.Withdrawals = append(c.plan.Withdrawals, PlanWithdrawal{
 		Withdrawal: w,
 		Amt:        amt,
 		PotIdx:     potIdx,
 	})
 }
 
-func (cm *compiler) checkScenarios() {
+func (c *compiler) checkScenarios() {
 	seen := map[string]bool{}
-	for i, s := range cm.budget.Scenarios {
-		cm.id(fmt.Sprintf("scenarios[%d].id", i), s.ID, seen)
+	for i, s := range c.budget.Scenarios {
+		c.id(fmt.Sprintf("scenarios[%d].id", i), s.ID, seen)
 	}
 }
 
