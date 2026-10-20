@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,14 +85,14 @@ func TestBadFilesAreErrors(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(" coingecko "), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
+	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(budget.RateSource(" coingecko ")), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
 	if err != nil || s.DefaultRateSource != "coingecko" || s.CoinGeckoAPIKey != "k1" || s.FetchRates || s.AutoRefresh != RefreshOff {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 	if s, _ = s.Apply(Patch{CoinGeckoAPIKey: ptr("")}); s.CoinGeckoAPIKey != "" {
 		t.Fatal("an empty key removes it")
 	}
-	for _, p := range []Patch{{DefaultRateSource: ptr("yahoo")}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
+	for _, p := range []Patch{{DefaultRateSource: ptr(budget.RateSource("yahoo"))}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
 		if _, err := Defaults().Apply(p); err == nil {
 			t.Errorf("accepted %+v", p)
 		}
@@ -108,14 +107,6 @@ func TestInterval(t *testing.T) {
 		if got := (Settings{AutoRefresh: v}).Interval(); got != want {
 			t.Errorf("%s: %v", v, got)
 		}
-	}
-}
-
-// The settings package can't import budget (it sits below it), so its copy of
-// the source names is checked here.
-func TestRateSourcesMatchBudget(t *testing.T) {
-	if !slices.Equal(slices.Sorted(slices.Values(RateSources)), slices.Sorted(slices.Values(budget.RateSources))) {
-		t.Fatalf("settings %v vs budget %v", RateSources, budget.RateSources)
 	}
 }
 

@@ -41,7 +41,7 @@ func TestUpdateSettings(t *testing.T) {
 	updated, _ := a.Settings()
 	eq(t, "auto refresh", updated.AutoRefresh, "daily")
 	eq(t, "fetch rates", updated.FetchRates, false)
-	badSource := settings.Patch{DefaultRateSource: ptr("google")}
+	badSource := settings.Patch{DefaultRateSource: ptr(budget.RateSource("google"))}
 	if _, err := a.UpdateSettings(badSource); !errors.Is(err, ErrBadInput) {
 		t.Fatalf("want ErrBadInput, got %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRatesOffIsFullyOffline(t *testing.T) {
 
 func TestDefaultSourceFromSettings(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("currency-api")})
+	withSettings(t, a, settings.Patch{DefaultRateSource: ptr(budget.RateSource("currency-api"))})
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestDefaultSourceFromSettings(t *testing.T) {
 	eq(t, "USD source", usd.Source, "currency-api")
 	eq(t, "USD per base", usd.PerBase.String(), "1.12")
 	// A "manual" default still fetches when a fetch is asked for, via auto.
-	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("manual")})
+	withSettings(t, a, settings.Patch{DefaultRateSource: ptr(budget.RateSource("manual"))})
 	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"CHF"}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestRefreshIfDue(t *testing.T) {
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
-	gecko := "coingecko"
+	gecko := budget.RateSourceCoinGecko
 	toGecko := budget.CurrencyPatch{Source: &gecko}
 	if _, err := a.SetCurrency(ctx, byTest, "home", "USD", toGecko); err == nil {
 		t.Fatal("coingecko is down in the test app") // so USD stays manual
@@ -172,7 +172,7 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 	a := New(nil, nil) // the real registry, as the binary builds it
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
 	withSettings(t, a, settings.Patch{FetchRates: ptr(true), CoinGeckoAPIKey: ptr("CG-test")})
-	cg := a.Rates[rates.CoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
+	cg := a.Rates[budget.RateSourceCoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
 	cg.URL = srv.URL
 	q, err := a.Quote(context.Background(), "EUR", "coingecko", []string{"BTC"})
 	if err != nil {
@@ -192,9 +192,9 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
-	down := rates.Fixed{ID: rates.Auto, Err: errors.New("network is unreachable")}
-	up := a.Rates[rates.Auto]
-	a.Rates[rates.Auto] = down
+	down := rates.Fixed{ID: budget.RateSourceAuto, Err: errors.New("network is unreachable")}
+	up := a.Rates[budget.RateSourceAuto]
+	a.Rates[budget.RateSourceAuto] = down
 
 	ran, _ := a.RefreshIfDue(ctx)
 	eq(t, "first run happened", ran, true)
@@ -202,7 +202,7 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 	now = now.Add(9 * time.Minute)
 	ran, _ = a.RefreshIfDue(ctx)
 	eq(t, "retried too soon", ran, false)
-	a.Rates[rates.Auto] = up
+	a.Rates[budget.RateSourceAuto] = up
 	now = now.Add(time.Minute)
 	ran, _ = a.RefreshIfDue(ctx)
 	eq(t, "retried after 10 minutes", ran, true)

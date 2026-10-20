@@ -8,6 +8,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
+	"bbbudget/internal/budget"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 )
@@ -54,7 +55,7 @@ func createApp(ctx context.Context, dir, template string) (*app.App, error) {
 		return nil, err
 	}
 	budgetApp := app.New(fileStore, nil)
-	budgetApp.Rates = map[string]rates.Provider{}
+	budgetApp.Rates = map[budget.RateSource]rates.Provider{}
 	budgetApp.Now = func() time.Time { return Today }
 	budgetApp.SettingsPath = filepath.Join(dir, "settings.json")
 	fromCLI := store.Origin{Source: store.SourceCLI}

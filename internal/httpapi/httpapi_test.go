@@ -16,6 +16,7 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
+	"bbbudget/internal/budget"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 	"bbbudget/web"
@@ -45,19 +46,19 @@ func sendAsPlainText(r *http.Request) {
 	r.Header.Set("Content-Type", "text/plain")
 }
 
-func offlineRates() map[string]rates.Provider {
+func offlineRates() map[budget.RateSource]rates.Provider {
 	f := rates.Fixed{
-		ID:    rates.CurrencyAPI,
+		ID:    budget.RateSourceCurrencyAPI,
 		Base:  "EUR",
 		Date:  "2026-10-07",
 		Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"},
 	}
-	down := rates.Fixed{ID: rates.ECB, Err: errors.New("HTTP 503")}
-	return map[string]rates.Provider{
-		rates.Auto:        f,
-		rates.CurrencyAPI: f,
-		rates.ECB:         down,
-		rates.CoinGecko:   down,
+	down := rates.Fixed{ID: budget.RateSourceECB, Err: errors.New("HTTP 503")}
+	return map[budget.RateSource]rates.Provider{
+		budget.RateSourceAuto:        f,
+		budget.RateSourceCurrencyAPI: f,
+		budget.RateSourceECB:         down,
+		budget.RateSourceCoinGecko:   down,
 	}
 }
 
