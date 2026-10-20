@@ -129,35 +129,6 @@ var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschem
 	reflect.TypeFor[json.RawMessage](): {Type: "object"},
 }}
 
-// longPropertyDescriptions holds the descriptions too long for a struct tag,
-// by JSON property name. addTool puts them on the inferred input schema.
-var longPropertyDescriptions = map[string]string{
-	"template": "template name from list_templates; default blank",
-	"every":    "period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off",
-	"starts": "first month YYYY-MM; default is the budget's start month (add_item) " +
-		"or unchanged (update_item)",
-	"ends": "last month YYYY-MM (inclusive). " +
-		"In update_item omit to keep the current end, or send an empty string to remove it",
-	"code": "ISO code or crypto ticker, e.g. USD, BTC, USDT",
-	"per_base": "units of this currency per 1 base unit; setting it makes the rate manual. " +
-		"Omit to fetch the current rate",
-	"source":           "where the rate comes from: manual, auto, ecb, currency-api or coingecko",
-	"transfer_fee_pct": "percent lost on every payment in this currency",
-	"cash_out_fee_pct": "percent lost when income in this currency is converted to base " +
-		"(exchange fee + spread)",
-	"codes": "currencies to refresh; omit for every currency whose source isn't manual. " +
-		"Naming a manual one switches it to auto",
-	"min_payment": "monthly minimum payment in the debt's currency",
-	"payoff_month": "pay the whole balance off in this month (0-based from start_month); " +
-		"-1 removes the payoff",
-	"payoff_from": "pot (id or name) that pays it off; " +
-		"empty string pays it from that month's own money",
-	"revision": "revision of the change to undo (see history); omit for the latest change",
-	"force":    "also undo every change made after it. Only with the person's explicit go-ahead",
-	"seen": "with force: the newest revision in the refusal the person agreed to. " +
-		"If more changes landed since, undo refuses again and lists them",
-}
-
 // toolFunc handles a tool call and returns any JSON-able value.
 type toolFunc[In any] func(context.Context, In) (any, error)
 
@@ -178,21 +149,37 @@ func addTool[In any](s *mcp.Server, t *mcp.Tool, fn toolFunc[In]) {
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
-	describeProperties(schema)
+	if err := describeProperties[In](schema); err != nil {
+		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
+	}
 	t.InputSchema = schema
 	mcp.AddTool(s, t, toMCPHandler(fn))
 }
 
-func describeProperties(schema *jsonschema.Schema) {
-	for name, property := range schema.Properties {
-		if description, ok := longPropertyDescriptions[name]; ok {
-			property.Description = description
-		}
+type propertyDescriber interface {
+	propertyDescriptions() map[string]string
+}
+
+func describeProperties[In any](schema *jsonschema.Schema) error {
+	var input In
+	describer, ok := any(input).(propertyDescriber)
+	if !ok {
+		return nil
 	}
+	for name, description := range describer.propertyDescriptions() {
+		property, ok := schema.Properties[name]
+		if !ok {
+			return fmt.Errorf("description for unknown property %q", name)
+		}
+		property.Description = description
+	}
+	return nil
 }
 
 func toMCPHandler[In any](fn toolFunc[In]) mcp.ToolHandlerFor[In, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+	return func(
+		ctx context.Context, _ *mcp.CallToolRequest, in In,
+	) (*mcp.CallToolResult, any, error) {
 		out, err := fn(ctx, in)
 		if err != nil {
 			return nil, nil, err // reported to the model as a tool error
@@ -226,10 +213,26 @@ type CreateIn struct {
 	Template string `json:"template,omitempty"`
 }
 
+func (CreateIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"template": "template name from list_templates; default blank",
+	}
+}
+
 type ScheduleIn struct {
 	Every  *int    `json:"every,omitempty"`
 	Starts string  `json:"starts,omitempty"`
 	Ends   *string `json:"ends,omitempty"`
+}
+
+func (ScheduleIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"every": "period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off",
+		"starts": "first month YYYY-MM; default is the budget's start month (add_item) " +
+			"or unchanged (update_item)",
+		"ends": "last month YYYY-MM (inclusive). " +
+			"In update_item omit to keep the current end, or send an empty string to remove it",
+	}
 }
 
 type AddItemIn struct {
@@ -265,9 +268,29 @@ type CurrencyIn struct {
 	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty"`
 }
 
+func (CurrencyIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"code": "ISO code or crypto ticker, e.g. USD, BTC, USDT",
+		"per_base": "units of this currency per 1 base unit; " +
+			"setting it makes the rate manual. Omit to fetch the current rate",
+		"source": "where the rate comes from: " +
+			"manual, auto, ecb, currency-api or coingecko",
+		"transfer_fee_pct": "percent lost on every payment in this currency",
+		"cash_out_fee_pct": "percent lost when income in this currency is converted to base " +
+			"(exchange fee + spread)",
+	}
+}
+
 type RatesIn struct {
 	WriteRef
 	Codes []string `json:"codes,omitempty"`
+}
+
+func (RatesIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"codes": "currencies to refresh; omit for every currency whose source isn't manual. " +
+			"Naming a manual one switches it to auto",
+	}
 }
 
 type SettingsIn struct {
@@ -277,13 +300,24 @@ type SettingsIn struct {
 
 type DebtIn struct {
 	WriteRef
-	Debt        string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
+	Debt        string         `json:"debt"`
 	Currency    *string        `json:"currency,omitempty"`
 	Balance     *money.Decimal `json:"balance,omitempty"`
 	APRPct      *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
 	MinPayment  *money.Decimal `json:"min_payment,omitempty"`
 	PayoffMonth *int           `json:"payoff_month,omitempty"`
 	PayoffFrom  *string        `json:"payoff_from,omitempty"`
+}
+
+func (DebtIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"debt":        "debt id or name; created if no debt matches",
+		"min_payment": "monthly minimum payment in the debt's currency",
+		"payoff_month": "pay the whole balance off in this month (0-based from start_month); " +
+			"-1 removes the payoff",
+		"payoff_from": "pot (id or name) that pays it off; " +
+			"empty string pays it from that month's own money",
+	}
 }
 
 type OpsIn struct {
@@ -315,6 +349,16 @@ type UndoIn struct {
 	Revision int64 `json:"revision,omitempty"`
 	Force    bool  `json:"force,omitempty"`
 	Seen     int64 `json:"seen,omitempty"`
+}
+
+func (UndoIn) propertyDescriptions() map[string]string {
+	return map[string]string{
+		"revision": "revision of the change to undo (see history); omit for the latest change",
+		"force": "also undo every change made after it. " +
+			"Only with the person's explicit go-ahead",
+		"seen": "with force: the newest revision in the refusal the person agreed to. " +
+			"If more changes landed since, undo refuses again and lists them",
+	}
 }
 
 type ScenarioRef struct {
@@ -354,20 +398,17 @@ func opsHelp() string {
 	return b.String() + opsValueFieldsHelp + opsScheduleHelp
 }
 
-// toolKind decides how a tool is annotated and described.
 type toolKind int
 
 const (
 	readTool toolKind = iota
 	writeTool
-	// writeToolReturningEffect is a write whose result is the change and its effect.
-	writeToolReturningEffect
+	writeToolWithEffect
 )
 
 const effectDescriptionSuffix = " Returns what changed and its effect; " +
 	"set detail to full for the whole budget."
 
-// toolDefinition is one row of the tool table: it registers its tool on a server.
 type toolDefinition func(s *mcp.Server)
 
 func newTool[In any](name, description string, kind toolKind, fn toolFunc[In]) toolDefinition {
@@ -375,9 +416,9 @@ func newTool[In any](name, description string, kind toolKind, fn toolFunc[In]) t
 		switch kind {
 		case readTool:
 			addReadTool(s, name, description, fn)
-		case writeToolReturningEffect:
+		case writeToolWithEffect:
 			addWriteTool(s, name, description+effectDescriptionSuffix, fn)
-		default:
+		case writeTool:
 			addWriteTool(s, name, description, fn)
 		}
 	}
@@ -433,23 +474,23 @@ func (h *handlers) tools() []toolDefinition {
 		newTool("list_templates", listTemplatesDescription, readTool, h.listTemplates),
 		newTool("create_budget", createBudgetDescription, writeTool, h.createBudget),
 		newTool("get_budget", getBudgetDescription, readTool, h.getBudget),
-		newTool("add_item", addItemDescription, writeToolReturningEffect, h.addItem),
-		newTool("update_item", updateItemDescription, writeToolReturningEffect, h.updateItem),
-		newTool("remove_item", removeItemDescription, writeToolReturningEffect, h.removeItem),
-		newTool("set_currency", setCurrencyDescription, writeToolReturningEffect, h.setCurrency),
+		newTool("add_item", addItemDescription, writeToolWithEffect, h.addItem),
+		newTool("update_item", updateItemDescription, writeToolWithEffect, h.updateItem),
+		newTool("remove_item", removeItemDescription, writeToolWithEffect, h.removeItem),
+		newTool("set_currency", setCurrencyDescription, writeToolWithEffect, h.setCurrency),
 		newTool("refresh_rates", refreshRatesDescription, writeTool, h.refreshRates),
 		newTool(
-			"update_settings", updateSettingsDescription, writeToolReturningEffect, h.updateSettings,
+			"update_settings", updateSettingsDescription, writeToolWithEffect, h.updateSettings,
 		),
-		newTool("set_debt", setDebtDescription, writeToolReturningEffect, h.setDebt),
+		newTool("set_debt", setDebtDescription, writeToolWithEffect, h.setDebt),
 		newTool("apply_ops", applyOpsDescription+opsHelp(), writeTool, h.applyOps),
 		newTool("what_if", whatIfDescription, readTool, h.whatIf),
 		newTool("save_scenario", saveScenarioDescription, writeTool, h.saveScenario),
 		newTool("compare_scenarios", compareScenariosDescription, readTool, h.compareScenarios),
-		newTool("adopt_scenario", adoptScenarioDescription, writeToolReturningEffect, h.adoptScenario),
+		newTool("adopt_scenario", adoptScenarioDescription, writeToolWithEffect, h.adoptScenario),
 		newTool("delete_scenario", deleteScenarioDescription, writeTool, h.deleteScenario),
 		newTool("history", historyDescription, readTool, h.listHistory),
-		newTool("undo", undoDescription, writeToolReturningEffect, h.undoChange),
+		newTool("undo", undoDescription, writeToolWithEffect, h.undoChange),
 	}
 }
 
