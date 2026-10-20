@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -368,7 +369,7 @@ func applyOne(b *Budget, op Op) error {
 				return fmt.Errorf("currency %s is used by debt %q", code, d.Name)
 			}
 		}
-		i := indexWhere(b.Currencies, func(c CurrencyRate) bool { return c.Code == code })
+		i := slices.IndexFunc(b.Currencies, func(c CurrencyRate) bool { return c.Code == code })
 		if i < 0 {
 			return fmt.Errorf("no currency %s", code)
 		}
@@ -660,15 +661,6 @@ func setIf[T any](dst *T, v *T) {
 }
 
 func remove[T any](s []T, i int) []T { return append(s[:i:i], s[i+1:]...) }
-
-func indexWhere[T any](s []T, f func(T) bool) int {
-	for i, v := range s {
-		if f(v) {
-			return i
-		}
-	}
-	return -1
-}
 
 type idName struct{ id, name string }
 

@@ -472,12 +472,12 @@ func (c *compiler) linkDebtPots() {
 }
 
 func (c *compiler) itemPotPath(itemID string) string {
-	budgetIndex := indexWhere(c.budget.Items, func(item Item) bool { return item.ID == itemID })
+	budgetIndex := slices.IndexFunc(c.budget.Items, func(item Item) bool { return item.ID == itemID })
 	return fmt.Sprintf("items[%d].pot", budgetIndex)
 }
 
 func (c *compiler) debtPotPath(debtID string) string {
-	budgetIndex := indexWhere(c.budget.Debts, func(debt Debt) bool { return debt.ID == debtID })
+	budgetIndex := slices.IndexFunc(c.budget.Debts, func(debt Debt) bool { return debt.ID == debtID })
 	return fmt.Sprintf("debts[%d].payoff_from", budgetIndex)
 }
 

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"bbbudget/internal/app"
@@ -20,22 +21,14 @@ type Summary struct {
 	// View is the part of the budget get_budget was asked for.
 	View View `json:"view,omitempty"`
 	// BaseCurrency repeats the settings' one in views without settings.
-	BaseCurrency string `json:"base_currency,omitempty"`
-	Settings     struct {
-		BaseCurrency   string                `json:"base_currency"`
-		StartMonth     string                `json:"start_month"`
-		Months         int                   `json:"months"`
-		OverdraftStart string                `json:"overdraft_start,omitempty"`
-		ExtraToDebtPct string                `json:"extra_to_debt_pct"`
-		DebtStrategy   string                `json:"debt_strategy"`
-		Currencies     []budget.CurrencyRate `json:"currencies"`
-	} `json:"settings,omitzero"`
-	Categories  []budget.Category   `json:"categories,omitempty"`
-	Items       []itemRow           `json:"items,omitempty"`
-	Debts       []debtRow           `json:"debts,omitempty"`
-	Pots        []potRow            `json:"pots,omitempty"`
-	Withdrawals []budget.Withdrawal `json:"withdrawals,omitempty"`
-	Goals       []goalRow           `json:"goals,omitempty"`
+	BaseCurrency string              `json:"base_currency,omitempty"`
+	Settings     settingsRow         `json:"settings,omitzero"`
+	Categories   []budget.Category   `json:"categories,omitempty"`
+	Items        []itemRow           `json:"items,omitempty"`
+	Debts        []debtRow           `json:"debts,omitempty"`
+	Pots         []potRow            `json:"pots,omitempty"`
+	Withdrawals  []budget.Withdrawal `json:"withdrawals,omitempty"`
+	Goals        []goalRow           `json:"goals,omitempty"`
 	// Shortfalls: months that fall short and the pots that could cover them.
 	// Savings are never used automatically; suggest add_withdrawal.
 	Shortfalls []shortfallRow `json:"shortfalls,omitempty"`
@@ -59,7 +52,13 @@ type insightRow struct {
 }
 
 func newInsightRow(in budget.Insight) insightRow {
-	return insightRow{in.ID, in.Tone, plain(in.Text), in.Key, flatArgs(in.Args)}
+	return insightRow{
+		ID:   in.ID,
+		Tone: in.Tone,
+		Text: plain(in.Text),
+		Key:  in.Key,
+		Args: flatArgs(in.Args),
+	}
 }
 
 // flatArgs turns typed message arguments into plain values: exact money as
@@ -103,6 +102,16 @@ func flatMsg(m i18n.Msg) any {
 		return m.Key
 	}
 	return flatArgs(m.Args)
+}
+
+type settingsRow struct {
+	BaseCurrency   string                `json:"base_currency"`
+	StartMonth     string                `json:"start_month"`
+	Months         int                   `json:"months"`
+	OverdraftStart string                `json:"overdraft_start,omitempty"`
+	ExtraToDebtPct string                `json:"extra_to_debt_pct"`
+	DebtStrategy   string                `json:"debt_strategy"`
+	Currencies     []budget.CurrencyRate `json:"currencies"`
 }
 
 type itemRow struct {
@@ -188,7 +197,8 @@ func payoffPlan(b budget.Budget, r *budget.Report, d budget.Debt) string {
 		when = r.Months[m].Label
 	}
 	from := "that month's money"
-	if i := indexWhere(b.Pots, func(p budget.Pot) bool { return p.ID == d.PayoffFrom }); i >= 0 {
+	isPayoffPot := func(p budget.Pot) bool { return p.ID == d.PayoffFrom }
+	if i := slices.IndexFunc(b.Pots, isPayoffPot); i >= 0 {
 		from = b.Pots[i].Name
 	}
 	return when + " from " + from
@@ -198,159 +208,294 @@ func plain(s string) string { return strings.ReplaceAll(s, "**", "") }
 
 func summarize(v *app.View) Summary {
 	s := summarizeReport(v.Budget, v.Report)
-	s.ID, s.Revision = v.ID, v.Revision
+	s.ID = v.ID
+	s.Revision = v.Revision
 	return s
 }
 
 func summarizeReport(b budget.Budget, r *budget.Report) Summary {
-	var s Summary
-	s.Name, s.Note = b.Name, b.Description
-	s.Settings.BaseCurrency = b.BaseCurrency
-	s.Settings.StartMonth = b.StartMonth
-	s.Settings.Months = b.Months
-	if !b.OverdraftStart.IsZero() {
-		s.Settings.OverdraftStart = b.OverdraftStart.String()
+	return Summary{
+		Name:        b.Name,
+		Note:        b.Description,
+		Settings:    settingsRowFromBudget(b),
+		Categories:  b.Categories,
+		Items:       itemRows(b, r),
+		Debts:       debtRows(b, r),
+		Pots:        potRows(b, r),
+		Withdrawals: b.Withdrawals,
+		Shortfalls:  shortfallRows(r),
+		Goals:       goalRows(r),
+		Scenarios:   scenarioRows(b),
+		Months:      monthRows(r),
+		Totals:      totalsFromReport(r),
+		Insights:    reportInsightRows(r),
 	}
-	s.Settings.ExtraToDebtPct = b.ExtraToDebtPct.String()
-	s.Settings.DebtStrategy = b.DebtStrategy
-	s.Settings.Currencies = b.Currencies
-	s.Categories = b.Categories
-	for _, l := range r.Items {
-		pot := ""
-		if i := indexWhere(b.Items, func(x budget.Item) bool { return x.ID == l.ID }); i >= 0 {
-			pot = b.Items[i].Pot
-		}
-		s.Items = append(s.Items, itemRow{l.ID, l.Name, l.Category, l.Amount.String(), l.Amount.Currency().Code, l.PerOccurrence.String(), l.ScheduleText, pot})
-	}
-	for i, d := range r.Debts {
-		doc := b.Debts[i]
-		paid := "not within the window"
-		if d.PaidOffLabel != "" {
-			paid = d.PaidOffLabel
-		} else if d.StartBalance.IsZero() {
-			paid = "nothing owed"
-		}
-		s.Debts = append(s.Debts, debtRow{d.ID, d.Name, doc.Currency, doc.Balance.String(), doc.APRPct.String(), doc.MinPayment.String(), d.EndBalance.String(), d.TotalInterest.String(), paid, payoffPlan(b, r, doc)})
-	}
-	for i, p := range r.Pots {
-		doc := b.Pots[i]
-		row := potRow{ID: p.ID, Name: p.Name, Kind: p.Kind, Balance: p.Start.String(), End: p.End.String(), Default: p.Default}
-		if !doc.Target.IsZero() {
-			row.Target = doc.Target.String()
-		}
-		if !doc.Monthly.IsZero() {
-			row.Monthly = doc.Monthly.String()
-		}
-		s.Pots = append(s.Pots, row)
-	}
-	s.Withdrawals = b.Withdrawals
-	for _, sf := range r.Shortfalls {
-		row := shortfallRow{Month: sf.Label, Short: sf.Amount.String()}
-		if len(sf.Options) > 0 {
-			row.CoverBy = map[string]string{}
-			for _, o := range sf.Options {
-				row.CoverBy[o.Name+" ("+o.Kind+")"] = o.Available.String() + " available"
-			}
-		}
-		s.Shortfalls = append(s.Shortfalls, row)
-	}
-	for _, g := range r.Goals {
-		reached := "not within the window"
-		switch {
-		case g.AlreadyMet:
-			reached = "already met"
-		case g.ReachedLabel != "":
-			reached = g.ReachedLabel
-		case g.NeededPerMonth != nil:
-			reached += "; needs " + g.NeededPerMonth.String() + "/month"
-		}
-		s.Goals = append(s.Goals, goalRow{g.ID, g.Name, g.Target.String(), reached})
-	}
-	for _, sc := range b.Scenarios {
-		s.Scenarios = append(s.Scenarios, scenarioRow{sc.ID, sc.Name, sc.Description, len(sc.Ops)})
-	}
-	for _, m := range r.Months {
-		row := monthRow{Month: m.Key, Income: m.Income.String(), Expenses: m.Expenses.String(),
-			DebtPayment: m.DebtPayments.String(), Left: m.Left.String(), Saved: m.Saved.String(), Savings: m.Savings.String()}
-		if m.FromSavings.IsPositive() {
-			row.FromSav = m.FromSavings.String()
-		}
-		if m.Payoff.IsPositive() {
-			row.Payoff = m.Payoff.String()
-		}
-		if m.Overdraft.IsPositive() {
-			row.Overdraft = m.Overdraft.String()
-		}
-		s.Months = append(s.Months, row)
-	}
-	t := r.Totals
-	s.Totals = map[string]string{
-		"income": t.Income.String(), "expenses": t.Expenses.String(), "debt_payments": t.DebtPayments.String(),
-		"saved": t.Saved.String(), "end_savings": t.EndSavings.String(), "interest": t.TotalInterest.String(),
-	}
-	for _, in := range r.Insights {
-		s.Insights = append(s.Insights, newInsightRow(in))
-	}
-	return s
 }
 
-func outcomeRows(out []budget.Outcome) []map[string]any {
-	str := func(m *money.Money) string {
-		if m == nil {
-			return ""
-		}
-		return m.String()
+func settingsRowFromBudget(b budget.Budget) settingsRow {
+	settings := settingsRow{
+		BaseCurrency:   b.BaseCurrency,
+		StartMonth:     b.StartMonth,
+		Months:         b.Months,
+		ExtraToDebtPct: b.ExtraToDebtPct.String(),
+		DebtStrategy:   b.DebtStrategy,
+		Currencies:     b.Currencies,
 	}
-	rows := make([]map[string]any, len(out))
-	for i, o := range out {
-		row := map[string]any{"id": o.ID, "name": o.Name}
-		if o.Error != "" {
-			row["error"] = o.Error
-			rows[i] = row
-			continue
+	if !b.OverdraftStart.IsZero() {
+		settings.OverdraftStart = b.OverdraftStart.String()
+	}
+	return settings
+}
+
+func itemRows(b budget.Budget, r *budget.Report) []itemRow {
+	var rows []itemRow
+	for _, line := range r.Items {
+		isLine := func(item budget.Item) bool { return item.ID == line.ID }
+		pot := ""
+		if i := slices.IndexFunc(b.Items, isLine); i >= 0 {
+			pot = b.Items[i].Pot
 		}
-		row["first_month_saved"] = str(o.FirstMonthSaved)
-		row["end_savings"] = str(o.EndSavings)
-		if o.DeltaEndSavings != nil {
-			row["delta_end_savings_vs_baseline"] = str(o.DeltaEndSavings)
-		}
-		row["total_interest"] = str(o.TotalInterest)
-		goals := map[string]string{}
-		for _, g := range o.Goals {
-			switch {
-			case g.AlreadyMet:
-				goals[g.Name] = "already met"
-			case g.ReachedLabel != "":
-				goals[g.Name] = g.ReachedLabel
-			default:
-				goals[g.Name] = "not reached"
-			}
-		}
-		row["goals"] = goals
-		debts := map[string]string{}
-		for _, d := range o.Debts {
-			if d.PaidOffLabel != "" {
-				debts[d.Name] = "paid off " + d.PaidOffLabel
-			} else {
-				debts[d.Name] = "ends at " + d.EndBalance.String() + " " + d.EndBalance.Currency().Code
-			}
-		}
-		if len(debts) > 0 {
-			row["debts"] = debts
-		}
-		if o.NegativeSavingIn != "" {
-			row["savings_negative_in"] = o.NegativeSavingIn
-		}
-		rows[i] = row
+		rows = append(rows, itemRow{
+			ID:       line.ID,
+			Name:     line.Name,
+			Category: line.Category,
+			Amount:   line.Amount.String(),
+			Currency: line.Amount.Currency().Code,
+			Base:     line.PerOccurrence.String(),
+			Schedule: line.ScheduleText,
+			Pot:      pot,
+		})
 	}
 	return rows
 }
 
-func indexWhere[T any](s []T, f func(T) bool) int {
-	for i, v := range s {
-		if f(v) {
-			return i
+func debtRows(b budget.Budget, r *budget.Report) []debtRow {
+	var rows []debtRow
+	for i, summary := range r.Debts {
+		budgetDebt := b.Debts[i]
+		rows = append(rows, debtRow{
+			ID:            summary.ID,
+			Name:          summary.Name,
+			Currency:      budgetDebt.Currency,
+			Balance:       budgetDebt.Balance.String(),
+			APRPct:        budgetDebt.APRPct.String(),
+			MinPayment:    budgetDebt.MinPayment.String(),
+			EndBalance:    summary.EndBalance.String(),
+			TotalInterest: summary.TotalInterest.String(),
+			PaidOff:       paidOffText(summary),
+			PayoffPlan:    payoffPlan(b, r, budgetDebt),
+		})
+	}
+	return rows
+}
+
+func paidOffText(summary budget.DebtSummary) string {
+	switch {
+	case summary.PaidOffLabel != "":
+		return summary.PaidOffLabel
+	case summary.StartBalance.IsZero():
+		return "nothing owed"
+	}
+	return "not within the window"
+}
+
+func potRows(b budget.Budget, r *budget.Report) []potRow {
+	var rows []potRow
+	for i, summary := range r.Pots {
+		budgetPot := b.Pots[i]
+		row := potRow{
+			ID:      summary.ID,
+			Name:    summary.Name,
+			Kind:    summary.Kind,
+			Balance: summary.Start.String(),
+			End:     summary.End.String(),
+			Default: summary.Default,
+		}
+		if !budgetPot.Target.IsZero() {
+			row.Target = budgetPot.Target.String()
+		}
+		if !budgetPot.Monthly.IsZero() {
+			row.Monthly = budgetPot.Monthly.String()
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func shortfallRows(r *budget.Report) []shortfallRow {
+	var rows []shortfallRow
+	for _, shortfall := range r.Shortfalls {
+		row := shortfallRow{Month: shortfall.Label, Short: shortfall.Amount.String()}
+		if len(shortfall.Options) > 0 {
+			row.CoverBy = map[string]string{}
+			for _, option := range shortfall.Options {
+				pot := option.Name + " (" + option.Kind + ")"
+				row.CoverBy[pot] = option.Available.String() + " available"
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func goalRows(r *budget.Report) []goalRow {
+	var rows []goalRow
+	for _, status := range r.Goals {
+		rows = append(rows, goalRow{
+			ID:      status.ID,
+			Name:    status.Name,
+			Target:  status.Target.String(),
+			Reached: reachedText(status),
+		})
+	}
+	return rows
+}
+
+func reachedText(status budget.GoalStatus) string {
+	reached := "not within the window"
+	switch {
+	case status.AlreadyMet:
+		reached = "already met"
+	case status.ReachedLabel != "":
+		reached = status.ReachedLabel
+	case status.NeededPerMonth != nil:
+		reached += "; needs " + status.NeededPerMonth.String() + "/month"
+	}
+	return reached
+}
+
+func scenarioRows(b budget.Budget) []scenarioRow {
+	var rows []scenarioRow
+	for _, scenario := range b.Scenarios {
+		rows = append(rows, scenarioRow{
+			ID:          scenario.ID,
+			Name:        scenario.Name,
+			Description: scenario.Description,
+			Ops:         len(scenario.Ops),
+		})
+	}
+	return rows
+}
+
+func monthRows(r *budget.Report) []monthRow {
+	var rows []monthRow
+	for _, month := range r.Months {
+		row := monthRow{
+			Month:       month.Key,
+			Income:      month.Income.String(),
+			Expenses:    month.Expenses.String(),
+			DebtPayment: month.DebtPayments.String(),
+			Left:        month.Left.String(),
+			Saved:       month.Saved.String(),
+			Savings:     month.Savings.String(),
+		}
+		if month.FromSavings.IsPositive() {
+			row.FromSav = month.FromSavings.String()
+		}
+		if month.Payoff.IsPositive() {
+			row.Payoff = month.Payoff.String()
+		}
+		if month.Overdraft.IsPositive() {
+			row.Overdraft = month.Overdraft.String()
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func totalsFromReport(r *budget.Report) map[string]string {
+	totals := r.Totals
+	return map[string]string{
+		"income":        totals.Income.String(),
+		"expenses":      totals.Expenses.String(),
+		"debt_payments": totals.DebtPayments.String(),
+		"saved":         totals.Saved.String(),
+		"end_savings":   totals.EndSavings.String(),
+		"interest":      totals.TotalInterest.String(),
+	}
+}
+
+func reportInsightRows(r *budget.Report) []insightRow {
+	var rows []insightRow
+	for _, insight := range r.Insights {
+		rows = append(rows, newInsightRow(insight))
+	}
+	return rows
+}
+
+type outcomeRow struct {
+	Debts            map[string]string `json:"debts,omitempty"`
+	DeltaEndSavings  string            `json:"delta_end_savings_vs_baseline,omitempty"`
+	EndSavings       *string           `json:"end_savings,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	FirstMonthSaved  *string           `json:"first_month_saved,omitempty"`
+	Goals            map[string]string `json:"goals,omitzero"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	NegativeSavingIn string            `json:"savings_negative_in,omitempty"`
+	TotalInterest    *string           `json:"total_interest,omitempty"`
+}
+
+func outcomeRows(outcomes []budget.Outcome) []outcomeRow {
+	rows := make([]outcomeRow, len(outcomes))
+	for i, outcome := range outcomes {
+		rows[i] = newOutcomeRow(outcome)
+	}
+	return rows
+}
+
+func newOutcomeRow(outcome budget.Outcome) outcomeRow {
+	if outcome.Error != "" {
+		return outcomeRow{ID: outcome.ID, Name: outcome.Name, Error: outcome.Error}
+	}
+	row := outcomeRow{
+		Debts:            outcomeDebts(outcome),
+		EndSavings:       moneyText(outcome.EndSavings),
+		FirstMonthSaved:  moneyText(outcome.FirstMonthSaved),
+		Goals:            outcomeGoals(outcome),
+		ID:               outcome.ID,
+		Name:             outcome.Name,
+		NegativeSavingIn: outcome.NegativeSavingIn,
+		TotalInterest:    moneyText(outcome.TotalInterest),
+	}
+	if outcome.DeltaEndSavings != nil {
+		row.DeltaEndSavings = outcome.DeltaEndSavings.String()
+	}
+	return row
+}
+
+func moneyText(m *money.Money) *string {
+	text := ""
+	if m != nil {
+		text = m.String()
+	}
+	return &text
+}
+
+func outcomeGoals(outcome budget.Outcome) map[string]string {
+	goals := map[string]string{}
+	for _, goal := range outcome.Goals {
+		switch {
+		case goal.AlreadyMet:
+			goals[goal.Name] = "already met"
+		case goal.ReachedLabel != "":
+			goals[goal.Name] = goal.ReachedLabel
+		default:
+			goals[goal.Name] = "not reached"
 		}
 	}
-	return -1
+	return goals
+}
+
+func outcomeDebts(outcome budget.Outcome) map[string]string {
+	debts := map[string]string{}
+	for _, debt := range outcome.Debts {
+		if debt.PaidOffLabel != "" {
+			debts[debt.Name] = "paid off " + debt.PaidOffLabel
+		} else {
+			endBalance := debt.EndBalance
+			debts[debt.Name] = "ends at " + endBalance.String() + " " + endBalance.Currency().Code
+		}
+	}
+	return debts
 }
