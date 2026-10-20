@@ -118,9 +118,13 @@ async function submitMessage(event) {
   }
 }
 
+function isPlainEnter(event) {
+  return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
 // Enter sends; Shift+Enter starts a new line.
 function sendOnEnter(event) {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  if (isPlainEnter(event)) {
     event.preventDefault();
     form.requestSubmit();
   }

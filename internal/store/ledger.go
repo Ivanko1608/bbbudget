@@ -23,57 +23,61 @@ func (s *FileStore) readLedger(id string) (Ledger, error) {
 	if err != nil {
 		return Ledger{}, err
 	}
-	var l Ledger
-	if err := json.Unmarshal(raw, &l); err != nil {
+	var ledger Ledger
+	if err := json.Unmarshal(raw, &ledger); err != nil {
 		return Ledger{}, fmt.Errorf("transactions of %s are corrupt: %w", id, err)
 	}
-	if l.Transactions == nil {
-		l.Transactions = []budget.Transaction{}
+	if ledger.Transactions == nil {
+		ledger.Transactions = []budget.Transaction{}
 	}
-	return l, nil
+	return ledger, nil
 }
 
-func (s *FileStore) Ledger(ctx context.Context, id string) (Ledger, error) {
-	var ledger Ledger
-	readLedger := func() error {
-		if _, err := s.read(id); err != nil {
-			return err
-		}
-		read, err := s.readLedger(id)
-		ledger = read
+func (s *FileStore) Ledger(ctx context.Context, id string) (ledger Ledger, err error) {
+	err = s.withLock(false, func() error {
+		ledger, err = s.ledgerLocked(id)
 		return err
-	}
-	err := s.withLock(false, readLedger)
+	})
 	return ledger, err
+}
+
+func (s *FileStore) ledgerLocked(id string) (Ledger, error) {
+	if _, err := s.read(id); err != nil {
+		return Ledger{}, err
+	}
+	return s.readLedger(id)
 }
 
 func (s *FileStore) UpdateLedger(
 	ctx context.Context, id string, edit LedgerEditFunc,
-) (Ledger, error) {
-	var ledger Ledger
-	writeLedger := func() error {
-		current, err := s.read(id)
-		if err != nil {
-			return err
-		}
-		old, err := s.readLedger(id)
-		if err != nil {
-			return err
-		}
-		txs, err := edit(current.Budget, slices.Clone(old.Transactions))
-		if err != nil {
-			return err
-		}
-		if len(txs) > budget.MaxTransactions {
-			return fmt.Errorf("at most %d transactions per budget", budget.MaxTransactions)
-		}
-		ledger = Ledger{Revision: old.Revision + 1, UpdatedAt: s.now().UTC(), Transactions: txs}
-		raw, err := json.MarshalIndent(ledger, "", " ")
-		if err != nil {
-			return err
-		}
-		return s.writeFile(s.ledgerPath(id), append(raw, '\n'))
-	}
-	err := s.withLock(true, writeLedger)
+) (ledger Ledger, err error) {
+	err = s.withLock(true, func() error {
+		ledger, err = s.updateLedgerLocked(id, edit)
+		return err
+	})
 	return ledger, err
+}
+
+func (s *FileStore) updateLedgerLocked(id string, edit LedgerEditFunc) (Ledger, error) {
+	current, err := s.read(id)
+	if err != nil {
+		return Ledger{}, err
+	}
+	old, err := s.readLedger(id)
+	if err != nil {
+		return Ledger{}, err
+	}
+	txs, err := edit(current.Budget, slices.Clone(old.Transactions))
+	if err != nil {
+		return Ledger{}, err
+	}
+	if len(txs) > budget.MaxTransactions {
+		return Ledger{}, fmt.Errorf("at most %d transactions per budget", budget.MaxTransactions)
+	}
+	ledger := Ledger{Revision: old.Revision + 1, UpdatedAt: s.now().UTC(), Transactions: txs}
+	raw, err := json.MarshalIndent(ledger, "", " ")
+	if err != nil {
+		return Ledger{}, err
+	}
+	return ledger, s.writeFile(s.ledgerPath(id), append(raw, '\n'))
 }
