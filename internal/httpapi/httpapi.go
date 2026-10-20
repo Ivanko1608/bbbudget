@@ -170,7 +170,7 @@ func (s *server) writeView(w http.ResponseWriter, r *http.Request, status int, v
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Issue) {
-	writeJSON(w, status, errBody{msg, issues})
+	writeJSON(w, status, errBody{Error: msg, Issues: issues})
 }
 
 // fail maps domain errors to HTTP statuses. Anything unrecognised is a 500
