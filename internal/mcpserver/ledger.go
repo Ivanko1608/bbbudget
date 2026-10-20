@@ -121,8 +121,8 @@ func newStatusRow(category budget.CategoryStatus) statusRow {
 	return row
 }
 
-// getMonthStatus is a month's status with its flags in the user's language.
-func (h *handlers) getMonthStatus(
+// getLocalizedMonthStatus is a month's status with its flags in the user's language.
+func (h *handlers) getLocalizedMonthStatus(
 	ctx context.Context, id, month string,
 ) (*budget.MonthStatus, error) {
 	status, err := h.app.MonthStatus(ctx, id, month)
@@ -143,7 +143,7 @@ func (h *handlers) flagsByMonth(
 	}
 	flags := map[string][]string{}
 	for _, month := range slices.Sorted(maps.Keys(months)) {
-		status, err := h.getMonthStatus(ctx, id, month)
+		status, err := h.getLocalizedMonthStatus(ctx, id, month)
 		if errors.Is(err, app.ErrBadInput) {
 			continue // a month outside the budget's window has no plan to compare with
 		}
@@ -167,7 +167,7 @@ func (h *handlers) registerLedger(s *mcp.Server) {
 	addWriteTool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
 		h.deleteTransactions)
 	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
-		h.monthStatus)
+		h.getMonthStatus)
 }
 
 func (h *handlers) logTransactions(ctx context.Context, in LogTransactionsIn) (any, error) {
@@ -226,12 +226,12 @@ func (h *handlers) deleteTransactions(
 	return deletedResult{Deleted: removed}, nil
 }
 
-func (h *handlers) monthStatus(ctx context.Context, in StatusIn) (any, error) {
+func (h *handlers) getMonthStatus(ctx context.Context, in StatusIn) (any, error) {
 	id, err := h.id(in.Budget)
 	if err != nil {
 		return nil, err
 	}
-	status, err := h.getMonthStatus(ctx, id, in.Month)
+	status, err := h.getLocalizedMonthStatus(ctx, id, in.Month)
 	if err != nil {
 		return nil, err
 	}
