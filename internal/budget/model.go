@@ -6,7 +6,11 @@
 // amounts are money.Money. Only Plans are ever projected.
 package budget
 
-import "bbbudget/internal/money"
+import (
+	"strings"
+
+	"bbbudget/internal/money"
+)
 
 // Category kinds.
 const (
@@ -63,28 +67,46 @@ type CurrencyRate struct {
 	CashOutFeePct money.Decimal `json:"cash_out_fee_pct,omitzero"`
 	// Source says where PerBase comes from: "manual" (or empty) for a rate you
 	// type, otherwise a rate provider that refreshing fetches it from (see RateSources).
-	Source string `json:"source,omitempty"`
+	Source RateSource `json:"source,omitempty"`
 	// RateDate and RateFrom record the last fetched quote: its date (YYYY-MM-DD)
 	// and the provider that supplied it. Informational; cleared by a manual rate.
-	RateDate string `json:"rate_date,omitempty"`
-	RateFrom string `json:"rate_from,omitempty"`
+	RateDate string     `json:"rate_date,omitempty"`
+	RateFrom RateSource `json:"rate_from,omitempty"`
 }
 
-// Rate sources. SourceAuto tries the official ECB rate first and falls back
-// to a provider that also covers crypto and the currencies ECB doesn't quote.
+// RateSource names where a currency's exchange rate comes from.
+type RateSource string
+
+// RateSourceAuto tries the official ECB rate first and falls back to a provider
+// that also covers crypto and the currencies ECB doesn't quote.
 const (
-	SourceManual      = "manual"
-	SourceAuto        = "auto"
-	SourceECB         = "ecb"
-	SourceCurrencyAPI = "currency-api"
-	SourceCoinGecko   = "coingecko"
+	RateSourceManual      RateSource = "manual"
+	RateSourceAuto        RateSource = "auto"
+	RateSourceECB         RateSource = "ecb"
+	RateSourceCurrencyAPI RateSource = "currency-api"
+	RateSourceCoinGecko   RateSource = "coingecko"
 )
 
 // RateSources lists every valid CurrencyRate.Source.
-var RateSources = []string{SourceManual, SourceAuto, SourceECB, SourceCurrencyAPI, SourceCoinGecko}
+var RateSources = []RateSource{
+	RateSourceManual,
+	RateSourceAuto,
+	RateSourceECB,
+	RateSourceCurrencyAPI,
+	RateSourceCoinGecko,
+}
+
+// FormatRateSources lists RateSources as comma-separated text.
+func FormatRateSources() string {
+	names := make([]string, len(RateSources))
+	for i, source := range RateSources {
+		names[i] = string(source)
+	}
+	return strings.Join(names, ", ")
+}
 
 // IsManual reports whether the rate is typed by hand rather than fetched.
-func (r CurrencyRate) IsManual() bool { return r.Source == "" || r.Source == SourceManual }
+func (r CurrencyRate) IsManual() bool { return r.Source == "" || r.Source == RateSourceManual }
 
 type Category struct {
 	ID    string `json:"id"`

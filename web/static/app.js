@@ -299,8 +299,7 @@ function currencyOptions() {
   return [S.budget.base_currency, ...S.budget.currencies.map((c) => c.code)].map((c) => [c, c]);
 }
 
-const RATE_SOURCES = ["manual", "auto", "ecb", "currency-api", "coingecko"];
-const rateSourceOptions = () => RATE_SOURCES.map((s) => [s, t(`source_opt.${s}`)]);
+const rateSourceOptions = () => S.meta.rate_sources.map((s) => [s, t(`rate_source_opt.${s}`)]);
 const isManual = (c) => !c.source || c.source === "manual";
 
 const POT_KINDS = ["general", "sinking", "emergency"];

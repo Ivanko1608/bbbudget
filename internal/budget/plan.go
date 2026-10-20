@@ -297,7 +297,7 @@ func (c *compiler) checkRateFees(path string, rate CurrencyRate) {
 		c.add(path+".cash_out_fee_pct", "issue.cash_out_range", nil)
 	}
 	if rate.Source != "" && !slices.Contains(RateSources, rate.Source) {
-		values := i18n.Text(strings.Join(RateSources, ", "))
+		values := i18n.Text(FormatRateSources())
 		c.add(path+".source", "issue.one_of", args{"values": values})
 	}
 }

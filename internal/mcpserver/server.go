@@ -210,11 +210,11 @@ type ItemRef struct {
 
 type CurrencyIn struct {
 	WriteRef
-	Code           string         `json:"code" jsonschema:"ISO code or crypto ticker, e.g. USD, BTC, USDT"`
-	PerBase        *money.Decimal `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit; setting it makes the rate manual. Omit to fetch the current rate"`
-	Source         *string        `json:"source,omitempty" jsonschema:"where the rate comes from: manual, auto, ecb, currency-api or coingecko"`
-	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty" jsonschema:"percent lost on every payment in this currency"`
-	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty" jsonschema:"percent lost when income in this currency is converted to base (exchange fee + spread)"`
+	Code           string             `json:"code" jsonschema:"ISO code or crypto ticker, e.g. USD, BTC, USDT"`
+	PerBase        *money.Decimal     `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit; setting it makes the rate manual. Omit to fetch the current rate"`
+	Source         *budget.RateSource `json:"source,omitempty" jsonschema:"where the rate comes from: manual, auto, ecb, currency-api or coingecko"`
+	TransferFeePct *money.Decimal     `json:"transfer_fee_pct,omitempty" jsonschema:"percent lost on every payment in this currency"`
+	CashOutFeePct  *money.Decimal     `json:"cash_out_fee_pct,omitempty" jsonschema:"percent lost when income in this currency is converted to base (exchange fee + spread)"`
 }
 
 type RatesIn struct {

@@ -538,7 +538,7 @@ func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
 // leaves the server; only whether one is set.
 type settingsView struct {
 	FetchRates        bool                  `json:"fetch_rates"`
-	DefaultRateSource string                `json:"default_rate_source"`
+	DefaultRateSource budget.RateSource     `json:"default_rate_source"`
 	AutoRefresh       string                `json:"auto_refresh"`
 	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
 	Locale            string                `json:"locale"`
@@ -608,7 +608,12 @@ func (s *server) quote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "base and codes (comma-separated, at most 50) are required", nil)
 		return
 	}
-	out, err := s.app.Quote(r.Context(), strings.ToUpper(q.Get("base")), q.Get("source"), codes)
+	out, err := s.app.Quote(
+		r.Context(),
+		strings.ToUpper(q.Get("base")),
+		budget.RateSource(q.Get("source")),
+		codes,
+	)
 	if err != nil {
 		s.fail(w, r, err)
 		return
