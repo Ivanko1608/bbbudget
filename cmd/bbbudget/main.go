@@ -574,7 +574,7 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	tw.Flush()
 	fmt.Fprintln(w)
 	for _, in := range r.Insights {
-		mark := map[string]string{budget.ToneWarn: "!", budget.ToneGood: "+"}[in.Tone]
+		mark := map[budget.Tone]string{budget.ToneWarn: "!", budget.ToneGood: "+"}[in.Tone]
 		if mark == "" {
 			mark = "-"
 		}

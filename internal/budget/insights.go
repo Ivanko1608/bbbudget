@@ -9,11 +9,14 @@ import (
 	"bbbudget/internal/money"
 )
 
+// Tone is the severity of an insight.
+type Tone string
+
 // Insight tones.
 const (
-	ToneInfo = "info"
-	ToneWarn = "warn"
-	ToneGood = "good"
+	ToneInfo Tone = "info"
+	ToneWarn Tone = "warn"
+	ToneGood Tone = "good"
 )
 
 // Insight is one plain-language observation. The rule sets the message (a
@@ -21,7 +24,7 @@ const (
 // reader's language (see Report.Localize) and may contain **bold** spans.
 type Insight struct {
 	ID   string `json:"id"`
-	Tone string `json:"tone"`
+	Tone Tone   `json:"tone"`
 	i18n.Msg
 	Text string `json:"text"`
 }
