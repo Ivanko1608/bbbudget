@@ -11,8 +11,8 @@ GitHub issues are the backlog. Labels say who can act:
 |---|---|
 | `ready` | Goal and acceptance criteria are written. An agent may take it. |
 | `in-progress` | An agent is building it. |
-| `in-review` | A pull request is open and reviewed. Waiting for the user. |
-| `needs-user` | Only the user can do it (merge, `gh pr ready`, resolve threads, force-push, decide). |
+| `in-review` | A pull request is open and reviewed. Waiting for the user, who is assigned. |
+| `needs-user` | Only the user can do it (merge, `gh pr ready`, resolve threads, force-push, decide). The user is assigned. |
 | `blocked` | Waits on something else. The body says what. |
 
 Milestones group issues by goal. `gh issue list --label ready` is the queue.
@@ -55,4 +55,4 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 
 ## Writing a new ticket
 
-When the user describes work, create the issue with the **Task** form's sections: Goal, Context, Acceptance criteria, Out of scope. Size it for one pull request of about 1000 added lines. Split it into several issues only when parts can land on their own. Add `ready` only when the acceptance criteria are checkable, and `needs-user` when only the user can do it.
+When the user describes work, create the issue with the **Task** form's sections: Goal, Context, Acceptance criteria, Out of scope. Size it for one pull request of about 1000 added lines. Split it into several issues only when parts can land on their own. Add `ready` only when the acceptance criteria are checkable, and `needs-user` with `--add-assignee @me` when only the user can do it.
