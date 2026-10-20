@@ -541,9 +541,9 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Debts = remove(b.Debts, i)
 
-	case "add_pot", "add_goal":
+	case OpAddPot, OpAddGoal:
 		v := Pot{Kind: PotGeneral}
-		if op.Op == "add_goal" {
+		if op.Op == OpAddGoal {
 			var g Goal
 			if err := decodeStrict(op.Value, &g); err != nil {
 				return err
@@ -560,9 +560,9 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Pots = append(b.Pots, v)
 
-	case "set_pot", "set_goal":
+	case OpSetPot, OpSetGoal:
 		var v PotPatch
-		if op.Op == "set_goal" {
+		if op.Op == OpSetGoal {
 			var g GoalPatch
 			if err := decodeStrict(op.Value, &g); err != nil {
 				return err
@@ -582,7 +582,7 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&pt.Target, v.Target)
 		setIf(&pt.Monthly, v.Monthly)
 
-	case "remove_pot", "remove_goal":
+	case OpRemovePot, OpRemoveGoal:
 		i, err := find("pot", op.Target, ids(b.Pots, potKey))
 		if err != nil {
 			return err

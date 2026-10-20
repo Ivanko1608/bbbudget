@@ -134,7 +134,13 @@ func (a *App) RefreshRates(
 				continue
 			}
 			src := targets[i].Source
-			ops = append(ops, budget.NewOp(budget.OpSetCurrency, u.Code, budget.CurrencyPatch{PerBase: &updates[i].New, Source: &src, RateDate: &updates[i].Date, RateFrom: &updates[i].From}))
+			patch := budget.CurrencyPatch{
+				PerBase:  &updates[i].New,
+				Source:   &src,
+				RateDate: &updates[i].Date,
+				RateFrom: &updates[i].From,
+			}
+			ops = append(ops, budget.NewOp(budget.OpSetCurrency, u.Code, patch))
 		}
 		return budget.Apply(cur, ops...)
 	}
