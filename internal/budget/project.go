@@ -12,7 +12,8 @@ import (
 // Totals are exact sums of these rounded amounts, so every identity below
 // holds to the cent:
 //
-//	Left      = Income − IncomeToPots − (Expenses − PaidFromPots) − DebtMinCost − (Payoff − PayoffFromPots)
+//	Left      = Income − IncomeToPots − (Expenses − PaidFromPots) − DebtMinCost
+//	            − (Payoff − PayoffFromPots)
 //	            (the month's own money: items and payoffs routed through pots excluded)
 //	Left + Transfers + (Overdraft − previous Overdraft) = ExtraCost + (ToSavings − IncomeToPots)
 //	FromSavings = Transfers + PaidFromPots + PayoffFromPots
@@ -126,19 +127,11 @@ type Projection struct {
 func Project(p *Plan) (projection *Projection, err error) {
 	defer money.Recover(&err)
 
-	balances := make([]money.Money, len(p.Debts))
-	for i, d := range p.Debts {
-		balances[i] = d.Bal
-	}
-	pots := make([]money.Money, len(p.Pots))
-	for k, pt := range p.Pots {
-		pots[k] = pt.Bal
-	}
-	owed := p.OverdraftStart
+	state := newMonthState(p)
 	result := &Projection{Plan: p, Months: make([]Month, 0, p.Months)}
 
-	for m := 0; m < p.Months; m++ {
-		state := newMonthState(p, m, balances, pots, owed)
+	for index := 0; index < p.Months; index++ {
+		state.startMonth(index)
 		state.accrueInterest()
 		state.settleItems()
 		state.payMinimums()
@@ -151,56 +144,54 @@ func Project(p *Plan) (projection *Projection, err error) {
 		state.payExtraToDebts()
 		state.fillPots()
 		result.Months = append(result.Months, state.closeMonth())
-		owed = state.owed
 	}
 	return result, nil
 }
 
-// monthState is the working values of one month. balances and pots are shared
-// with the caller and carry over to the next month; owed is read back after.
 type monthState struct {
-	plan      *Plan
-	index     int
-	zero      money.Money
-	month     Month
-	debts     []DebtMonth
-	potMonths []PotMonth
-	balances  []money.Money
-	pots      []money.Money
-	owed      money.Money
-	rest      money.Money
-	routed    []routedItem
+	plan        *Plan
+	zero        money.Money
+	balances    []money.Money
+	pots        []money.Money
+	owed        money.Money
+	month       Month
+	debts       []DebtMonth
+	potMonths   []PotMonth
+	routed      []routedItem
+	unallocated money.Money
 }
 
-// routedItem is a plan item settled against a pot, with its amount this month.
 type routedItem struct {
 	item   PlanItem
 	amount money.Money
 }
 
-func newMonthState(
-	p *Plan,
-	index int,
-	balances []money.Money,
-	pots []money.Money,
-	owed money.Money,
-) *monthState {
-	zero := money.Zero(p.Base)
-	potMonths := make([]PotMonth, len(p.Pots))
+func newMonthState(p *Plan) *monthState {
+	balances := make([]money.Money, len(p.Debts))
+	for i, d := range p.Debts {
+		balances[i] = d.Bal
+	}
+	pots := make([]money.Money, len(p.Pots))
 	for k, pt := range p.Pots {
-		potMonths[k] = PotMonth{ID: pt.ID, In: zero, Out: zero}
+		pots[k] = pt.Bal
 	}
 	return &monthState{
-		plan:      p,
-		index:     index,
-		zero:      zero,
-		month:     newMonth(p, index),
-		potMonths: potMonths,
-		balances:  balances,
-		pots:      pots,
-		owed:      owed,
-		rest:      zero,
+		plan:     p,
+		zero:     money.Zero(p.Base),
+		balances: balances,
+		pots:     pots,
+		owed:     p.OverdraftStart,
 	}
+}
+
+func (s *monthState) startMonth(index int) {
+	s.month = newMonth(s.plan, index)
+	s.potMonths = make([]PotMonth, len(s.plan.Pots))
+	for k, pt := range s.plan.Pots {
+		s.potMonths[k] = PotMonth{ID: pt.ID, In: s.zero, Out: s.zero}
+	}
+	s.routed = nil
+	s.unallocated = s.zero
 }
 
 func newMonth(p *Plan, index int) Month {
@@ -264,12 +255,11 @@ func (s *monthState) accrueInterest() {
 	}
 }
 
-// settleItems books income and expenses. Items routed through a pot are
-// settled against it later.
+// Items routed through a pot are settled against it later.
 func (s *monthState) settleItems() {
 	p := s.plan
 	for _, item := range p.Items {
-		if !item.Schedule.ActiveIn(s.index) {
+		if !item.Schedule.ActiveIn(s.month.Index) {
 			continue
 		}
 		amount := p.PayCost(item.Amt, roundPay)
@@ -291,7 +281,7 @@ func (s *monthState) settleItems() {
 // paid off this month pays its minimum only on what the payoff leaves.
 func (s *monthState) payMinimums() {
 	for i, d := range s.plan.Debts {
-		if !d.PaysOffIn(s.index) {
+		if !d.PaysOffIn(s.month.Index) {
 			s.payMinimum(i)
 		}
 	}
@@ -338,7 +328,7 @@ func (s *monthState) settleRoutedItems() {
 // pays only what it holds; the rest stays owed and pays its minimum.
 func (s *monthState) payOffDebts() {
 	for i, d := range s.plan.Debts {
-		if !d.PaysOffIn(s.index) {
+		if !d.PaysOffIn(s.month.Index) {
 			continue
 		}
 		if s.balances[i].IsPositive() {
@@ -382,7 +372,7 @@ func (s *monthState) calculateLeft() {
 // pot holds.
 func (s *monthState) takeWithdrawals() {
 	for _, w := range s.plan.Withdrawals {
-		if !w.Schedule.ActiveIn(s.index) {
+		if !w.Schedule.ActiveIn(s.month.Index) {
 			continue
 		}
 		taken := money.Min(w.Amt, s.pots[w.PotIdx])
@@ -406,7 +396,7 @@ func (s *monthState) settleShortfall() {
 	}
 	previouslyOwed := s.owed
 	if flow.Cmp(s.owed) >= 0 {
-		s.rest = flow.Sub(s.owed)
+		s.unallocated = flow.Sub(s.owed)
 		s.owed = s.zero
 	} else {
 		s.owed = s.owed.Sub(flow)
@@ -417,20 +407,20 @@ func (s *monthState) settleShortfall() {
 	m.Overdraft = s.owed
 }
 
-// contributeFixed makes the fixed monthly contributions, up to each pot's target.
+// A pot with a target takes no more than it has room for.
 func (s *monthState) contributeFixed() {
 	for k, pt := range s.plan.Pots {
-		if !s.rest.IsPositive() {
+		if !s.unallocated.IsPositive() {
 			break
 		}
-		contribution := money.Min(pt.Monthly, s.rest)
+		contribution := money.Min(pt.Monthly, s.unallocated)
 		if pt.Target.IsPositive() {
 			room := money.Max(pt.Target.Sub(s.pots[k]), s.zero)
 			contribution = money.Min(contribution, room)
 		}
 		if contribution.IsPositive() {
 			s.deposit(k, contribution)
-			s.rest = s.rest.Sub(contribution)
+			s.unallocated = s.unallocated.Sub(contribution)
 		}
 	}
 }
@@ -438,8 +428,8 @@ func (s *monthState) contributeFixed() {
 // payExtraToDebts sends a share of what is left to the debts, by strategy.
 func (s *monthState) payExtraToDebts() {
 	p := s.plan
-	if s.rest.IsPositive() && p.ExtraPct.Sign() > 0 {
-		extraBudget := s.rest.Percent(p.ExtraPct, money.Floor)
+	if s.unallocated.IsPositive() && p.ExtraPct.Sign() > 0 {
+		extraBudget := s.unallocated.Percent(p.ExtraPct, money.Floor)
 		for _, i := range p.payoffOrder(s.balances) {
 			if !extraBudget.IsPositive() {
 				break
@@ -447,10 +437,9 @@ func (s *monthState) payExtraToDebts() {
 			extraBudget = extraBudget.Sub(s.payExtra(i, extraBudget))
 		}
 	}
-	s.rest = s.rest.Sub(s.month.ExtraCost)
+	s.unallocated = s.unallocated.Sub(s.month.ExtraCost)
 }
 
-// payExtra pays as much of the debt as the budget buys and returns its cost.
 func (s *monthState) payExtra(debt int, extraBudget money.Money) money.Money {
 	p := s.plan
 	var paid, cost money.Money
@@ -473,25 +462,24 @@ func (s *monthState) payExtra(debt int, extraBudget money.Money) money.Money {
 	return cost
 }
 
-// fillPots fills pots with a target, in list order; the rest goes to the default pot.
+// Pots with a target fill in list order; the rest goes to the default pot.
 func (s *monthState) fillPots() {
 	for k, pt := range s.plan.Pots {
-		if !s.rest.IsPositive() {
+		if !s.unallocated.IsPositive() {
 			break
 		}
 		room := pt.Target.Sub(s.pots[k])
 		if pt.Target.IsPositive() && room.IsPositive() {
-			contribution := money.Min(room, s.rest)
+			contribution := money.Min(room, s.unallocated)
 			s.deposit(k, contribution)
-			s.rest = s.rest.Sub(contribution)
+			s.unallocated = s.unallocated.Sub(contribution)
 		}
 	}
-	if s.rest.IsPositive() {
-		s.deposit(s.plan.DefaultPot, s.rest)
+	if s.unallocated.IsPositive() {
+		s.deposit(s.plan.DefaultPot, s.unallocated)
 	}
 }
 
-// closeMonth writes the closing balances and totals and returns the month.
 func (s *monthState) closeMonth() Month {
 	m := s.month
 	m.DebtBase = s.zero
