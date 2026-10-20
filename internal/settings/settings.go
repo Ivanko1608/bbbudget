@@ -87,7 +87,7 @@ type Settings struct {
 func Defaults() Settings {
 	return Settings{
 		FetchRates:        false,
-		DefaultRateSource: "auto",
+		DefaultRateSource: budget.SourceAuto,
 		AutoRefresh:       RefreshOff,
 		Locale:            LocaleAuto,
 		AssistantProvider: AssistantOff,
@@ -116,7 +116,8 @@ func (s Settings) Interval() time.Duration {
 func (s Settings) Validate() error {
 	var errs []error
 	if !slices.Contains(budget.RateSources, s.DefaultRateSource) {
-		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", strings.Join(budget.RateSources, ", ")))
+		sources := strings.Join(budget.RateSources, ", ")
+		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", sources))
 	}
 	if !slices.Contains([]string{RefreshOff, RefreshHourly, RefreshDaily}, s.AutoRefresh) {
 		errs = append(errs, errors.New("auto_refresh must be off, hourly or daily"))

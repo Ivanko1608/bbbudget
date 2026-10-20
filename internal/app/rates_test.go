@@ -34,12 +34,12 @@ func testApp(t *testing.T) *App {
 	}
 	a := New(st, nil)
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
-	ecb := rates.Fixed{ID: rates.ECB, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"}}
-	capi := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-08", Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"}}
+	ecb := rates.Fixed{ID: budget.SourceECB, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"}}
+	capi := rates.Fixed{ID: budget.SourceCurrencyAPI, Base: "EUR", Date: "2026-10-08", Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"}}
 	a.Rates = map[string]rates.Provider{
-		rates.ECB: ecb, rates.CurrencyAPI: capi,
-		rates.CoinGecko: rates.Fixed{ID: rates.CoinGecko, Err: errors.New("HTTP 429")},
-		rates.Auto:      rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, capi}},
+		budget.SourceECB: ecb, budget.SourceCurrencyAPI: capi,
+		budget.SourceCoinGecko: rates.Fixed{ID: budget.SourceCoinGecko, Err: errors.New("HTTP 429")},
+		budget.SourceAuto:      rates.Chain{ID: budget.SourceAuto, Providers: []rates.Provider{ecb, capi}},
 	}
 	if _, err := a.Create(context.Background(), byTest, english, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
@@ -88,11 +88,11 @@ func TestRefreshSkipsManualUnlessNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updates) != 1 || updates[0].Old.String() != "1.08" || updates[0].New.String() != "1.1186" || updates[0].From != rates.ECB {
+	if len(updates) != 1 || updates[0].Old.String() != "1.08" || updates[0].New.String() != "1.1186" || updates[0].From != budget.SourceECB {
 		t.Fatalf("updates: %+v", updates)
 	}
 	usd := currency(t, a, "USD")
-	if usd.Source != budget.SourceAuto || usd.RateDate != "2026-10-07" || usd.RateFrom != rates.ECB || usd.PerBase.String() != "1.1186" {
+	if usd.Source != budget.SourceAuto || usd.RateDate != "2026-10-07" || usd.RateFrom != budget.SourceECB || usd.PerBase.String() != "1.1186" {
 		t.Fatalf("saved: %+v", usd)
 	}
 	if v.Revision != rev+1 || currency(t, a, "CHF").PerBase.String() != "0.94" {
@@ -116,7 +116,7 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	}
 	btc := currency(t, a, "BTC")
 	// ECB has no BTC, so auto falls back; the rate keeps 10 significant digits.
-	if btc.PerBase.String() != "0.00001352115801" || btc.Source != budget.SourceAuto || btc.RateFrom != rates.CurrencyAPI {
+	if btc.PerBase.String() != "0.00001352115801" || btc.Source != budget.SourceAuto || btc.RateFrom != budget.SourceCurrencyAPI {
 		t.Fatalf("got %+v", btc)
 	}
 
@@ -139,7 +139,7 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 
 func TestPartialAndTotalFailure(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	gecko := rates.CoinGecko
+	gecko := budget.SourceCoinGecko
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	typed := money.MustDecimal("1.05")
-	a.Rates[rates.Auto] = hook{a.Rates[rates.Auto], func() {
+	a.Rates[budget.SourceAuto] = hook{a.Rates[budget.SourceAuto], func() {
 		typeRate := setCurrency("USD", budget.CurrencyPatch{PerBase: &typed})
 		if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, typeRate); err != nil {
 			t.Error(err)
@@ -216,7 +216,7 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 			t.Errorf("%s: %q", u.Code, u.Error)
 		}
 	}
-	if currency(t, a, "CHF").RateFrom != rates.ECB {
+	if currency(t, a, "CHF").RateFrom != budget.SourceECB {
 		t.Fatal("CHF should still update")
 	}
 }
@@ -259,8 +259,8 @@ func TestEmptySourceMeansDefault(t *testing.T) {
 
 func TestOutageIsNotReportedAsUnsupported(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	ecb := a.Rates[rates.ECB]
-	a.Rates[rates.Auto] = rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, rates.Fixed{ID: rates.CurrencyAPI, Err: errors.New("HTTP 503")}}}
+	ecb := a.Rates[budget.SourceECB]
+	a.Rates[budget.SourceAuto] = rates.Chain{ID: budget.SourceAuto, Providers: []rates.Provider{ecb, rates.Fixed{ID: budget.SourceCurrencyAPI, Err: errors.New("HTTP 503")}}}
 	q, err := a.Quote(ctx, "EUR", "auto", []string{"USD", "BTC"})
 	if err != nil {
 		t.Fatalf("USD was fetched, so this is not a total failure: %v", err)

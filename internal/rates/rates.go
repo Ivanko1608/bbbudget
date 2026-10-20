@@ -21,14 +21,6 @@ import (
 	"bbbudget/internal/budget"
 )
 
-// Provider names. They match the budget's currency "source" values.
-const (
-	Auto        = budget.SourceAuto
-	ECB         = budget.SourceECB
-	CurrencyAPI = budget.SourceCurrencyAPI
-	CoinGecko   = budget.SourceCoinGecko
-)
-
 // Quote is one exchange rate.
 type Quote struct {
 	Code string
@@ -231,10 +223,10 @@ func Registry(client *http.Client, coinGeckoKey func() string) map[string]Provid
 	capi := NewCache(&CurrencyAPIProvider{Client: client}, time.Hour)
 	cg := NewCache(&CoinGeckoProvider{Client: client, Key: coinGeckoKey}, time.Hour)
 	return map[string]Provider{
-		ECB:         ecb,
-		CurrencyAPI: capi,
-		CoinGecko:   cg,
-		Auto:        Chain{ID: Auto, Providers: []Provider{ecb, capi}},
+		budget.SourceECB:         ecb,
+		budget.SourceCurrencyAPI: capi,
+		budget.SourceCoinGecko:   cg,
+		budget.SourceAuto:        Chain{ID: budget.SourceAuto, Providers: []Provider{ecb, capi}},
 	}
 }
 

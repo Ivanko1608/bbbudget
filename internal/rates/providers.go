@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 // ECBProvider reads the European Central Bank's euro foreign exchange
@@ -26,14 +28,14 @@ type ECBProvider struct {
 
 const ecbURL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 
-func (p *ECBProvider) Name() string { return ECB }
+func (p *ECBProvider) Name() string { return budget.SourceECB }
 
 func (p *ECBProvider) Quotes(ctx context.Context, base string, codes []string) (map[string]Quote, error) {
 	u := p.URL
 	if u == "" {
 		u = ecbURL
 	}
-	body, err := get(ctx, p.Client, ECB, u, nil)
+	body, err := get(ctx, p.Client, budget.SourceECB, u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +51,10 @@ func (p *ECBProvider) Quotes(ctx context.Context, base string, codes []string) (
 		} `xml:"Cube"`
 	}
 	if err := xml.Unmarshal(body, &doc); err != nil {
-		return nil, &FetchError{Provider: ECB, Err: err}
+		return nil, &FetchError{Provider: budget.SourceECB, Err: err}
 	}
 	if len(doc.Cube.Day) == 0 {
-		return nil, &FetchError{Provider: ECB, Err: errors.New("no rates in response")}
+		return nil, &FetchError{Provider: budget.SourceECB, Err: errors.New("no rates in response")}
 	}
 	day := doc.Cube.Day[0]
 	perEUR := map[string]*big.Rat{"EUR": big.NewRat(1, 1)}
@@ -68,7 +70,7 @@ func (p *ECBProvider) Quotes(ctx context.Context, base string, codes []string) (
 	}
 	for _, code := range codes {
 		if c, ok := perEUR[code]; ok {
-			out[code] = Quote{Code: code, PerBase: new(big.Rat).Quo(c, b), Date: day.Time, From: ECB}
+			out[code] = Quote{Code: code, PerBase: new(big.Rat).Quo(c, b), Date: day.Time, From: budget.SourceECB}
 		}
 	}
 	return out, nil
@@ -88,7 +90,7 @@ var currencyAPIURLs = []string{
 	"https://latest.currency-api.pages.dev/v1/currencies/%s.json",
 }
 
-func (p *CurrencyAPIProvider) Name() string { return CurrencyAPI }
+func (p *CurrencyAPIProvider) Name() string { return budget.SourceCurrencyAPI }
 
 func (p *CurrencyAPIProvider) Quotes(ctx context.Context, base string, codes []string) (map[string]Quote, error) {
 	urls := p.URLs
@@ -99,7 +101,7 @@ func (p *CurrencyAPIProvider) Quotes(ctx context.Context, base string, codes []s
 	var body []byte
 	var errs []error
 	for _, u := range urls {
-		b, err := get(ctx, p.Client, CurrencyAPI, fmt.Sprintf(u, url.PathEscape(lb)), nil)
+		b, err := get(ctx, p.Client, budget.SourceCurrencyAPI, fmt.Sprintf(u, url.PathEscape(lb)), nil)
 		if err == nil {
 			body = b
 			break
@@ -111,7 +113,7 @@ func (p *CurrencyAPIProvider) Quotes(ctx context.Context, base string, codes []s
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, &FetchError{Provider: CurrencyAPI, Err: err}
+		return nil, &FetchError{Provider: budget.SourceCurrencyAPI, Err: err}
 	}
 	var date string
 	_ = json.Unmarshal(doc["date"], &date)
@@ -119,12 +121,12 @@ func (p *CurrencyAPIProvider) Quotes(ctx context.Context, base string, codes []s
 	d := json.NewDecoder(bytes.NewReader(doc[lb]))
 	d.UseNumber() // keep each rate's literal text: never a float64
 	if err := d.Decode(&table); err != nil {
-		return nil, &FetchError{Provider: CurrencyAPI, Err: fmt.Errorf("no %s table: %w", base, err)}
+		return nil, &FetchError{Provider: budget.SourceCurrencyAPI, Err: fmt.Errorf("no %s table: %w", base, err)}
 	}
 	out := map[string]Quote{}
 	for _, code := range codes {
 		if v, ok := parseRate(table[strings.ToLower(code)].String()); ok {
-			out[code] = Quote{Code: code, PerBase: v, Date: date, From: CurrencyAPI}
+			out[code] = Quote{Code: code, PerBase: v, Date: date, From: budget.SourceCurrencyAPI}
 		}
 	}
 	return out, nil
@@ -147,7 +149,7 @@ var coinGeckoIDs = map[string]string{
 	"USDT": "tether", "USDC": "usd-coin", "DAI": "dai",
 }
 
-func (p *CoinGeckoProvider) Name() string { return CoinGecko }
+func (p *CoinGeckoProvider) Name() string { return budget.SourceCoinGecko }
 
 func (p *CoinGeckoProvider) Quotes(ctx context.Context, base string, codes []string) (map[string]Quote, error) {
 	var ids []string
@@ -177,10 +179,10 @@ func (p *CoinGeckoProvider) Quotes(ctx context.Context, base string, codes []str
 	if key != "" {
 		h.Set("x-cg-demo-api-key", key)
 	}
-	body, err := get(ctx, p.Client, CoinGecko, root+"/simple/price?"+q.Encode(), h)
+	body, err := get(ctx, p.Client, budget.SourceCoinGecko, root+"/simple/price?"+q.Encode(), h)
 	var fe *FetchError
 	if key != "" && errors.As(err, &fe) && (fe.Status == http.StatusUnauthorized || fe.Status == http.StatusForbidden) {
-		return nil, &FetchError{Provider: CoinGecko, Err: fmt.Errorf("HTTP %d: the API key was rejected; fix or remove it in Settings", fe.Status), Status: fe.Status}
+		return nil, &FetchError{Provider: budget.SourceCoinGecko, Err: fmt.Errorf("HTTP %d: the API key was rejected; fix or remove it in Settings", fe.Status), Status: fe.Status}
 	}
 	if err != nil {
 		return nil, err
@@ -189,7 +191,7 @@ func (p *CoinGeckoProvider) Quotes(ctx context.Context, base string, codes []str
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.UseNumber()
 	if err := d.Decode(&prices); err != nil {
-		return nil, &FetchError{Provider: CoinGecko, Err: err}
+		return nil, &FetchError{Provider: budget.SourceCoinGecko, Err: err}
 	}
 	now := time.Now
 	if p.Now != nil {
@@ -202,7 +204,7 @@ func (p *CoinGeckoProvider) Quotes(ctx context.Context, base string, codes []str
 			continue
 		}
 		// CoinGecko quotes the coin's price in base; a budget wants coins per base unit.
-		out[code] = Quote{Code: code, PerBase: new(big.Rat).Inv(price), Date: date, From: CoinGecko}
+		out[code] = Quote{Code: code, PerBase: new(big.Rat).Inv(price), Date: date, From: budget.SourceCoinGecko}
 	}
 	return out, nil
 }

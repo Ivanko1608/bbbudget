@@ -162,7 +162,7 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 	a := New(nil, nil) // the real registry, as the binary builds it
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
 	withSettings(t, a, settings.Patch{FetchRates: ptr(true), CoinGeckoAPIKey: ptr("CG-test")})
-	cg := a.Rates[rates.CoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
+	cg := a.Rates[budget.SourceCoinGecko].(*rates.Cache).Provider.(*rates.CoinGeckoProvider)
 	cg.URL = srv.URL
 	q, err := a.Quote(context.Background(), "EUR", "coingecko", []string{"BTC"})
 	if err != nil || q[0].New.String() != "0.00001428571429" {
@@ -181,9 +181,9 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
-	down := rates.Fixed{ID: rates.Auto, Err: errors.New("network is unreachable")}
-	up := a.Rates[rates.Auto]
-	a.Rates[rates.Auto] = down
+	down := rates.Fixed{ID: budget.SourceAuto, Err: errors.New("network is unreachable")}
+	up := a.Rates[budget.SourceAuto]
+	a.Rates[budget.SourceAuto] = down
 
 	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 0 {
 		t.Fatal("first run should run and fail")
@@ -192,7 +192,7 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 	if ran, _ := a.RefreshIfDue(ctx); ran {
 		t.Fatal("retried too soon")
 	}
-	a.Rates[rates.Auto] = up
+	a.Rates[budget.SourceAuto] = up
 	now = now.Add(time.Minute)
 	if ran, _ := a.RefreshIfDue(ctx); !ran || a.AutoRefresh().Updated != 1 {
 		t.Fatalf("a failed run must be retried after 10 minutes, not a day: %+v", a.AutoRefresh())
