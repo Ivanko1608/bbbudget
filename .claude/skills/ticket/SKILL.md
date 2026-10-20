@@ -34,6 +34,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - Never change the git identity. No Claude trailers or mentions in commits or the PR. No personal data anywhere.
    - Don't force-push, rewrite history, run `gh pr ready` or resolve review threads.
    - Push the branch and open a pull request whose body starts with `Closes #<n>`, then lists how each acceptance criterion is met.
+   - Write every PR body or review body to a uniquely named file inside your own worktree, never to a shared scratchpad, so parallel agents can't overwrite each other's text.
    - Reply with the PR number, the `make check` result and anything left undone.
 
 4. **Review, on Opus.** The user asked for Opus here, so this overrides the Sonnet default. Spawn a `general-purpose` agent with `model: "opus"`. Its prompt holds the PR number, the issue's acceptance criteria and these instructions:
@@ -41,7 +42,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - Check each acceptance criterion: met, partly met or not met, with evidence.
    - Check correctness, the rules in `CONTRIBUTING.md` and the readability rules in `CLAUDE.md`.
    - Run `gh pr checks <pr>`. A failing check is a blocking finding.
-   - Post the review with `gh pr review <pr> --comment --body-file <file>`. Approving isn't possible, because the same account opened the PR.
+   - Post the review with `gh pr review <pr> --comment --body-file <file>`, where the file is uniquely named and inside your own worktree. Approving isn't possible, because the same account opened the PR.
    - Reply with a verdict, `merge` or `changes needed`, and the blocking findings.
 
 5. **Fix, at most twice.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. After two rounds, stop and hand the rest to the user.
