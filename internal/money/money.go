@@ -235,7 +235,11 @@ func (m Money) MarshalJSON() ([]byte, error) {
 	if m.cur.Code == "" {
 		return []byte("null"), nil
 	}
-	return json.Marshal(moneyJSON{m.Decimal(), m.cur.Code, m.Display()})
+	return json.Marshal(moneyJSON{
+		Amount:   m.Decimal(),
+		Currency: m.cur.Code,
+		Display:  m.Display(),
+	})
 }
 
 func (m *Money) UnmarshalJSON(b []byte) error {
