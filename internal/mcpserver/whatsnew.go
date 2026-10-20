@@ -72,8 +72,8 @@ func (h *handlers) readWhatsNew(
 func (h *handlers) getWhatsNewResult(
 	ctx context.Context, id string, fromRevision int64,
 ) (whatsNewResult, error) {
-	request := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
-	news, err := h.app.WhatsNew(ctx, id, request)
+	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
+	news, err := h.app.WhatsNew(ctx, id, req)
 	if err != nil {
 		return whatsNewResult{}, err
 	}
