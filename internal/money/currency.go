@@ -18,8 +18,10 @@ type Currency struct {
 	Symbol string
 	// SymbolFirst renders "€12" rather than "12 ₽".
 	SymbolFirst bool
-	// Crypto marks a cryptocurrency. Stable marks one pegged to a fiat currency.
-	Crypto, Stable bool
+	// Crypto marks a cryptocurrency.
+	Crypto bool
+	// Stable marks a cryptocurrency pegged to a fiat currency.
+	Stable bool
 }
 
 // Built-in table: ISO 4217 fiat currencies plus common cryptocurrencies. Extend here to support more currencies.
@@ -53,90 +55,18 @@ var currencies = map[string]Currency{
 
 	// Cryptocurrencies. Digits are what a budget needs, not the chain's full
 	// precision (ETH has 18): amounts with more places are rejected as usual.
-	"BTC": {
-		Code:   "BTC",
-		Digits: 8,
-		Symbol: "BTC",
-		Crypto: true,
-		Stable: false,
-	},
-	"ETH": {
-		Code:   "ETH",
-		Digits: 8,
-		Symbol: "ETH",
-		Crypto: true,
-		Stable: false,
-	},
-	"SOL": {
-		Code:   "SOL",
-		Digits: 8,
-		Symbol: "SOL",
-		Crypto: true,
-		Stable: false,
-	},
-	"LTC": {
-		Code:   "LTC",
-		Digits: 8,
-		Symbol: "LTC",
-		Crypto: true,
-		Stable: false,
-	},
-	"BNB": {
-		Code:   "BNB",
-		Digits: 8,
-		Symbol: "BNB",
-		Crypto: true,
-		Stable: false,
-	},
-	"XRP": {
-		Code:   "XRP",
-		Digits: 6,
-		Symbol: "XRP",
-		Crypto: true,
-		Stable: false,
-	},
-	"ADA": {
-		Code:   "ADA",
-		Digits: 6,
-		Symbol: "ADA",
-		Crypto: true,
-		Stable: false,
-	},
-	"TRX": {
-		Code:   "TRX",
-		Digits: 6,
-		Symbol: "TRX",
-		Crypto: true,
-		Stable: false,
-	},
-	"DOGE": {
-		Code:   "DOGE",
-		Digits: 8,
-		Symbol: "DOGE",
-		Crypto: true,
-		Stable: false,
-	},
-	"USDT": {
-		Code:   "USDT",
-		Digits: 6,
-		Symbol: "USDT",
-		Crypto: true,
-		Stable: true,
-	},
-	"USDC": {
-		Code:   "USDC",
-		Digits: 6,
-		Symbol: "USDC",
-		Crypto: true,
-		Stable: true,
-	},
-	"DAI": {
-		Code:   "DAI",
-		Digits: 6,
-		Symbol: "DAI",
-		Crypto: true,
-		Stable: true,
-	},
+	"BTC":  {Code: "BTC", Digits: 8, Symbol: "BTC", Crypto: true},
+	"ETH":  {Code: "ETH", Digits: 8, Symbol: "ETH", Crypto: true},
+	"SOL":  {Code: "SOL", Digits: 8, Symbol: "SOL", Crypto: true},
+	"LTC":  {Code: "LTC", Digits: 8, Symbol: "LTC", Crypto: true},
+	"BNB":  {Code: "BNB", Digits: 8, Symbol: "BNB", Crypto: true},
+	"XRP":  {Code: "XRP", Digits: 6, Symbol: "XRP", Crypto: true},
+	"ADA":  {Code: "ADA", Digits: 6, Symbol: "ADA", Crypto: true},
+	"TRX":  {Code: "TRX", Digits: 6, Symbol: "TRX", Crypto: true},
+	"DOGE": {Code: "DOGE", Digits: 8, Symbol: "DOGE", Crypto: true},
+	"USDT": {Code: "USDT", Digits: 6, Symbol: "USDT", Crypto: true, Stable: true},
+	"USDC": {Code: "USDC", Digits: 6, Symbol: "USDC", Crypto: true, Stable: true},
+	"DAI":  {Code: "DAI", Digits: 6, Symbol: "DAI", Crypto: true, Stable: true},
 }
 
 // Lookup returns the currency for an ISO code.
