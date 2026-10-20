@@ -149,31 +149,8 @@ func addTool[In any](s *mcp.Server, t *mcp.Tool, fn toolFunc[In]) {
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
-	if err = describeProperties[In](schema); err != nil {
-		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
-	}
 	t.InputSchema = schema
 	mcp.AddTool(s, t, toMCPHandler(fn))
-}
-
-type propertyDescriber interface {
-	propertyDescriptions() map[string]string
-}
-
-func describeProperties[In any](schema *jsonschema.Schema) error {
-	var input In
-	describer, ok := any(input).(propertyDescriber)
-	if !ok {
-		return nil
-	}
-	for name, description := range describer.propertyDescriptions() {
-		property, ok := schema.Properties[name]
-		if !ok {
-			return fmt.Errorf("description for unknown property %q", name)
-		}
-		property.Description = description
-	}
-	return nil
 }
 
 func toMCPHandler[In any](fn toolFunc[In]) mcp.ToolHandlerFor[In, any] {
@@ -210,29 +187,13 @@ type Ref struct {
 type CreateIn struct {
 	ID       string `json:"id" jsonschema:"new budget id: lowercase letters, digits, '-'"`
 	Name     string `json:"name,omitempty" jsonschema:"display name"`
-	Template string `json:"template,omitempty"`
-}
-
-func (CreateIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"template": "template name from list_templates; default blank",
-	}
+	Template string `json:"template,omitempty" jsonschema:"template name from list_templates; default blank"`
 }
 
 type ScheduleIn struct {
-	Every  *int    `json:"every,omitempty"`
-	Starts string  `json:"starts,omitempty"`
-	Ends   *string `json:"ends,omitempty"`
-}
-
-func (ScheduleIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"every": "period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off",
-		"starts": "first month YYYY-MM; default is the budget's start month (add_item) " +
-			"or unchanged (update_item)",
-		"ends": "last month YYYY-MM (inclusive). " +
-			"In update_item omit to keep the current end, or send an empty string to remove it",
-	}
+	Every  *int    `json:"every,omitempty" jsonschema:"period in months: 1 monthly (default), 3 quarterly, 12 yearly, 0 one-off"`
+	Starts string  `json:"starts,omitempty" jsonschema:"first month YYYY-MM; default is the budget's start month (add_item) or unchanged (update_item)"`
+	Ends   *string `json:"ends,omitempty" jsonschema:"last month YYYY-MM (inclusive). In update_item omit to keep the current end, or send an empty string to remove it"`
 }
 
 type AddItemIn struct {
@@ -261,36 +222,16 @@ type ItemRef struct {
 
 type CurrencyIn struct {
 	WriteRef
-	Code           string         `json:"code"`
-	PerBase        *money.Decimal `json:"per_base,omitempty"`
-	Source         *string        `json:"source,omitempty"`
-	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty"`
-	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty"`
-}
-
-func (CurrencyIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"code": "ISO code or crypto ticker, e.g. USD, BTC, USDT",
-		"per_base": "units of this currency per 1 base unit; " +
-			"setting it makes the rate manual. Omit to fetch the current rate",
-		"source": "where the rate comes from: " +
-			"manual, auto, ecb, currency-api or coingecko",
-		"transfer_fee_pct": "percent lost on every payment in this currency",
-		"cash_out_fee_pct": "percent lost when income in this currency is converted to base " +
-			"(exchange fee + spread)",
-	}
+	Code           string         `json:"code" jsonschema:"ISO code or crypto ticker, e.g. USD, BTC, USDT"`
+	PerBase        *money.Decimal `json:"per_base,omitempty" jsonschema:"units of this currency per 1 base unit; setting it makes the rate manual. Omit to fetch the current rate"`
+	Source         *string        `json:"source,omitempty" jsonschema:"where the rate comes from: manual, auto, ecb, currency-api or coingecko"`
+	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty" jsonschema:"percent lost on every payment in this currency"`
+	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty" jsonschema:"percent lost when income in this currency is converted to base (exchange fee + spread)"`
 }
 
 type RatesIn struct {
 	WriteRef
-	Codes []string `json:"codes,omitempty"`
-}
-
-func (RatesIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"codes": "currencies to refresh; omit for every currency whose source isn't manual. " +
-			"Naming a manual one switches it to auto",
-	}
+	Codes []string `json:"codes,omitempty" jsonschema:"currencies to refresh; omit for every currency whose source isn't manual. Naming a manual one switches it to auto"`
 }
 
 type SettingsIn struct {
@@ -300,24 +241,13 @@ type SettingsIn struct {
 
 type DebtIn struct {
 	WriteRef
-	Debt        string         `json:"debt"`
+	Debt        string         `json:"debt" jsonschema:"debt id or name; created if no debt matches"`
 	Currency    *string        `json:"currency,omitempty"`
 	Balance     *money.Decimal `json:"balance,omitempty"`
 	APRPct      *money.Decimal `json:"apr_pct,omitempty" jsonschema:"yearly interest in percent"`
-	MinPayment  *money.Decimal `json:"min_payment,omitempty"`
-	PayoffMonth *int           `json:"payoff_month,omitempty"`
-	PayoffFrom  *string        `json:"payoff_from,omitempty"`
-}
-
-func (DebtIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"debt":        "debt id or name; created if no debt matches",
-		"min_payment": "monthly minimum payment in the debt's currency",
-		"payoff_month": "pay the whole balance off in this month (0-based from start_month); " +
-			"-1 removes the payoff",
-		"payoff_from": "pot (id or name) that pays it off; " +
-			"empty string pays it from that month's own money",
-	}
+	MinPayment  *money.Decimal `json:"min_payment,omitempty" jsonschema:"monthly minimum payment in the debt's currency"`
+	PayoffMonth *int           `json:"payoff_month,omitempty" jsonschema:"pay the whole balance off in this month (0-based from start_month); -1 removes the payoff"`
+	PayoffFrom  *string        `json:"payoff_from,omitempty" jsonschema:"pot (id or name) that pays it off; empty string pays it from that month's own money"`
 }
 
 type OpsIn struct {
@@ -346,19 +276,9 @@ type HistoryIn struct {
 
 type UndoIn struct {
 	WriteRef
-	Revision int64 `json:"revision,omitempty"`
-	Force    bool  `json:"force,omitempty"`
-	Seen     int64 `json:"seen,omitempty"`
-}
-
-func (UndoIn) propertyDescriptions() map[string]string {
-	return map[string]string{
-		"revision": "revision of the change to undo (see history); omit for the latest change",
-		"force": "also undo every change made after it. " +
-			"Only with the person's explicit go-ahead",
-		"seen": "with force: the newest revision in the refusal the person agreed to. " +
-			"If more changes landed since, undo refuses again and lists them",
-	}
+	Revision int64 `json:"revision,omitempty" jsonschema:"revision of the change to undo (see history); omit for the latest change"`
+	Force    bool  `json:"force,omitempty" jsonschema:"also undo every change made after it. Only with the person's explicit go-ahead"`
+	Seen     int64 `json:"seen,omitempty" jsonschema:"with force: the newest revision in the refusal the person agreed to. If more changes landed since, undo refuses again and lists them"`
 }
 
 type ScenarioRef struct {
