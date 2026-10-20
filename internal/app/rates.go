@@ -134,7 +134,7 @@ func (a *App) RefreshRates(
 				continue
 			}
 			src := targets[i].Source
-			ops = append(ops, budget.NewOp("set_currency", u.Code, budget.CurrencyPatch{PerBase: &updates[i].New, Source: &src, RateDate: &updates[i].Date, RateFrom: &updates[i].From}))
+			ops = append(ops, budget.NewOp(budget.OpSetCurrency, u.Code, budget.CurrencyPatch{PerBase: &updates[i].New, Source: &src, RateDate: &updates[i].Date, RateFrom: &updates[i].From}))
 		}
 		return budget.Apply(cur, ops...)
 	}
@@ -269,6 +269,6 @@ func (a *App) SetCurrency(
 			patch.PerBase, patch.Source, patch.RateDate, patch.RateFrom = &q[0].New, &src, &q[0].Date, &q[0].From
 		}
 	}
-	setCurrency := budget.NewOp("set_currency", code, patch)
+	setCurrency := budget.NewOp(budget.OpSetCurrency, code, patch)
 	return a.Apply(ctx, origin, id, store.AnyRevision, []budget.Op{setCurrency})
 }

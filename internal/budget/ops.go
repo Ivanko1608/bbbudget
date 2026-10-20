@@ -17,7 +17,7 @@ import (
 //
 //	{"op":"set_item","target":"rent","value":{"amount":"800"}}
 type Op struct {
-	Op string `json:"op"`
+	Op OpKind `json:"op"`
 	// Target names the thing to change: an id, an exact name, or an
 	// unambiguous part of a name (case-insensitive). Currency code for *_currency.
 	Target string          `json:"target,omitempty"`
@@ -203,33 +203,60 @@ type CategoryPatch struct {
 	Color *string `json:"color,omitempty"`
 }
 
+// OpKind names one supported edit.
+type OpKind string
+
+const (
+	OpSetSettings      OpKind = "set_settings"
+	OpSetCurrency      OpKind = "set_currency"
+	OpRemoveCurrency   OpKind = "remove_currency"
+	OpAddCategory      OpKind = "add_category"
+	OpSetCategory      OpKind = "set_category"
+	OpRemoveCategory   OpKind = "remove_category"
+	OpAddItem          OpKind = "add_item"
+	OpSetItem          OpKind = "set_item"
+	OpRemoveItem       OpKind = "remove_item"
+	OpAddDebt          OpKind = "add_debt"
+	OpSetDebt          OpKind = "set_debt"
+	OpRemoveDebt       OpKind = "remove_debt"
+	OpAddPot           OpKind = "add_pot"
+	OpSetPot           OpKind = "set_pot"
+	OpRemovePot        OpKind = "remove_pot"
+	OpAddWithdrawal    OpKind = "add_withdrawal"
+	OpSetWithdrawal    OpKind = "set_withdrawal"
+	OpRemoveWithdrawal OpKind = "remove_withdrawal"
+	OpAddGoal          OpKind = "add_goal"
+	OpSetGoal          OpKind = "set_goal"
+	OpRemoveGoal       OpKind = "remove_goal"
+)
+
 // OpKinds documents every supported op and its value type.
-var OpKinds = map[string]string{
-	"set_settings":      "value: SettingsPatch (no target)",
-	"set_currency":      "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
-	"remove_currency":   "target: code (must be unused)",
-	"add_category":      "value: Category",
-	"set_category":      "target: category; value: CategoryPatch",
-	"remove_category":   "target: category (must be unused)",
-	"add_item":          "value: Item (id optional; schedule optional, default monthly)",
-	"set_item":          "target: item; value: ItemPatch (schedule: only the given fields change when using starts/ends)",
-	"remove_item":       "target: item",
-	"add_debt":          "value: Debt (id optional; payoff_month + payoff_from pot pay it off in full that month)",
-	"set_debt":          "target: debt; value: DebtPatch (payoff_month -1 removes the payoff; payoff_from \"\" pays it from the month's own money)",
-	"remove_debt":       "target: debt",
-	"add_pot":           "value: Pot (id optional; kind general|sinking|emergency, default general)",
-	"set_pot":           "target: pot; value: PotPatch",
-	"remove_pot":        "target: pot (must have no withdrawals; keep at least one pot)",
-	"add_withdrawal":    "value: Withdrawal{name, pot, amount, schedule} (id optional; base currency; schedule defaults to once in month 0)",
-	"set_withdrawal":    "target: withdrawal; value: WithdrawalPatch",
-	"remove_withdrawal": "target: withdrawal",
-	"add_goal":          "value: Goal{name, target}: same as add_pot with kind sinking (kept for older clients)",
-	"set_goal":          "target: pot; value: GoalPatch (kept for older clients)",
-	"remove_goal":       "target: pot (kept for older clients)",
+var OpKinds = map[OpKind]string{
+	OpSetSettings:      "value: SettingsPatch (no target)",
+	OpSetCurrency:      "target: code; value: CurrencyPatch (adds the currency if missing; per_base required then; a per_base without source makes the rate manual)",
+	OpRemoveCurrency:   "target: code (must be unused)",
+	OpAddCategory:      "value: Category",
+	OpSetCategory:      "target: category; value: CategoryPatch",
+	OpRemoveCategory:   "target: category (must be unused)",
+	OpAddItem:          "value: Item (id optional; schedule optional, default monthly)",
+	OpSetItem:          "target: item; value: ItemPatch (schedule: only the given fields change when using starts/ends)",
+	OpRemoveItem:       "target: item",
+	OpAddDebt:          "value: Debt (id optional; payoff_month + payoff_from pot pay it off in full that month)",
+	OpSetDebt:          "target: debt; value: DebtPatch (payoff_month -1 removes the payoff; payoff_from \"\" pays it from the month's own money)",
+	OpRemoveDebt:       "target: debt",
+	OpAddPot:           "value: Pot (id optional; kind general|sinking|emergency, default general)",
+	OpSetPot:           "target: pot; value: PotPatch",
+	OpRemovePot:        "target: pot (must have no withdrawals; keep at least one pot)",
+	OpAddWithdrawal:    "value: Withdrawal{name, pot, amount, schedule} (id optional; base currency; schedule defaults to once in month 0)",
+	OpSetWithdrawal:    "target: withdrawal; value: WithdrawalPatch",
+	OpRemoveWithdrawal: "target: withdrawal",
+	OpAddGoal:          "value: Goal{name, target}: same as add_pot with kind sinking (kept for older clients)",
+	OpSetGoal:          "target: pot; value: GoalPatch (kept for older clients)",
+	OpRemoveGoal:       "target: pot (kept for older clients)",
 }
 
 // NewOp builds an Op from a typed value.
-func NewOp(kind, target string, value any) Op {
+func NewOp(kind OpKind, target string, value any) Op {
 	op := Op{Op: kind, Target: target}
 	if value != nil {
 		b, err := json.Marshal(value)
@@ -244,7 +271,7 @@ func NewOp(kind, target string, value any) Op {
 // OpError is a rejected edit: bad input from the caller, never a system fault.
 type OpError struct {
 	Index int // 1-based position in the ops list
-	Op    string
+	Op    OpKind
 	Err   error
 }
 
@@ -290,7 +317,7 @@ func decodeStrict(raw json.RawMessage, v any) error {
 
 func applyOne(b *Budget, op Op) error {
 	switch op.Op {
-	case "set_settings":
+	case OpSetSettings:
 		var v SettingsPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -310,7 +337,7 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&b.ExtraToDebtPct, v.ExtraToDebtPct)
 		setIf(&b.DebtStrategy, v.DebtStrategy)
 
-	case "set_currency":
+	case OpSetCurrency:
 		var v CurrencyPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -329,7 +356,7 @@ func applyOne(b *Budget, op Op) error {
 		v.apply(&c)
 		b.Currencies = append(b.Currencies, c)
 
-	case "remove_currency":
+	case OpRemoveCurrency:
 		code := strings.ToUpper(strings.TrimSpace(op.Target))
 		for _, l := range b.Items {
 			if l.Currency == code {
@@ -347,7 +374,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Currencies = remove(b.Currencies, i)
 
-	case "add_category":
+	case OpAddCategory:
 		var v Category
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -360,7 +387,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Categories = append(b.Categories, v)
 
-	case "set_category":
+	case OpSetCategory:
 		var v CategoryPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -373,7 +400,7 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&b.Categories[i].Kind, v.Kind)
 		setIf(&b.Categories[i].Color, v.Color)
 
-	case "remove_category":
+	case OpRemoveCategory:
 		i, err := find("category", op.Target, ids(b.Categories, func(c Category) (string, string) { return c.ID, c.Label }))
 		if err != nil {
 			return err
@@ -385,7 +412,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Categories = remove(b.Categories, i)
 
-	case "add_item":
+	case OpAddItem:
 		var in ItemInput
 		if err := decodeStrict(op.Value, &in); err != nil {
 			return err
@@ -416,7 +443,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Items = append(b.Items, v)
 
-	case "set_item":
+	case OpSetItem:
 		var v ItemPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -447,14 +474,14 @@ func applyOne(b *Budget, op Op) error {
 			l.Pot = id
 		}
 
-	case "remove_item":
+	case OpRemoveItem:
 		i, err := find("item", op.Target, ids(b.Items, itemKey))
 		if err != nil {
 			return err
 		}
 		b.Items = remove(b.Items, i)
 
-	case "add_debt":
+	case OpAddDebt:
 		var v Debt
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -474,7 +501,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Debts = append(b.Debts, v)
 
-	case "set_debt":
+	case OpSetDebt:
 		var v DebtPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -507,7 +534,7 @@ func applyOne(b *Budget, op Op) error {
 			}
 		}
 
-	case "remove_debt":
+	case OpRemoveDebt:
 		i, err := find("debt", op.Target, ids(b.Debts, debtKey))
 		if err != nil {
 			return err
@@ -577,7 +604,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Pots = remove(b.Pots, i)
 
-	case "add_withdrawal":
+	case OpAddWithdrawal:
 		var v Withdrawal
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -592,7 +619,7 @@ func applyOne(b *Budget, op Op) error {
 		}
 		b.Withdrawals = append(b.Withdrawals, v)
 
-	case "set_withdrawal":
+	case OpSetWithdrawal:
 		var v WithdrawalPatch
 		if err := decodeStrict(op.Value, &v); err != nil {
 			return err
@@ -613,7 +640,7 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&w.Amount, v.Amount)
 		setIf(&w.Schedule, v.Schedule)
 
-	case "remove_withdrawal":
+	case OpRemoveWithdrawal:
 		i, err := find("withdrawal", op.Target, ids(b.Withdrawals, withdrawalKey))
 		if err != nil {
 			return err

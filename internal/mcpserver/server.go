@@ -7,8 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -279,14 +280,10 @@ type AdoptIn struct {
 }
 
 func opsHelp() string {
-	keys := make([]string, 0, len(budget.OpKinds))
-	for k := range budget.OpKinds {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	kinds := slices.Sorted(maps.Keys(budget.OpKinds))
 	var b strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&b, "\n- %s: %s", k, budget.OpKinds[k])
+	for _, kind := range kinds {
+		fmt.Fprintf(&b, "\n- %s: %s", kind, budget.OpKinds[kind])
 	}
 	return b.String() + `
 Value fields: Item{name, amount, currency, category, schedule, pot}, Debt{name, currency, balance, apr_pct, min_payment, payoff_month, payoff_from}, Pot{name, kind, balance, target, monthly}, Withdrawal{name, pot, amount, schedule}, Category{id, label, kind}, SettingsPatch{name, description, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy}, CurrencyPatch{per_base, transfer_fee_pct, cash_out_fee_pct, source}. Amounts are decimal strings.
@@ -320,14 +317,14 @@ func (h *handlers) register(s *mcp.Server) {
 
 	addWriteTool(s, "add_item", "Add an income or cost item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in AddItemIn) (any, error) {
 		l := budget.ItemInput{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
-		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("add_item", "", l))
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp(budget.OpAddItem, "", l))
 	})
 	addWriteTool(s, "update_item", "Change fields of one item; omitted fields (including schedule fields) stay as they are. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in UpdateItemIn) (any, error) {
 		p := budget.ItemPatch{Name: in.Name, Amount: in.Amount, Currency: in.Currency, Category: in.Category, Schedule: in.ScheduleIn.spec()}
-		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_item", in.Item, p))
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp(budget.OpSetItem, in.Item, p))
 	})
 	addWriteTool(s, "remove_item", "Delete one item. Returns what changed and its effect; set detail to full for the whole budget.", func(ctx context.Context, in ItemRef) (any, error) {
-		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("remove_item", in.Item, nil))
+		return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp(budget.OpRemoveItem, in.Item, nil))
 	})
 	addWriteTool(s, "set_currency", "Add a currency (fiat or crypto) or change its rate, rate source, transfer loss or cash-out loss. A new currency without per_base gets the current market rate fetched (source auto). Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in CurrencyIn) (any, error) {
@@ -365,7 +362,7 @@ func (h *handlers) register(s *mcp.Server) {
 		})
 	addWriteTool(s, "update_settings", "Change budget settings (name, start_month, months, overdraft_start, extra_to_debt_pct, debt_strategy). Savings balances live in pots: change them with apply_ops set_pot. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in SettingsIn) (any, error) {
-			return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp("set_settings", "", in.SettingsPatch))
+			return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp(budget.OpSetSettings, "", in.SettingsPatch))
 		})
 	addWriteTool(s, "set_debt", "Create or update a debt (credit card, loan). Creating needs currency (default base), balance, apr_pct and min_payment. payoff_month and payoff_from pay it off in full in one month, e.g. from a pot a sale goes into. Returns what changed and its effect; set detail to full for the whole budget.",
 		func(ctx context.Context, in DebtIn) (any, error) {

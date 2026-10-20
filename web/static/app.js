@@ -45,6 +45,13 @@ const S = {
 
 // ---------- API ----------
 
+const OPS = {
+  setItem: "set_item",
+  removeItem: "remove_item",
+  setCurrency: "set_currency",
+  setSettings: "set_settings",
+};
+
 async function api(method, path, body) {
   const headers = { "X-Requested-With": "bbbudget" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -1227,10 +1234,10 @@ function wiOps() {
     const value = parseDecimal(o.value ?? "");
     if (o.kind !== "remove" && value === null) throw new Error(t("scenarios.bad_value"));
     switch (o.kind) {
-      case "item": return { op: "set_item", target: o.target, value: { amount: value } };
-      case "rate": return { op: "set_currency", target: o.target, value: { per_base: value } };
-      case "extra": return { op: "set_settings", value: { extra_to_debt_pct: value } };
-      case "remove": return { op: "remove_item", target: o.target };
+      case "item": return { op: OPS.setItem, target: o.target, value: { amount: value } };
+      case "rate": return { op: OPS.setCurrency, target: o.target, value: { per_base: value } };
+      case "extra": return { op: OPS.setSettings, value: { extra_to_debt_pct: value } };
+      case "remove": return { op: OPS.removeItem, target: o.target };
     }
   });
 }
