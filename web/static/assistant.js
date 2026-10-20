@@ -84,16 +84,16 @@ async function readEvents(body) {
 
 async function postMessage(message) {
   const path = `/api/budgets/${encodeURIComponent(currentBudget())}/chat`;
-  const res = await fetch(path, {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Requested-With": "bbbudget" },
     body: JSON.stringify({ conversation, message }),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(data?.error || res.statusText);
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.error || response.statusText);
   }
-  await readEvents(res.body);
+  await readEvents(response.body);
 }
 
 function setBusy(busy) {

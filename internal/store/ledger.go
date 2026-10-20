@@ -23,14 +23,14 @@ func (s *FileStore) readLedger(id string) (Ledger, error) {
 	if err != nil {
 		return Ledger{}, err
 	}
-	var l Ledger
-	if err := json.Unmarshal(raw, &l); err != nil {
+	var ledger Ledger
+	if err := json.Unmarshal(raw, &ledger); err != nil {
 		return Ledger{}, fmt.Errorf("transactions of %s are corrupt: %w", id, err)
 	}
-	if l.Transactions == nil {
-		l.Transactions = []budget.Transaction{}
+	if ledger.Transactions == nil {
+		ledger.Transactions = []budget.Transaction{}
 	}
-	return l, nil
+	return ledger, nil
 }
 
 func (s *FileStore) Ledger(ctx context.Context, id string) (Ledger, error) {

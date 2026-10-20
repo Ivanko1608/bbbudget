@@ -12,6 +12,8 @@ import (
 	"bbbudget/internal/budget"
 )
 
+const defaultTransactionLimit = 50
+
 type LogTransactionsIn struct {
 	Ref
 	Transactions []budget.TransactionInput `json:"transactions" jsonschema:"what was actually spent or received. date YYYY-MM-DD; amount positive; currency defaults to base; category id (its kind says income or spending); item optional; external_id: a stable id for a statement row, so importing it again is skipped"`
@@ -80,41 +82,41 @@ type statusOut struct {
 	Flags            []string    `json:"flags"`
 }
 
-func toStatusOut(s *budget.MonthStatus) statusOut {
+func toStatusOut(status *budget.MonthStatus) statusOut {
 	out := statusOut{
-		Month:            s.Month,
-		Currency:         s.Spent.Currency().Code,
-		DaysInMonth:      s.DaysInMonth,
-		DaysElapsed:      s.DaysElapsed,
-		PlannedSpending:  s.PlannedSpending.String(),
-		Spent:            s.Spent.String(),
-		PlannedIncome:    s.PlannedIncome.String(),
-		Income:           s.Income.String(),
-		TransactionCount: s.TransactionCount,
+		Month:            status.Month,
+		Currency:         status.Spent.Currency().Code,
+		DaysInMonth:      status.DaysInMonth,
+		DaysElapsed:      status.DaysElapsed,
+		PlannedSpending:  status.PlannedSpending.String(),
+		Spent:            status.Spent.String(),
+		PlannedIncome:    status.PlannedIncome.String(),
+		Income:           status.Income.String(),
+		TransactionCount: status.TransactionCount,
 		Categories:       []statusRow{},
 		Flags:            []string{},
 	}
-	for _, c := range s.Categories {
-		out.Categories = append(out.Categories, newStatusRow(c))
+	for _, category := range status.Categories {
+		out.Categories = append(out.Categories, newStatusRow(category))
 	}
-	for _, f := range s.Flags {
-		out.Flags = append(out.Flags, plain(f.Text))
+	for _, flag := range status.Flags {
+		out.Flags = append(out.Flags, plain(flag.Text))
 	}
 	return out
 }
 
-func newStatusRow(c budget.CategoryStatus) statusRow {
+func newStatusRow(category budget.CategoryStatus) statusRow {
 	row := statusRow{
-		Category:  c.Category,
-		Label:     c.Label,
-		Kind:      c.Kind,
-		State:     c.State,
-		Planned:   c.Planned.String(),
-		Actual:    c.Actual.String(),
-		Remaining: c.Remaining.String(),
+		Category:  category.Category,
+		Label:     category.Label,
+		Kind:      category.Kind,
+		State:     category.State,
+		Planned:   category.Planned.String(),
+		Actual:    category.Actual.String(),
+		Remaining: category.Remaining.String(),
 	}
-	if c.Projected != nil {
-		row.Projected = c.Projected.String()
+	if category.Projected != nil {
+		row.Projected = category.Projected.String()
 	}
 	return row
 }
@@ -134,8 +136,8 @@ func (h *handlers) flagsByMonth(
 	ctx context.Context, id string, txs []budget.Transaction,
 ) (map[string][]string, error) {
 	months := map[string]bool{}
-	for _, t := range txs {
-		months[t.Date[:len("YYYY-MM")]] = true
+	for _, tx := range txs {
+		months[tx.Date[:len("YYYY-MM")]] = true
 	}
 	flags := map[string][]string{}
 	for _, month := range slices.Sorted(maps.Keys(months)) {
@@ -155,71 +157,83 @@ func (h *handlers) flagsByMonth(
 
 func (h *handlers) registerLedger(s *mcp.Server) {
 	addWriteTool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
-		func(ctx context.Context, in LogTransactionsIn) (any, error) {
-			id, err := h.id(in.Budget)
-			if err != nil {
-				return nil, err
-			}
-			logged, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
-			if err != nil {
-				return nil, err
-			}
-			flags, err := h.flagsByMonth(ctx, id, logged.Logged)
-			if err != nil {
-				return nil, err
-			}
-			return loggedResult{LogResult: logged, Flags: flags}, nil
-		})
+		h.logTransactions)
 	addReadTool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
-		func(ctx context.Context, in ListTransactionsIn) (any, error) {
-			id, err := h.id(in.Budget)
-			if err != nil {
-				return nil, err
-			}
-			if in.Limit <= 0 {
-				in.Limit = 50
-			}
-			filter := app.TransactionFilter{
-				From:     in.From,
-				To:       in.To,
-				Category: in.Category,
-				Batch:    in.Batch,
-				Limit:    in.Limit,
-			}
-			return h.app.ListTransactions(ctx, id, filter)
-		})
+		h.listTransactions)
 	addWriteTool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
-		func(ctx context.Context, in UpdateTransactionIn) (any, error) {
-			id, err := h.id(in.Budget)
-			if err != nil {
-				return nil, err
-			}
-			return h.app.UpdateTransaction(ctx, id, in.ID, in.TransactionPatch)
-		})
+		h.updateTransaction)
 	addWriteTool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
-		func(ctx context.Context, in DeleteTransactionsIn) (any, error) {
-			id, err := h.id(in.Budget)
-			if err != nil {
-				return nil, err
-			}
-			removed, err := h.deleteTransactions(ctx, id, in)
-			if err != nil {
-				return nil, err
-			}
-			return deletedResult{Deleted: removed}, nil
-		})
+		h.deleteTransactionsTool)
 	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
-		func(ctx context.Context, in StatusIn) (any, error) {
-			id, err := h.id(in.Budget)
-			if err != nil {
-				return nil, err
-			}
-			st, err := h.monthStatus(ctx, id, in.Month)
-			if err != nil {
-				return nil, err
-			}
-			return toStatusOut(st), nil
-		})
+		h.monthStatusTool)
+}
+
+func (h *handlers) logTransactions(ctx context.Context, in LogTransactionsIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	logged, err := h.app.LogTransactions(ctx, h.origin, id, in.Transactions)
+	if err != nil {
+		return nil, err
+	}
+	flags, err := h.flagsByMonth(ctx, id, logged.Logged)
+	if err != nil {
+		return nil, err
+	}
+	return loggedResult{LogResult: logged, Flags: flags}, nil
+}
+
+func (h *handlers) listTransactions(ctx context.Context, in ListTransactionsIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	if in.Limit <= 0 {
+		in.Limit = defaultTransactionLimit
+	}
+	filter := app.TransactionFilter{
+		From:     in.From,
+		To:       in.To,
+		Category: in.Category,
+		Batch:    in.Batch,
+		Limit:    in.Limit,
+	}
+	return h.app.ListTransactions(ctx, id, filter)
+}
+
+func (h *handlers) updateTransaction(ctx context.Context, in UpdateTransactionIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	return h.app.UpdateTransaction(ctx, id, in.ID, in.TransactionPatch)
+}
+
+func (h *handlers) deleteTransactionsTool(
+	ctx context.Context, in DeleteTransactionsIn,
+) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	removed, err := h.deleteTransactions(ctx, id, in)
+	if err != nil {
+		return nil, err
+	}
+	return deletedResult{Deleted: removed}, nil
+}
+
+func (h *handlers) monthStatusTool(ctx context.Context, in StatusIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	status, err := h.monthStatus(ctx, id, in.Month)
+	if err != nil {
+		return nil, err
+	}
+	return toStatusOut(status), nil
 }
 
 // deleteTransactions removes the ids or the batch in, whichever it names.

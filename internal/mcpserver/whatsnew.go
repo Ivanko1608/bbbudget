@@ -34,13 +34,7 @@ const whatsNewDescription = `What happened to the budget since your own last cha
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	addReadTool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
-		id, err := h.id(in.Budget)
-		if err != nil {
-			return nil, err
-		}
-		return h.whatsNew(ctx, id, in.FromRevision)
-	})
+	addReadTool(s, "whats_new", whatsNewDescription, h.whatsNewTool)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
 		URITemplate: "whats-new://{id}",
@@ -48,6 +42,14 @@ func (h *handlers) registerWhatsNew(s *mcp.Server) {
 		Description: "What changed in a budget since the assistant's last change, " +
 			"and this month's flags (the same as the whats_new tool).",
 	}, h.readWhatsNew)
+}
+
+func (h *handlers) whatsNewTool(ctx context.Context, in WhatsNewIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	return h.whatsNew(ctx, id, in.FromRevision)
 }
 
 func (h *handlers) readWhatsNew(
@@ -70,8 +72,8 @@ func (h *handlers) readWhatsNew(
 func (h *handlers) whatsNew(
 	ctx context.Context, id string, fromRevision int64,
 ) (whatsNewResult, error) {
-	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
-	news, err := h.app.WhatsNew(ctx, id, req)
+	request := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}
+	news, err := h.app.WhatsNew(ctx, id, request)
 	if err != nil {
 		return whatsNewResult{}, err
 	}
