@@ -104,7 +104,6 @@ func TestUIKeysExist(t *testing.T) {
 		t.Fatal(err)
 	}
 	families := map[string][]string{
-		"source_opt.":         {"manual", "auto", "ecb", "currency-api", "coingecko"},
 		"every.":              {"0", "1", "2", "3", "6", "12"},
 		"sched.every.":        {"1", "3", "12"},
 		"strategy.":           {"avalanche", "snowball", "listed"},

@@ -8,7 +8,8 @@ package money
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 )
 
 // Currency is an ISO 4217 code (or a crypto ticker) with its number of minor-unit digits.
@@ -89,12 +90,7 @@ func MustLookup(code string) Currency {
 
 // Codes lists supported currency codes, sorted.
 func Codes() []string {
-	out := make([]string, 0, len(currencies))
-	for k := range currencies {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(currencies))
 }
 
 // CryptoCodes lists supported cryptocurrency codes, sorted.

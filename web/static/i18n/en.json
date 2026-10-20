@@ -367,11 +367,11 @@
   "cur.help": "Payment loss is added to every payment in this currency. Cash-out loss is taken off income in it, such as fees for selling crypto. Typing a rate makes it manual.",
   "cur.in_use": "{code} is still used by {name}.",
 
-  "source_opt.manual": "Typed by hand",
-  "source_opt.auto": "Auto: ECB, else market",
-  "source_opt.ecb": "ECB (official)",
-  "source_opt.currency-api": "currency-api (fiat + crypto)",
-  "source_opt.coingecko": "CoinGecko (crypto)",
+  "rate_source_opt.manual": "Typed by hand",
+  "rate_source_opt.auto": "Auto: ECB, else market",
+  "rate_source_opt.ecb": "ECB (official)",
+  "rate_source_opt.currency-api": "currency-api (fiat + crypto)",
+  "rate_source_opt.coingecko": "CoinGecko (crypto)",
 
   "rate.worth": "{units} {code} = {value}",
   "rate.typed": "typed by hand",

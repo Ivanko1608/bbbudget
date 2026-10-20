@@ -34,12 +34,18 @@ func testApp(t *testing.T) *App {
 	}
 	a := New(st, nil)
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
-	ecb := rates.Fixed{ID: rates.ECB, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"}}
-	capi := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-08", Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"}}
-	a.Rates = map[string]rates.Provider{
-		rates.ECB: ecb, rates.CurrencyAPI: capi,
-		rates.CoinGecko: rates.Fixed{ID: rates.CoinGecko, Err: errors.New("HTTP 429")},
-		rates.Auto:      rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, capi}},
+	ecb := rates.Fixed{ID: budget.RateSourceECB, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "CHF": "0.9326"}}
+	capi := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Base: "EUR", Date: "2026-10-08", Rates: map[string]string{"USD": "1.12", "BTC": "1.35211580123e-05"}}
+	a.Rates = map[budget.RateSource]rates.Provider{
+		budget.RateSourceECB: ecb, budget.RateSourceCurrencyAPI: capi,
+		budget.RateSourceCoinGecko: rates.Fixed{
+			ID:  budget.RateSourceCoinGecko,
+			Err: errors.New("HTTP 429"),
+		},
+		budget.RateSourceAuto: rates.Chain{
+			ID:        budget.RateSourceAuto,
+			Providers: []rates.Provider{ecb, capi},
+		},
 	}
 	if _, err := a.Create(context.Background(), byTest, english, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
@@ -70,7 +76,7 @@ func currency(t *testing.T, a *App, code string) budget.CurrencyRate {
 func TestRegistryCoversEverySource(t *testing.T) {
 	reg := rates.Registry(nil, nil)
 	for _, s := range budget.RateSources {
-		if _, ok := reg[s]; !ok && s != budget.SourceManual {
+		if _, ok := reg[s]; !ok && s != budget.RateSourceManual {
 			t.Errorf("source %q has no provider", s)
 		}
 	}
@@ -88,11 +94,11 @@ func TestRefreshSkipsManualUnlessNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updates) != 1 || updates[0].Old.String() != "1.08" || updates[0].New.String() != "1.1186" || updates[0].From != rates.ECB {
+	if len(updates) != 1 || updates[0].Old.String() != "1.08" || updates[0].New.String() != "1.1186" || updates[0].From != budget.RateSourceECB {
 		t.Fatalf("updates: %+v", updates)
 	}
 	usd := currency(t, a, "USD")
-	if usd.Source != budget.SourceAuto || usd.RateDate != "2026-10-07" || usd.RateFrom != rates.ECB || usd.PerBase.String() != "1.1186" {
+	if usd.Source != budget.RateSourceAuto || usd.RateDate != "2026-10-07" || usd.RateFrom != budget.RateSourceECB || usd.PerBase.String() != "1.1186" {
 		t.Fatalf("saved: %+v", usd)
 	}
 	if v.Revision != rev+1 || currency(t, a, "CHF").PerBase.String() != "0.94" {
@@ -116,7 +122,7 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	}
 	btc := currency(t, a, "BTC")
 	// ECB has no BTC, so auto falls back; the rate keeps 10 significant digits.
-	if btc.PerBase.String() != "0.00001352115801" || btc.Source != budget.SourceAuto || btc.RateFrom != rates.CurrencyAPI {
+	if btc.PerBase.String() != "0.00001352115801" || btc.Source != budget.RateSourceAuto || btc.RateFrom != budget.RateSourceCurrencyAPI {
 		t.Fatalf("got %+v", btc)
 	}
 
@@ -132,14 +138,14 @@ func TestSetCurrencyFetchesCryptoRate(t *testing.T) {
 	if _, err := a.SetCurrency(ctx, byTest, "home", "ETH", typed); err != nil {
 		t.Fatal(err)
 	}
-	if source := currency(t, a, "ETH").Source; source != budget.SourceManual {
-		t.Fatalf("ETH source = %q, want %q", source, budget.SourceManual)
+	if source := currency(t, a, "ETH").Source; source != budget.RateSourceManual {
+		t.Fatalf("ETH source = %q, want %q", source, budget.RateSourceManual)
 	}
 }
 
 func TestPartialAndTotalFailure(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	gecko := rates.CoinGecko
+	gecko := budget.RateSourceCoinGecko
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", budget.CurrencyPatch{}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +177,11 @@ func TestPartialAndTotalFailure(t *testing.T) {
 
 func TestQuoteRejectsBadInput(t *testing.T) {
 	a := testApp(t)
-	for _, c := range []struct{ base, source, code string }{{"EUR", "google", "USD"}, {"EUR", "", "XXX"}, {"ZZZ", "", "USD"}} {
+	for _, c := range []struct {
+		base   string
+		source budget.RateSource
+		code   string
+	}{{"EUR", "google", "USD"}, {"EUR", "", "XXX"}, {"ZZZ", "", "USD"}} {
 		if _, err := a.Quote(context.Background(), c.base, c.source, []string{c.code}); !errors.Is(err, ErrBadInput) {
 			t.Errorf("%v: want ErrBadInput, got %v", c, err)
 		}
@@ -197,7 +207,7 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	typed := money.MustDecimal("1.05")
-	a.Rates[rates.Auto] = hook{a.Rates[rates.Auto], func() {
+	a.Rates[budget.RateSourceAuto] = hook{a.Rates[budget.RateSourceAuto], func() {
 		typeRate := setCurrency("USD", budget.CurrencyPatch{PerBase: &typed})
 		if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, typeRate); err != nil {
 			t.Error(err)
@@ -208,7 +218,7 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	usd := currency(t, a, "USD")
-	if usd.PerBase.String() != "1.05" || usd.Source != budget.SourceManual {
+	if usd.PerBase.String() != "1.05" || usd.Source != budget.RateSourceManual {
 		t.Fatalf("the typed rate was overwritten: %+v", usd)
 	}
 	for _, u := range updates {
@@ -216,14 +226,14 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 			t.Errorf("%s: %q", u.Code, u.Error)
 		}
 	}
-	if currency(t, a, "CHF").RateFrom != rates.ECB {
+	if currency(t, a, "CHF").RateFrom != budget.RateSourceECB {
 		t.Fatal("CHF should still update")
 	}
 }
 
 func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	withSettings(t, a, settings.Patch{DefaultRateSource: ptr("currency-api")})
+	withSettings(t, a, settings.Patch{DefaultRateSource: ptr(budget.RateSourceCurrencyAPI)})
 	before, _ := a.Get(ctx, "home")
 	preview, err := a.PreviewRates(ctx, "home", []string{"USD"})
 	if err != nil {
@@ -247,20 +257,20 @@ func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 
 func TestEmptySourceMeansDefault(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	empty := ""
+	empty := budget.RateSource("")
 	defaultSource := budget.CurrencyPatch{Source: &empty}
 	if _, err := a.SetCurrency(ctx, byTest, "home", "BTC", defaultSource); err != nil {
 		t.Fatal(err)
 	}
-	if c := currency(t, a, "BTC"); c.Source != budget.SourceAuto || c.IsManual() {
+	if c := currency(t, a, "BTC"); c.Source != budget.RateSourceAuto || c.IsManual() {
 		t.Fatalf("a fetched rate must not be saved as manual: %+v", c)
 	}
 }
 
 func TestOutageIsNotReportedAsUnsupported(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
-	ecb := a.Rates[rates.ECB]
-	a.Rates[rates.Auto] = rates.Chain{ID: rates.Auto, Providers: []rates.Provider{ecb, rates.Fixed{ID: rates.CurrencyAPI, Err: errors.New("HTTP 503")}}}
+	ecb := a.Rates[budget.RateSourceECB]
+	a.Rates[budget.RateSourceAuto] = rates.Chain{ID: budget.RateSourceAuto, Providers: []rates.Provider{ecb, rates.Fixed{ID: budget.RateSourceCurrencyAPI, Err: errors.New("HTTP 503")}}}
 	q, err := a.Quote(ctx, "EUR", "auto", []string{"USD", "BTC"})
 	if err != nil {
 		t.Fatalf("USD was fetched, so this is not a total failure: %v", err)

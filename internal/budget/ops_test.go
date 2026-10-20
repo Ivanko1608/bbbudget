@@ -10,7 +10,8 @@ import (
 	"bbbudget/internal/money"
 )
 
-func strp(s string) *string { return &s }
+func strp(s string) *string                { return &s }
+func rateSourcep(s RateSource) *RateSource { return &s }
 func decp(s string) *money.Decimal {
 	v := money.MustDecimal(s)
 	return &v

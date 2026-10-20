@@ -16,15 +16,16 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
+	"bbbudget/internal/budget"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 	"bbbudget/web"
 )
 
-func offlineRates() map[string]rates.Provider {
-	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
-	down := rates.Fixed{ID: rates.ECB, Err: errors.New("HTTP 503")}
-	return map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: down, rates.CoinGecko: down}
+func offlineRates() map[budget.RateSource]rates.Provider {
+	f := rates.Fixed{ID: budget.RateSourceCurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
+	down := rates.Fixed{ID: budget.RateSourceECB, Err: errors.New("HTTP 503")}
+	return map[budget.RateSource]rates.Provider{budget.RateSourceAuto: f, budget.RateSourceCurrencyAPI: f, budget.RateSourceECB: down, budget.RateSourceCoinGecko: down}
 }
 
 func TestRates(t *testing.T) {

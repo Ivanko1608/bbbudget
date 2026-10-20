@@ -16,7 +16,7 @@ func cryptoBudget() Budget {
 		PerBase:        d("0.00001"),
 		TransferFeePct: d("0"),
 		CashOutFeePct:  d("1"),
-		Source:         SourceAuto,
+		Source:         RateSourceAuto,
 	}}
 	b.Items = []Item{
 		{ID: "salary", Name: "Salary", Amount: d("2000"), Currency: "EUR",
@@ -127,7 +127,7 @@ func TestTypedRateBecomesManual(t *testing.T) {
 		t.Fatal(err)
 	}
 	typed := nb.Currencies[0]
-	eq(t, "typed source", typed.Source, SourceManual)
+	eq(t, "typed source", typed.Source, RateSourceManual)
 	eq(t, "typed rate date", typed.RateDate, "")
 	eq(t, "typed rate from", typed.RateFrom, "")
 	eq(t, "typed rate", typed.PerBase.String(), "0.000012")
@@ -135,14 +135,14 @@ func TestTypedRateBecomesManual(t *testing.T) {
 	// A fetched rate names its source and keeps it.
 	fetched := CurrencyPatch{
 		PerBase:  decp("0.000013"),
-		Source:   strp(SourceAuto),
+		Source:   rateSourcep(RateSourceAuto),
 		RateDate: strp("2026-10-08"),
 	}
 	nb, err = Apply(b, NewOp("set_currency", "BTC", fetched))
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "fetched source", nb.Currencies[0].Source, SourceAuto)
+	eq(t, "fetched source", nb.Currencies[0].Source, RateSourceAuto)
 	eq(t, "fetched rate date", nb.Currencies[0].RateDate, "2026-10-08")
 }
 
@@ -230,8 +230,8 @@ func TestManualRateHasNoFetchMetadata(t *testing.T) {
 	b := cryptoBudget()
 	b.Currencies[0].RateDate, b.Currencies[0].RateFrom = "2026-10-01", "ecb"
 	for _, p := range []CurrencyPatch{
-		{Source: strp(SourceManual)},
-		{PerBase: decp("0.00002"), Source: strp(SourceManual)},
+		{Source: rateSourcep(RateSourceManual)},
+		{PerBase: decp("0.00002"), Source: rateSourcep(RateSourceManual)},
 		{PerBase: decp("0.00002")},
 	} {
 		nb, err := Apply(b, NewOp("set_currency", "BTC", p))
