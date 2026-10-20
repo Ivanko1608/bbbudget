@@ -40,7 +40,7 @@ func requireContains(t *testing.T, what, out, want string) {
 	}
 }
 
-func requireRunning(t *testing.T, what string, err error, out string) {
+func requireSuccess(t *testing.T, what, out string, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", what, err, out)
@@ -56,10 +56,10 @@ func TestCLI(t *testing.T) {
 		t.Fatal("duplicate init succeeded")
 	}
 	out, err := runCLI(t, "list", "-dir", dir)
-	requireRunning(t, "list", err, out)
+	requireSuccess(t, "list", out, err)
 	requireContains(t, "list", out, "home")
 	out, err = runCLI(t, "report", "-dir", dir, "home")
-	requireRunning(t, "report", err, out)
+	requireSuccess(t, "report", out, err)
 	requireContains(t, "report", out, "€10,409.88")
 	// Flags may follow positionals; YAML imports keep exact amounts.
 	file := filepath.Join(t.TempDir(), "mine.yaml")
@@ -73,13 +73,13 @@ func TestCLI(t *testing.T) {
 		t.Fatalf("import: %v %s", err, out)
 	}
 	out, err = runCLI(t, "report", "mine", "-dir", dir)
-	requireRunning(t, "report after import", err, out)
+	requireSuccess(t, "report after import", out, err)
 	requireContains(t, "report after import", out, "£1,050.10")
 	tplDir := t.TempDir()
 	starter := "description: My starter\nbase_currency: EUR\ncategories: [{label: Living}]\n"
 	os.WriteFile(filepath.Join(tplDir, "starter.yaml"), []byte(starter), 0o600)
 	out, err = runCLI(t, "templates", "-templates", tplDir)
-	requireRunning(t, "templates", err, out)
+	requireSuccess(t, "templates", out, err)
 	requireContains(t, "templates", out, "starter")
 	requireContains(t, "templates", out, "example")
 	initStarter := []string{"init", "s", "-template", "starter", "-templates", tplDir, "-dir", dir}
@@ -103,14 +103,14 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	}
 
 	out, err := runCLI(t, "settings", "-settings", conf)
-	requireRunning(t, "defaults", err, out)
+	requireSuccess(t, "defaults", out, err)
 	requireContains(t, "defaults", out, "default_rate_source  auto")
 	requireContains(t, "defaults", out, "coingecko_api_key    not set")
 	out, err = runCLI(t, "settings", "-settings", conf,
 		"-set", "auto_refresh=daily",
 		"-set", "fetch_rates=false",
 		"-set", "coingecko_api_key=CG-x")
-	requireRunning(t, "set", err, out)
+	requireSuccess(t, "set", out, err)
 	requireContains(t, "set", out, "auto_refresh         daily")
 	requireContains(t, "set", out, "fetch_rates          false")
 	requireContains(t, "set", out, "coingecko_api_key    set")
@@ -138,7 +138,7 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	// Rates: nothing to do while every rate is manual; offline mode refuses a fetch
 	// without touching the network.
 	out, err = runCLI(t, "rates", "home", "-dir", dir, "-settings", conf)
-	requireRunning(t, "all manual", err, out)
+	requireSuccess(t, "all manual", out, err)
 	requireContains(t, "all manual", out, "every rate is manual")
 	out, err = runCLI(t, "rates", "home", "-only", "usd", "-dir", dir, "-settings", conf)
 	if err == nil {

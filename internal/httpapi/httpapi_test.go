@@ -208,10 +208,10 @@ func TestOpsWhatIfScenarios(t *testing.T) {
 	if endSavings(v) != "15509.88" { // +5100.00
 		t.Fatalf("ops: %s", endSavings(v))
 	}
-	// ambiguous
-	c.do("POST", "/api/budgets/home/ops", setItemAmountOps("school", "1"), 400)
-	// no match inside an op
-	c.do("POST", "/api/budgets/home/ops", setItemAmountOps("nope", "1"), 400)
+	ambiguousTarget := setItemAmountOps("school", "1")
+	c.do("POST", "/api/budgets/home/ops", ambiguousTarget, 400)
+	unmatchedTarget := setItemAmountOps("nope", "1")
+	c.do("POST", "/api/budgets/home/ops", unmatchedTarget, 400)
 	staleRemoval := `{"revision":1,"ops":[{"op":"remove_item","target":"rent"}]}`
 	c.do("POST", "/api/budgets/home/ops", staleRemoval, 409)
 
@@ -254,19 +254,29 @@ func TestGuards(t *testing.T) {
 	// DNS rebinding: a foreign Host is refused even for reads.
 	foreignHost := func(r *http.Request) { r.Host = "evil.example" }
 	w := c.req("GET", "/api/budgets", "", foreignHost)
-	eq(t, "foreign host status", w.Code, 403)
+	if w.Code != 403 {
+		t.Errorf("foreign host: %d", w.Code)
+	}
 	ipv6Loopback := func(r *http.Request) { r.Host = "[::1]:8080" }
 	w = c.req("GET", "/api/budgets", "", ipv6Loopback)
-	eq(t, "ipv6 loopback status", w.Code, 200)
+	if w.Code != 200 {
+		t.Errorf("ipv6 loopback: %d", w.Code)
+	}
 	// Cross-site form post (text/plain needs no CORS preflight): refused.
 	w = c.req("POST", "/api/budgets/home/ops", `{"ops":[]}`, sendAsPlainText)
-	eq(t, "text/plain post status", w.Code, 415)
+	if w.Code != 415 {
+		t.Errorf("text/plain post: %d", w.Code)
+	}
 	withoutMarker := func(r *http.Request) { r.Header.Del("X-Requested-With") }
 	w = c.req("DELETE", "/api/budgets/home", "", withoutMarker)
-	eq(t, "bare DELETE status", w.Code, 403)
+	if w.Code != 403 {
+		t.Errorf("bare DELETE: %d", w.Code)
+	}
 	big := `{"id":"x","name":"` + strings.Repeat("a", 2<<20) + `"}`
 	w = c.req("POST", "/api/budgets", big, nil)
-	eq(t, "huge body status", w.Code, 413)
+	if w.Code != 413 {
+		t.Errorf("huge body: %d", w.Code)
+	}
 }
 
 func TestStaticAndMeta(t *testing.T) {
@@ -359,7 +369,8 @@ func TestSettingsPageIsServed(t *testing.T) {
 				Icons   []struct{ Src, Purpose string }
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
-				t.Fatal(err)
+				t.Errorf("manifest: %v", err)
+				continue
 			}
 			if m.Display != "standalone" {
 				t.Errorf("manifest display = %q, want standalone", m.Display)
