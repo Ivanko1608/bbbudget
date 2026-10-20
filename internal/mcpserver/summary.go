@@ -52,7 +52,7 @@ type Summary struct {
 // ("2027-03") and counts behind the text.
 type insightRow struct {
 	ID   string         `json:"id"`
-	Tone string         `json:"tone"`
+	Tone budget.Tone    `json:"tone"`
 	Text string         `json:"text"`
 	Key  string         `json:"key"`
 	Args map[string]any `json:"args,omitempty"`
