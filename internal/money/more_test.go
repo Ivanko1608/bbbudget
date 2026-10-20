@@ -172,3 +172,16 @@ func TestCrypto(t *testing.T) {
 		t.Fatal(codes)
 	}
 }
+
+func TestDecimalAbs(t *testing.T) {
+	negative := MustDecimal("-1.5")
+
+	got := negative.Abs()
+
+	if got.String() != "1.5" {
+		t.Fatalf("Abs = %s", got)
+	}
+	if negative.String() != "-1.5" {
+		t.Fatalf("Abs changed its receiver: %s", negative)
+	}
+}

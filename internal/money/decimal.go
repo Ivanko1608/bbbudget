@@ -93,6 +93,9 @@ func (d Decimal) Rat() *big.Rat {
 	return new(big.Rat).Set(d.r)
 }
 
+// Abs returns the absolute value.
+func (d Decimal) Abs() Decimal { return Decimal{new(big.Rat).Abs(d.Rat())} }
+
 func (d Decimal) Sign() int {
 	if d.r == nil {
 		return 0
