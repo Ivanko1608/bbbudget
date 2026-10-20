@@ -4,6 +4,8 @@ Each `*.yaml` file here is a conversation with the in-app assistant and checks o
 
 `make eval` runs every case against a real model (the one your settings choose, or `ANTHROPIC_API_KEY`) and prints a pass rate. It costs money and isn't deterministic, so it is never part of `make check` or CI. `EVAL_RUNS=5 make eval` repeats each case five times.
 
+`make check` replays each case's `reference` (tool calls a correct assistant could make) through the same loop and tools with a scripted model. That proves every case can be passed and its checks are right, and catches a tool change that breaks one.
+
 Every case starts from a fresh budget made from a built-in template, on a fixed date (8 October 2026).
 
 ```yaml
@@ -11,6 +13,9 @@ name: raise-rent                     # defaults to the file name
 template: example                    # the budget to start from (fictional)
 turns:                               # what the person says, in order
   - Raise rent to 1200
+reference:                           # one list of tool calls per turn
+  - - {tool: update_item, input: {item: rent, amount: "1200"}}
+reference_reply: Done.               # what the scripted model says last (default "Done.")
 expect:
   saved: true                        # did anything get written?
   writes_by: assistant               # every write attributed to the assistant

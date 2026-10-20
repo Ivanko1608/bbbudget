@@ -62,7 +62,17 @@ type Case struct {
 	Name     string   `yaml:"name"`
 	Template string   `yaml:"template"`
 	Turns    []string `yaml:"turns"`
-	Expect   Expect   `yaml:"expect"`
+	// Reference is, per turn, the tool calls a correct assistant could make.
+	Reference [][]ReferenceCall `yaml:"reference"`
+	// ReferenceReply is what the reference assistant says after its calls.
+	ReferenceReply string `yaml:"reference_reply"`
+	Expect         Expect `yaml:"expect"`
+}
+
+// ReferenceCall is one tool call in a reference solution.
+type ReferenceCall struct {
+	Tool  string         `yaml:"tool"`
+	Input map[string]any `yaml:"input"`
 }
 
 // Expect are the checks; unset ones are skipped.
@@ -108,6 +118,10 @@ func loadCase(file string) (Case, error) {
 	}
 	if len(loaded.Turns) == 0 {
 		return Case{}, errors.New("no turns")
+	}
+	if len(loaded.Reference) != len(loaded.Turns) {
+		return Case{}, fmt.Errorf("reference needs one list of calls per turn (%d turns, %d lists)",
+			len(loaded.Turns), len(loaded.Reference))
 	}
 	if loaded.Name == "" {
 		loaded.Name = strings.TrimSuffix(filepath.Base(file), ".yaml")
