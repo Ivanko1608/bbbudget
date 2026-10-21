@@ -12,6 +12,8 @@ import (
 // to keep ten significant digits.
 const MaxScale = 18
 
+const maxIntegerDigits = 30
+
 // Decimal is an exact, immutable decimal number used for exchange rates,
 // percentages and as the wire format of amounts. The zero value is 0.
 // It serialises as a JSON string ("1.95") so no JSON parser can turn it into
@@ -41,7 +43,7 @@ func ParseDecimal(s string) (Decimal, error) {
 	if len(frac) > MaxScale {
 		return Decimal{}, fmt.Errorf("decimal %q has more than %d fractional digits", s, MaxScale)
 	}
-	if len(intPart) > 30 {
+	if len(intPart) > maxIntegerDigits {
 		return Decimal{}, fmt.Errorf("decimal %q is too large", s)
 	}
 	r, ok := new(big.Rat).SetString(t)
