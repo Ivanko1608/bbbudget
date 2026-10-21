@@ -31,14 +31,15 @@ import (
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
-// SourceBuiltin is the Source of templates embedded in the binary.
-const SourceBuiltin = "builtin"
+// builtinDir is the embedded directory, and the start of a built-in
+// template's Source.
+const builtinDir = "builtin"
 
 // Template is a validated budget document plus where it came from.
 type Template struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// Source is SourceBuiltin or the file path it was loaded from.
+	// Source is the file it was loaded from, under builtin/ for the embedded ones.
 	Source string        `json:"source"`
 	Doc    budget.Budget `json:"-"`
 }
@@ -51,7 +52,7 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // Builtin returns a registry with the embedded templates only.
 func Builtin() *Registry {
 	r := &Registry{byName: map[string]Template{}}
-	if err := r.loadFS(builtinFS, "builtin", SourceBuiltin); err != nil {
+	if err := r.loadFS(builtinFS, builtinDir, builtinDir); err != nil {
 		panic(err) // embedded files are covered by tests
 	}
 	return r
@@ -71,7 +72,7 @@ func Load(dir string) (*Registry, error) {
 	return r, r.loadFS(os.DirFS(dir), ".", dir)
 }
 
-func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
+func (r *Registry) loadFS(fsys fs.FS, root, sourceDir string) error {
 	entries, err := fs.ReadDir(fsys, root)
 	if err != nil {
 		return err
@@ -83,10 +84,7 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), path.Ext(e.Name()))
-		source := SourceBuiltin
-		if label != SourceBuiltin {
-			source = filepath.Join(label, e.Name())
-		}
+		source := filepath.Join(sourceDir, e.Name())
 		t, err := parse(fsys, path.Join(root, e.Name()), name, ext[1:], source)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("template %s: %w", source, err))
