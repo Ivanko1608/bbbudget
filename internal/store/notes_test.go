@@ -68,7 +68,7 @@ func TestNotesSurviveReopeningTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.AddNote(ctx, "moving house in March", NoteSourceChat); err != nil {
+	if _, err = first.AddNote(ctx, "moving house in March", NoteSourceChat); err != nil {
 		t.Fatal(err)
 	}
 
