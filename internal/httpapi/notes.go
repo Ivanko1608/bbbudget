@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"bbbudget/internal/app"
 	"bbbudget/internal/store"
 )
 
@@ -34,13 +35,14 @@ func (s *server) deleteNote(w http.ResponseWriter, r *http.Request) {
 // failNote maps the note errors to statuses and leaves everything else to fail.
 func (s *server) failNote(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, store.ErrNoteNotFound):
+	case errors.Is(err, store.ErrNoteNotFound), errors.Is(err, app.ErrNotesUnavailable):
 		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrTooManyNotes):
 		writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.Is(err, store.ErrNoteEmpty),
 		errors.Is(err, store.ErrNoteTooLong),
-		errors.Is(err, store.ErrBadNoteSource):
+		errors.Is(err, store.ErrBadNoteSource),
+		errors.Is(err, store.ErrBadNoteID):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.fail(w, r, err)

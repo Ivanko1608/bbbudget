@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -21,9 +22,12 @@ import (
 type NoteSource string
 
 const (
-	NoteSourceChat            NoteSource = "chat"             // the person's own chat message
-	NoteSourceStatementImport NoteSource = "statement_import" // a pasted or imported statement
-	NoteSourceConnector       NoteSource = "connector"        // another app, over the connector
+	// NoteSourceChat is the person's own chat message.
+	NoteSourceChat NoteSource = "chat"
+	// NoteSourceStatementImport is a pasted or imported statement.
+	NoteSourceStatementImport NoteSource = "statement_import"
+	// NoteSourceConnector is another app, over the connector.
+	NoteSourceConnector NoteSource = "connector"
 )
 
 var noteSources = []NoteSource{NoteSourceChat, NoteSourceStatementImport, NoteSourceConnector}
@@ -38,6 +42,7 @@ const (
 
 var (
 	ErrNoteNotFound  = errors.New("note not found")
+	ErrBadNoteID     = errors.New("note id must be 16 lowercase hex characters")
 	ErrNoteEmpty     = errors.New("a note needs some text")
 	ErrNoteTooLong   = fmt.Errorf("a note is at most %d characters", MaxNoteRunes)
 	ErrTooManyNotes  = fmt.Errorf("at most %d notes can be kept; delete one first", MaxNotes)
@@ -83,9 +88,9 @@ func (s *FileStore) AddNote(_ context.Context, text string, source NoteSource) (
 	}
 	note := Note{ID: id, Text: text, Source: source, CreatedAt: s.now().UTC()}
 	err = s.withLock(true, func() error {
-		notes, err := s.readNotes()
-		if err != nil {
-			return err
+		notes, readErr := s.readNotes()
+		if readErr != nil {
+			return readErr
 		}
 		if len(notes) >= MaxNotes {
 			return ErrTooManyNotes
@@ -107,6 +112,9 @@ func (s *FileStore) ListNotes(_ context.Context) (notes []Note, err error) {
 }
 
 func (s *FileStore) DeleteNote(_ context.Context, id string) error {
+	if !noteIDPattern.MatchString(id) {
+		return ErrBadNoteID
+	}
 	return s.withLock(true, func() error {
 		notes, err := s.readNotes()
 		if err != nil {
@@ -119,6 +127,8 @@ func (s *FileStore) DeleteNote(_ context.Context, id string) error {
 		return s.writeNotes(slices.Delete(notes, index, index+1))
 	})
 }
+
+var noteIDPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func validateNote(text string, source NoteSource) error {
 	switch {
@@ -149,8 +159,8 @@ func (s *FileStore) readNotes() ([]Note, error) {
 		return nil, fmt.Errorf("reading notes: %w", err)
 	}
 	var doc notesDocument
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("notes file is corrupt: %w", err)
+	if unmarshalErr := json.Unmarshal(raw, &doc); unmarshalErr != nil {
+		return nil, fmt.Errorf("notes file is corrupt: %w", unmarshalErr)
 	}
 	return doc.Notes, nil
 }
@@ -160,5 +170,8 @@ func (s *FileStore) writeNotes(notes []Note) error {
 	if err != nil {
 		return fmt.Errorf("encoding notes: %w", err)
 	}
-	return s.writeFile(s.notesPath(), append(raw, '\n'))
+	if err := s.writeFile(s.notesPath(), append(raw, '\n')); err != nil {
+		return fmt.Errorf("writing notes: %w", err)
+	}
+	return nil
 }

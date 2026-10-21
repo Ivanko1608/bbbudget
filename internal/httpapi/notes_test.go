@@ -26,7 +26,6 @@ func setupNotes(t *testing.T) noteClient {
 		t.Fatal(err)
 	}
 	a := app.New(st, nil)
-	a.Notes = st
 	return noteClient{client: &client{t, New(a, Options{})}, app: a}
 }
 
@@ -68,7 +67,7 @@ func TestListNotesShowsTextSourceAndDate(t *testing.T) {
 	eq(t, "notes", len(raw.Notes), 1)
 	eq(t, "id", raw.Notes[0]["id"], any(added.ID))
 	eq(t, "text", raw.Notes[0]["text"], "works as a freelance designer")
-	eq(t, "source", raw.Notes[0]["source"], "statement_import")
+	eq(t, "source", raw.Notes[0]["source"], any(string(store.NoteSourceStatementImport)))
 	eq(t, "date", raw.Notes[0]["created_at"], any(added.CreatedAt.Format(time.RFC3339Nano)))
 }
 
@@ -103,12 +102,50 @@ func TestDeleteNoteNeedsTheRequestedWithHeader(t *testing.T) {
 	eq(t, "notes left", len(c.listNotes()), 1)
 }
 
-func TestDeleteUnknownNoteIsNotFound(t *testing.T) {
-	c := setupNotes(t)
+func TestDeleteNoteIsRefusedOrNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "well-formed id that does not exist", id: "0123456789abcdef", want: http.StatusNotFound},
+		{name: "too short", id: "nope", want: http.StatusBadRequest},
+		{name: "upper case", id: "0123456789ABCDEF", want: http.StatusBadRequest},
+		{name: "not hex", id: "0123456789abcdeg", want: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := setupNotes(t)
 
-	w := c.req("DELETE", "/api/notes/nope", "", nil)
+			w := c.req("DELETE", "/api/notes/"+tt.id, "", nil)
 
-	eq(t, "status", w.Code, http.StatusNotFound)
+			eq(t, "status", w.Code, tt.want)
+		})
+	}
+}
+
+func TestAnAppFromNewServesNotes(t *testing.T) {
+	st, err := store.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &client{t, New(app.New(st, nil), Options{})}
+
+	w := c.req("GET", "/api/notes", "", nil)
+
+	eq(t, "status", w.Code, http.StatusOK)
+}
+
+type budgetsOnly struct{ store.Store }
+
+func TestAnAppWithoutNotesAnswersNotFound(t *testing.T) {
+	c := &client{t, New(app.New(budgetsOnly{}, nil), Options{})}
+
+	list := c.req("GET", "/api/notes", "", nil)
+	remove := c.req("DELETE", "/api/notes/0123456789abcdef", "", nil)
+
+	eq(t, "list status", list.Code, http.StatusNotFound)
+	eq(t, "delete status", remove.Code, http.StatusNotFound)
 }
 
 func TestNotesOfOneAppAreNotVisibleToAnother(t *testing.T) {
@@ -126,7 +163,7 @@ func TestNotesOfOneAppAreNotVisibleToAnother(t *testing.T) {
 type failingNotes struct{ store.NoteStore }
 
 func (failingNotes) ListNotes(context.Context) ([]store.Note, error) {
-	return nil, errors.New("open /home/someone/.local/share/bbbudget/.notes.json: disk on fire")
+	return nil, errors.New("open /srv/bbbudget/.notes.json: disk on fire")
 }
 
 func TestListNotesHidesInternalErrors(t *testing.T) {
@@ -136,8 +173,7 @@ func TestListNotesHidesInternalErrors(t *testing.T) {
 	w := c.req("GET", "/api/notes", "", nil)
 
 	eq(t, "status", w.Code, http.StatusInternalServerError)
-	eq(t, "leaks the path", strings.Contains(w.Body.String(), "/home/"), false)
-	eq(t, "leaks the cause", strings.Contains(w.Body.String(), "fire"), false)
+	eq(t, "body", strings.TrimSpace(w.Body.String()), `{"error":"internal error"}`)
 }
 
 func TestNoteErrorsMapToStatuses(t *testing.T) {
@@ -150,6 +186,8 @@ func TestNoteErrorsMapToStatuses(t *testing.T) {
 		{store.ErrNoteTooLong, http.StatusBadRequest},
 		{store.ErrNoteEmpty, http.StatusBadRequest},
 		{store.ErrBadNoteSource, http.StatusBadRequest},
+		{store.ErrBadNoteID, http.StatusBadRequest},
+		{app.ErrNotesUnavailable, http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.err.Error(), func(t *testing.T) {

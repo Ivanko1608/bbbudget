@@ -105,12 +105,22 @@ func TestAddNoteRefusesBadNotes(t *testing.T) {
 		source NoteSource
 		want   error
 	}{
-		{"empty", "", NoteSourceChat, ErrNoteEmpty},
-		{"only spaces", "   ", NoteSourceChat, ErrNoteEmpty},
-		{"201 characters", strings.Repeat("a", MaxNoteRunes+1), NoteSourceChat, ErrNoteTooLong},
-		{"201 runes", strings.Repeat("я", MaxNoteRunes+1), NoteSourceChat, ErrNoteTooLong},
-		{"unknown source", "hello", NoteSource("telepathy"), ErrBadNoteSource},
-		{"no source", "hello", NoteSource(""), ErrBadNoteSource},
+		{name: "empty", text: "", source: NoteSourceChat, want: ErrNoteEmpty},
+		{name: "only spaces", text: "   ", source: NoteSourceChat, want: ErrNoteEmpty},
+		{
+			name:   "201 characters",
+			text:   strings.Repeat("a", MaxNoteRunes+1),
+			source: NoteSourceChat,
+			want:   ErrNoteTooLong,
+		},
+		{
+			name:   "201 runes",
+			text:   strings.Repeat("я", MaxNoteRunes+1),
+			source: NoteSourceChat,
+			want:   ErrNoteTooLong,
+		},
+		{name: "unknown source", text: "hello", source: NoteSource("telepathy"), want: ErrBadNoteSource},
+		{name: "no source", text: "hello", source: NoteSource(""), want: ErrBadNoteSource},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,7 +208,7 @@ func TestDeleteNoteRemovesOnlyThatNote(t *testing.T) {
 func TestDeleteNoteRefusesAnUnknownNote(t *testing.T) {
 	s := newNoteStore(t)
 
-	err := s.DeleteNote(ctx, "nope")
+	err := s.DeleteNote(ctx, "0123456789abcdef")
 
 	if !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("err = %v, want %v", err, ErrNoteNotFound)
@@ -216,7 +226,7 @@ func TestNotesOfOneStoreAreNotInAnother(t *testing.T) {
 	deleteErr := yours.DeleteNote(ctx, note.ID)
 
 	checkEqual(t, "notes seen by the other store", len(listNotes(t, yours)), 0)
-	checkEqual(t, "other store can delete it", errors.Is(deleteErr, ErrNoteNotFound), true)
+	checkEqual(t, "other store refuses it as not found", errors.Is(deleteErr, ErrNoteNotFound), true)
 	checkEqual(t, "notes of the first store", len(listNotes(t, mine)), 1)
 }
 
@@ -243,4 +253,19 @@ func TestConcurrentAddsNeverPassTheLimit(t *testing.T) {
 
 	checkEqual(t, "refused", refused, 10)
 	checkEqual(t, "kept", len(listNotes(t, s)), MaxNotes)
+}
+
+func TestDeleteNoteRefusesAMalformedID(t *testing.T) {
+	ids := []string{"", "nope", "0123456789ABCDEF", "0123456789abcde", "../budgets/home"}
+	for _, id := range ids {
+		t.Run(id, func(t *testing.T) {
+			s := newNoteStore(t)
+
+			err := s.DeleteNote(ctx, id)
+
+			if !errors.Is(err, ErrBadNoteID) {
+				t.Fatalf("err = %v, want %v", err, ErrBadNoteID)
+			}
+		})
+	}
 }

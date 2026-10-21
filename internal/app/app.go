@@ -40,6 +40,9 @@ func New(s store.Store, t *templates.Registry) *App {
 		t = templates.Builtin()
 	}
 	a := &App{Store: s, Templates: t, Now: time.Now}
+	if notes, ok := s.(store.NoteStore); ok {
+		a.Notes = notes
+	}
 	a.Rates = rates.Registry(&http.Client{Timeout: 20 * time.Second}, func() string {
 		st, _ := a.Settings()
 		return st.CoinGeckoAPIKey
