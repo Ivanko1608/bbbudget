@@ -120,41 +120,40 @@ func (a *App) Quote(
 func (a *App) RefreshRates(
 	ctx context.Context, origin store.Origin, id string, codes []string,
 ) (*View, []RateUpdate, error) {
-	got, err := a.fetchRates(ctx, id, codes)
-	r, targets, updates := got.record, got.targets, got.updates
-	if err != nil || len(targets) == 0 {
+	fetched, err := a.fetchRates(ctx, id, codes)
+	if err != nil || len(fetched.targets) == 0 {
 		if err != nil {
-			return nil, updates, err
+			return nil, fetched.updates, err
 		}
-		v, err := view(r)
-		return v, updates, err
+		v, err := view(fetched.record)
+		return v, fetched.updates, err
 	}
-	fetched := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
-	for _, c := range r.Budget.Currencies {
-		fetched[c.Code] = c
+	original := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
+	for _, c := range fetched.record.Budget.Currencies {
+		original[c.Code] = c
 	}
 	var skipped map[string]bool
 	updateRates := func(cur budget.Budget) (budget.Budget, error) {
-		if cur.BaseCurrency != r.Budget.BaseCurrency {
+		if cur.BaseCurrency != fetched.record.Budget.BaseCurrency {
 			return budget.Budget{}, fmt.Errorf("the base currency changed to %s while rates were fetched; refresh again", cur.BaseCurrency)
 		}
 		skipped = map[string]bool{}
 		var ops []budget.Op
-		for i, u := range updates {
+		for i, u := range fetched.updates {
 			if u.Error != "" {
 				continue
 			}
 			j := slices.IndexFunc(cur.Currencies, func(c budget.CurrencyRate) bool { return c.Code == u.Code })
-			if j < 0 || changedSince(fetched[u.Code], cur.Currencies[j]) {
+			if j < 0 || changedSince(original[u.Code], cur.Currencies[j]) {
 				skipped[u.Code] = true
 				continue
 			}
-			src := targets[i].Source
+			src := fetched.targets[i].Source
 			patch := budget.CurrencyPatch{
-				PerBase:  &updates[i].New,
+				PerBase:  &fetched.updates[i].New,
 				Source:   &src,
-				RateDate: &updates[i].Date,
-				RateFrom: &updates[i].From,
+				RateDate: &fetched.updates[i].Date,
+				RateFrom: &fetched.updates[i].From,
 			}
 			ops = append(ops, budget.NewOp(budget.OpSetCurrency, u.Code, patch))
 		}
@@ -162,21 +161,21 @@ func (a *App) RefreshRates(
 	}
 	v, err := a.update(ctx, origin, id, store.AnyRevision, updateRates)
 	if err != nil {
-		return nil, updates, err
+		return nil, fetched.updates, err
 	}
-	for i, u := range updates {
+	for i, u := range fetched.updates {
 		if skipped[u.Code] {
-			updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
+			fetched.updates[i].Error = "changed or removed while the rate was being fetched; left as it is"
 		}
 	}
-	return v, updates, nil
+	return v, fetched.updates, nil
 }
 
 // PreviewRates is RefreshRates without saving: the same currencies, sources
 // and providers, so a dry run shows exactly what a refresh would do.
 func (a *App) PreviewRates(ctx context.Context, id string, codes []string) ([]RateUpdate, error) {
-	got, err := a.fetchRates(ctx, id, codes)
-	return got.updates, err
+	fetched, err := a.fetchRates(ctx, id, codes)
+	return fetched.updates, err
 }
 
 // changedSince reports whether a currency's rate or source was edited.
