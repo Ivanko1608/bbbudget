@@ -1,0 +1,24 @@
+name: Feature
+description: A goal that groups tickets. Its tickets are sub-issues of it.
+labels: [feature]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem it solves and why now, in a short paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: What is true when the feature is finished.
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions
+      description: "Feature-level decisions, one line each: date, what was decided, why, and where (PR or commit)."
+      value: None yet.

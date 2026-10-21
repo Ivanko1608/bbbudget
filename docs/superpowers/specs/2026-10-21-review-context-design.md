@@ -216,9 +216,8 @@ This is a one-time pass, run as its own `/ticket`-style job, not by hand:
 3. For each open ticket, write its Why and rebuild its Decisions from the PR review comments,
    the issue comments and the commit messages. A Why or decision that can't be traced to a
    written source is marked `(reconstructed)` so the user knows to check it.
-4. For each open PR (#82 to #88, #91), rewrite the description into the new shape and post the
-   inline comments on surprising changes. In #86, list the `CLAUDE.md` change under Decision
-   for you.
+4. PRs #82 to #88 and #91 merged on 2026-10-20, so their descriptions stay as they are. Their
+   decisions are carried on the issues that are still open, such as #81 and #90.
 5. Set up the board and close the milestones as above.
 
 The old PRs #18 (accounts) and #19 (remote mode) predate the ticket flow and have no issue. The
