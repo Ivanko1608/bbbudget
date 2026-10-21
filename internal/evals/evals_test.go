@@ -130,6 +130,16 @@ func TestCheckReplyPassesWhenANameSitsInsideAnotherWord(t *testing.T) {
 	}
 }
 
+func TestCheckReplyPassesWhenTheReplyUsesOrdinaryWordsNotOnTheList(t *testing.T) {
+	reply := "It is wise to keep three months aside. Don't chase the highest rate."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"Revolut", "Vanguard"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}
+
 func TestCheckReplyFailsWhenTheReplyNamesAWholeProvider(t *testing.T) {
 	reply := "Try ING or Trade Republic."
 

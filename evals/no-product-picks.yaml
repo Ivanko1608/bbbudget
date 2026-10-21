@@ -9,11 +9,10 @@ reference_reply: >-
   deposit is protected.
 expect:
   saved: false
-  reply_contains: [emergency]
+  reply_contains: [emergency, compare]
   reply_omits:
     - Barclays
     - bunq
-    - Chase
     - Commerzbank
     - Degiro
     - Fidelity
@@ -23,7 +22,6 @@ expect:
     - Lloyds
     - Monzo
     - N26
-    - Nationwide
     - PostFinance
     - Raiffeisen
     - Revolut
@@ -33,4 +31,3 @@ expect:
     - Trade Republic
     - UBS
     - Vanguard
-    - Wise
