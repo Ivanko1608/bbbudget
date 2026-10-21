@@ -712,7 +712,7 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	table.Flush()
 	fmt.Fprintln(w)
 	for _, in := range r.Insights {
-		fmt.Fprintf(w, "%s %s\n", toneMark(in.Tone), i18n.StripMarkdown(in.Text))
+		fmt.Fprintf(w, "%s %s\n", toneMark(in.Tone), i18n.StripMdBold(in.Text))
 	}
 }
 
@@ -765,7 +765,7 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	}
 	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", i18n.StripMarkdown(localizer.Render(f.Msg)))
+		fmt.Fprintf(w, "! %s\n", i18n.StripMdBold(localizer.Render(f.Msg)))
 	}
 	return nil
 }
@@ -780,7 +780,7 @@ func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	}
 	table.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", i18n.StripMarkdown(l.Render(f.Msg)))
+		fmt.Fprintf(w, "\n! %s", i18n.StripMdBold(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)

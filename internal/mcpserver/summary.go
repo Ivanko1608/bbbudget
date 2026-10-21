@@ -54,7 +54,7 @@ func newInsightRow(in budget.Insight) insightRow {
 	return insightRow{
 		ID:   in.ID,
 		Tone: in.Tone,
-		Text: i18n.StripMarkdown(in.Text),
+		Text: i18n.StripMdBold(in.Text),
 		Key:  in.Key,
 		Args: flatArgs(in.Args),
 	}

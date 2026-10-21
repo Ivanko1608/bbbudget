@@ -101,7 +101,7 @@ func toStatusOut(status *budget.MonthStatus) statusOut {
 		out.Categories = append(out.Categories, newStatusRow(category))
 	}
 	for _, flag := range status.Flags {
-		out.Flags = append(out.Flags, i18n.StripMarkdown(flag.Text))
+		out.Flags = append(out.Flags, i18n.StripMdBold(flag.Text))
 	}
 	return out
 }
