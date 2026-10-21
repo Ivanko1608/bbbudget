@@ -59,7 +59,8 @@ func budgetIDs(t *testing.T, a *app.App) []string {
 
 func TestAccountsSeeOnlyTheirOwnBudgets(t *testing.T) {
 	r := testRegistry(t)
-	alice, bob := open(t, r, "alice"), open(t, r, "bob")
+	alice := open(t, r, "alice")
+	bob := open(t, r, "bob")
 
 	createBudget(t, alice, "home")
 	createBudget(t, bob, "flat")
@@ -74,7 +75,8 @@ func TestAccountsSeeOnlyTheirOwnBudgets(t *testing.T) {
 
 func TestAccountsKeepTheirOwnSettings(t *testing.T) {
 	r := testRegistry(t)
-	alice, bob := open(t, r, "alice"), open(t, r, "bob")
+	alice := open(t, r, "alice")
+	bob := open(t, r, "bob")
 	daily := "daily"
 
 	_, err := alice.UpdateSettings(settings.Patch{AutoRefresh: &daily})
@@ -101,7 +103,8 @@ func TestAccountsKeepTheirOwnSettings(t *testing.T) {
 func TestOpenReturnsTheSameAppEachTime(t *testing.T) {
 	r := testRegistry(t)
 
-	first, second := open(t, r, "alice"), open(t, r, "alice")
+	first := open(t, r, "alice")
+	second := open(t, r, "alice")
 
 	if first != second {
 		t.Error("two opens of one account gave different apps")

@@ -17,7 +17,10 @@ import (
 )
 
 // ErrBadID means an account id is not safe to use as a directory name.
-var ErrBadID = errors.New("account id must be 1-64 lowercase letters, digits or '-', starting with a letter or digit")
+var ErrBadID = errors.New(
+	"account id must be 1-64 lowercase letters, digits or '-', " +
+		"starting with a letter or digit",
+)
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
@@ -41,12 +44,12 @@ type Registry struct {
 }
 
 // NewRegistry opens (and creates if needed) a root directory. Every account
-// shares the templates t; nil means built-in templates only.
-func NewRegistry(root string, t *templates.Registry) (*Registry, error) {
+// shares templateRegistry; nil means built-in templates only.
+func NewRegistry(root string, templateRegistry *templates.Registry) (*Registry, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	return &Registry{root: root, templates: t, apps: map[string]*app.App{}}, nil
+	return &Registry{root: root, templates: templateRegistry, apps: map[string]*app.App{}}, nil
 }
 
 // Open returns the App of an account, creating the account's directory the
@@ -58,26 +61,26 @@ func (r *Registry) Open(id string) (*app.App, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if a, ok := r.apps[id]; ok {
-		return a, nil
+	if existing, ok := r.apps[id]; ok {
+		return existing, nil
 	}
-	a, err := r.newApp(id)
+	opened, err := r.newApp(id)
 	if err != nil {
 		return nil, err
 	}
-	r.apps[id] = a
-	return a, nil
+	r.apps[id] = opened
+	return opened, nil
 }
 
 func (r *Registry) newApp(id string) (*app.App, error) {
 	dir := filepath.Join(r.root, id)
-	st, err := store.NewFileStore(filepath.Join(dir, budgetsDir))
+	budgetStore, err := store.NewFileStore(filepath.Join(dir, budgetsDir))
 	if err != nil {
 		return nil, err
 	}
-	a := app.New(st, r.templates)
-	a.SettingsPath = filepath.Join(dir, settingsFile)
-	return a, nil
+	accountApp := app.New(budgetStore, r.templates)
+	accountApp.SettingsPath = filepath.Join(dir, settingsFile)
+	return accountApp, nil
 }
 
 // List returns the ids of every account that has a directory, sorted.
@@ -87,9 +90,9 @@ func (r *Registry) List() ([]string, error) {
 		return nil, err
 	}
 	var ids []string
-	for _, e := range entries {
-		if e.IsDir() && ValidID(e.Name()) {
-			ids = append(ids, e.Name())
+	for _, entry := range entries {
+		if entry.IsDir() && ValidID(entry.Name()) {
+			ids = append(ids, entry.Name())
 		}
 	}
 	slices.Sort(ids)
