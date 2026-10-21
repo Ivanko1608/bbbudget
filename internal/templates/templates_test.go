@@ -40,6 +40,19 @@ func TestBuiltinsAreValid(t *testing.T) {
 	}
 }
 
+func TestBuiltinSourceIsItsEmbeddedFile(t *testing.T) {
+	r := Builtin()
+
+	sources := map[string]string{}
+	for _, tpl := range r.List() {
+		sources[tpl.Name] = tpl.Source
+	}
+
+	if got := sources["example"]; got != filepath.Join("builtin", "example.yaml") {
+		t.Errorf("example source: %q", got)
+	}
+}
+
 func TestUserDirectory(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {

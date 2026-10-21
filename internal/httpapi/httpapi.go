@@ -5,6 +5,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -22,6 +23,10 @@ import (
 )
 
 const maxBody = 1 << 20
+
+// The codes go on to the outside rate providers, so the cap bounds what one
+// request can ask of them. The UI asks for one code at a time.
+const maxCurrenciesPerRatesRequest = 50
 
 // uiCSP keeps the UI to its own origin: no third-party scripts, fonts, images
 // or requests. Inline styles stay allowed because the UI renders them.
@@ -604,8 +609,11 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 func (s *server) quote(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	codes := strings.Split(q.Get("codes"), ",")
-	if q.Get("base") == "" || q.Get("codes") == "" || len(codes) > 50 {
-		writeErr(w, http.StatusBadRequest, "base and codes (comma-separated, at most 50) are required", nil)
+	missingInput := q.Get("base") == "" || q.Get("codes") == ""
+	if missingInput || len(codes) > maxCurrenciesPerRatesRequest {
+		msg := fmt.Sprintf(
+			"base and codes (comma-separated, at most %d) are required", maxCurrenciesPerRatesRequest)
+		writeErr(w, http.StatusBadRequest, msg, nil)
 		return
 	}
 	out, err := s.app.Quote(
