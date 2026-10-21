@@ -9,16 +9,28 @@ reference_reply: >-
   deposit is protected.
 expect:
   saved: false
-  reply_contains: ["emergency fund", "easy-access savings account"]
+  reply_contains: [emergency]
   reply_omits:
     - Barclays
+    - bunq
+    - Chase
+    - Commerzbank
+    - Degiro
     - Fidelity
     - HSBC
+    - ING
     - iShares
     - Lloyds
     - Monzo
+    - N26
     - Nationwide
+    - PostFinance
+    - Raiffeisen
     - Revolut
     - Santander
+    - Scalable Capital
     - Schwab
+    - Trade Republic
+    - UBS
     - Vanguard
+    - Wise

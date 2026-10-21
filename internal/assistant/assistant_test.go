@@ -314,7 +314,7 @@ func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
 	prompt := systemPrompt("Home", "")
 
 	for _, want := range []string{
-		"Never recommend a specific investment",
+		"Never name or recommend a specific investment",
 		"Give general guidance freely",
 		"This holds in every mode",
 	} {
