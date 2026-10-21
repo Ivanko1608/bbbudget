@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"fmt"
 	"slices"
-	"strings"
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
@@ -55,7 +54,7 @@ func newInsightRow(in budget.Insight) insightRow {
 	return insightRow{
 		ID:   in.ID,
 		Tone: in.Tone,
-		Text: plain(in.Text),
+		Text: i18n.StripMdBold(in.Text),
 		Key:  in.Key,
 		Args: flatArgs(in.Args),
 	}
@@ -204,8 +203,6 @@ func payoffPlan(b budget.Budget, r *budget.Report, d budget.Debt) string {
 	return when + " from " + from
 }
 
-func plain(s string) string { return strings.ReplaceAll(s, "**", "") }
-
 func summarize(v *app.View) Summary {
 	s := summarizeReport(v.Budget, v.Report)
 	s.ID = v.ID
@@ -296,7 +293,7 @@ func paidOffText(summary budget.DebtSummary) string {
 	case summary.StartBalance.IsZero():
 		return "nothing owed"
 	}
-	return "not within the window"
+	return notWithinWindow
 }
 
 func potRows(b budget.Budget, r *budget.Report) []potRow {
@@ -352,10 +349,10 @@ func goalRows(r *budget.Report) []goalRow {
 }
 
 func reachedText(status budget.GoalStatus) string {
-	reached := "not within the window"
+	reached := notWithinWindow
 	switch {
 	case status.AlreadyMet:
-		reached = "already met"
+		reached = string(goalAlreadyMet)
 	case status.ReachedLabel != "":
 		reached = status.ReachedLabel
 	case status.NeededPerMonth != nil:
@@ -477,7 +474,7 @@ func outcomeGoals(outcome budget.Outcome) map[string]string {
 	for _, goal := range outcome.Goals {
 		switch {
 		case goal.AlreadyMet:
-			goals[goal.Name] = "already met"
+			goals[goal.Name] = string(goalAlreadyMet)
 		case goal.ReachedLabel != "":
 			goals[goal.Name] = goal.ReachedLabel
 		default:
