@@ -502,3 +502,6 @@ func Pseudo() *Localizer {
 	}
 	return &Localizer{cat: c, fallback: c}
 }
+
+// StripMdBold removes the bold markers that catalog messages carry.
+func StripMdBold(s string) string { return strings.ReplaceAll(s, "**", "") }
