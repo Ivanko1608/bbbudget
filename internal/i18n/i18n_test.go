@@ -119,7 +119,10 @@ func fsRead(name string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	st, _ := f.Stat()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
 	buf := make([]byte, st.Size())
 	_, err = f.Read(buf)
 	return buf, err

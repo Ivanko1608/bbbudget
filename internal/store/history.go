@@ -382,7 +382,15 @@ func (s *FileStore) appendHistory(id string, l line) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	if err := writeLine(f, data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeLine appends data and a newline to f and syncs it.
+func writeLine(f *os.File, data []byte) error {
 	ended, err := endsWithNewline(f)
 	if err != nil {
 		return err
