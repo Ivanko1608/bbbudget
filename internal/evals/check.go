@@ -163,11 +163,27 @@ func checkReply(reply string, expect Expect) []string {
 			fmt.Sprintf("the reply is not in %s script: %q", expect.ReplyScript, reply))
 	}
 	for _, want := range expect.ReplyContains {
-		if !strings.Contains(removeDigitGrouping(reply), removeDigitGrouping(want)) {
+		if !containsIgnoringCase(removeDigitGrouping(reply), removeDigitGrouping(want)) {
 			failures = append(failures, fmt.Sprintf("the reply doesn't mention %q: %q", want, reply))
 		}
 	}
+	for _, unwanted := range expect.ReplyOmits {
+		if containsWholeWord(reply, unwanted) {
+			failures = append(failures, fmt.Sprintf("the reply mentions %q: %q", unwanted, reply))
+		}
+	}
 	return failures
+}
+
+func containsIgnoringCase(text, part string) bool {
+	return strings.Contains(strings.ToLower(text), strings.ToLower(part))
+}
+
+// containsWholeWord matches word ignoring case, but not inside a longer word:
+// "ING" is not in "saving".
+func containsWholeWord(text, word string) bool {
+	pattern := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(word) + `\b`)
+	return pattern.MatchString(text)
 }
 
 // sameValue compares decimals by value ("1200" = "1200.00") and the rest as text.

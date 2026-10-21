@@ -309,3 +309,25 @@ func TestIdleConversationsAreForgotten(t *testing.T) {
 		t.Error("an expired conversation was continued")
 	}
 }
+
+func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
+	prompt := systemPrompt("Home", "")
+
+	for _, want := range []string{
+		"Never name or recommend a specific investment",
+		"Give general guidance freely",
+		"This holds in every mode",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the system prompt lacks %q", want)
+		}
+	}
+}
+
+func TestSystemPromptMarksUntrustedTextAsData(t *testing.T) {
+	prompt := systemPrompt("Home", "")
+
+	if !strings.Contains(prompt, "data about the budget") {
+		t.Errorf("the system prompt doesn't say untrusted text is data: %q", prompt)
+	}
+}
