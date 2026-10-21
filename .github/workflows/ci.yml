@@ -19,6 +19,17 @@ jobs:
       - run: go mod tidy -diff
       - run: make check
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+
   leaks:
     runs-on: ubuntu-latest
     permissions:
