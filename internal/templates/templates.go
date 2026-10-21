@@ -31,11 +31,14 @@ import (
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
+// SourceBuiltin is the Source of templates embedded in the binary.
+const SourceBuiltin = "builtin"
+
 // Template is a validated budget document plus where it came from.
 type Template struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// Source is "builtin" or the file path it was loaded from.
+	// Source is SourceBuiltin or the file path it was loaded from.
 	Source string        `json:"source"`
 	Doc    budget.Budget `json:"-"`
 }
@@ -48,7 +51,7 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // Builtin returns a registry with the embedded templates only.
 func Builtin() *Registry {
 	r := &Registry{byName: map[string]Template{}}
-	if err := r.loadFS(builtinFS, "builtin", "builtin"); err != nil {
+	if err := r.loadFS(builtinFS, "builtin", SourceBuiltin); err != nil {
 		panic(err) // embedded files are covered by tests
 	}
 	return r
@@ -80,8 +83,8 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), path.Ext(e.Name()))
-		source := "builtin"
-		if label != "builtin" {
+		source := SourceBuiltin
+		if label != SourceBuiltin {
 			source = filepath.Join(label, e.Name())
 		}
 		t, err := parse(fsys, path.Join(root, e.Name()), name, ext[1:], source)

@@ -502,3 +502,6 @@ func Pseudo() *Localizer {
 	}
 	return &Localizer{cat: c, fallback: c}
 }
+
+// StripMarkdown removes the bold markers that catalog messages carry.
+func StripMarkdown(s string) string { return strings.ReplaceAll(s, "**", "") }

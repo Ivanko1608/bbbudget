@@ -47,6 +47,8 @@ import (
 	"bbbudget/web"
 )
 
+const timeLayout = "2006-01-02 15:04"
+
 var version = "dev" // set with -ldflags "-X main.version=..."
 
 func main() {
@@ -327,7 +329,7 @@ func runList(ctx context.Context, c *cli, args []string) error {
 	table := newTable(c.stdout)
 	fmt.Fprintln(table, "ID\tNAME\tREVISION\tUPDATED")
 	for _, m := range metas {
-		updated := m.UpdatedAt.Local().Format("2006-01-02 15:04")
+		updated := m.UpdatedAt.Local().Format(timeLayout)
 		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", m.ID, m.Name, m.Revision, updated)
 	}
 	return table.Flush()
@@ -470,7 +472,7 @@ func runHistory(ctx context.Context, c *cli, args []string) error {
 	table := newTable(c.stdout)
 	fmt.Fprintln(table, "REV\tWHEN\tBY\tCHANGE")
 	for _, e := range entries {
-		when := e.At.Local().Format("2006-01-02 15:04")
+		when := e.At.Local().Format(timeLayout)
 		fmt.Fprintf(table, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
 	}
 	return table.Flush()
@@ -710,7 +712,7 @@ func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	table.Flush()
 	fmt.Fprintln(w)
 	for _, in := range r.Insights {
-		fmt.Fprintf(w, "%s %s\n", toneMark(in.Tone), stripMarkdown(in.Text))
+		fmt.Fprintf(w, "%s %s\n", toneMark(in.Tone), i18n.StripMarkdown(in.Text))
 	}
 }
 
@@ -763,7 +765,7 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	}
 	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", stripMarkdown(localizer.Render(f.Msg)))
+		fmt.Fprintf(w, "! %s\n", i18n.StripMarkdown(localizer.Render(f.Msg)))
 	}
 	return nil
 }
@@ -778,12 +780,9 @@ func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	}
 	table.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", stripMarkdown(l.Render(f.Msg)))
+		fmt.Fprintf(w, "\n! %s", i18n.StripMarkdown(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)
 	}
 }
-
-// stripMarkdown drops the bold markers from insight text.
-func stripMarkdown(s string) string { return strings.ReplaceAll(s, "**", "") }
