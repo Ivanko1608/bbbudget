@@ -11,9 +11,9 @@ any later version, with the additional permission below.
 If you distribute a covered work through an app store whose terms of service
 add restrictions that the GNU AGPL does not allow, you may do so, as long as
 you also offer the complete corresponding source code of that work to anyone
-who receives it, under the terms of the GNU AGPL (with or without this
-additional permission).
+who receives it, under the terms of the GNU AGPL, version 3 or any later
+version (with or without this additional permission).
 
-This permission applies to all code in `mobile/`, including contributions made
-by others. As section 7 says, anyone who modifies the code may remove this
-permission from their version.
+This permission applies to everything in `mobile/`, including contributions
+made by others. As section 7 allows, anyone who conveys a copy may remove this
+permission from that copy.
