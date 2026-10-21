@@ -17,7 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod tidy -diff
-      - run: make check
+      - run: make check-no-lint
 
   lint:
     runs-on: ubuntu-latest
