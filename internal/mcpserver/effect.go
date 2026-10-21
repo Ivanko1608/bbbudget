@@ -125,7 +125,7 @@ func (h *handlers) written(w WriteRef, v *app.View, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := w.Detail.check(); err != nil {
+	if err = w.Detail.check(); err != nil {
 		return nil, err
 	}
 	nothingSaved := v.Before == nil

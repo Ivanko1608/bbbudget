@@ -459,11 +459,11 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&l.Currency, v.Currency)
 		setIf(&l.Category, v.Category)
 		if v.Schedule != nil {
-			s, err := v.Schedule.resolve(b.StartMonth, &l.Schedule)
-			if err != nil {
-				return err
+			resolved, resolveErr := v.Schedule.resolve(b.StartMonth, &l.Schedule)
+			if resolveErr != nil {
+				return resolveErr
 			}
-			l.Schedule = s
+			l.Schedule = resolved
 		}
 		if v.Pot != nil {
 			id := ""
