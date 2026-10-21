@@ -10,3 +10,4 @@ coverage.out
 /templates/
 *.local.yaml
 *.local.json
+.superpowers/
