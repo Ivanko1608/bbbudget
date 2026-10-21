@@ -25,6 +25,9 @@ const (
 	StrategyListed    = "listed"    // in the order the debts are listed
 )
 
+// Strategies lists every valid Budget.DebtStrategy.
+var Strategies = []string{StrategyAvalanche, StrategySnowball, StrategyListed}
+
 // Budget is the stored, editable document.
 type Budget struct {
 	Name         string `json:"name"`

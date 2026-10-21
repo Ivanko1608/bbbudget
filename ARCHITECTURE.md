@@ -204,7 +204,7 @@ back to them when you want to see exactly what something guarantees.
 | `internal/money` | Amounts, decimals, currencies, rounding | `money.go` (the `Money` type), `currency.go` (the currency table) | know what a budget is |
 | `internal/i18n` | Message catalogs (English, Russian), plural rules, number and month formats | `i18n.go`, then `locales/en.json` | know what a budget is |
 | `internal/budget` | The document model, validation, projection, insights, ops, scenarios | `model.go` → `ops.go` → `plan.go` → `project.go` → `report.go` | touch files or the network |
-| `internal/store` | Saving budgets: one JSON file each, lock, atomic writes, revisions | `store.go` (the small interface), then `file.go` | calculate anything |
+| `internal/store` | Saving budgets: one JSON file each, lock, atomic writes, revisions; the notes file beside them | `store.go` (the small interface), then `file.go` | calculate anything |
 | `internal/app` | Use cases every door shares: create, get, apply, what-if, scenarios, rate refresh, settings | `app.go` (short, read it whole), then `rates.go` | know about HTTP or MCP |
 | `internal/accounts` | Several people on one server: an `App`, a data directory and a settings file per account | `accounts.go` | know about HTTP, or how an account signs in |
 | `internal/rates` | Fetching exchange rates (ECB, currency-api, CoinGecko) exactly, with caching | `rates.go` | see budget data (it only gets currency codes) |
