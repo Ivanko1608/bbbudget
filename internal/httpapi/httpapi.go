@@ -281,7 +281,7 @@ func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
 		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
-		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
+		"strategies": budget.Strategies,
 		"locale":     s.reader(r).Locale(),
 		"locales":    locales(),
 	})
