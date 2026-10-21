@@ -77,6 +77,7 @@ type Store interface {
 	// stores the transactions it returns, atomically with respect to every
 	// other write. The budget itself is not changed.
 	UpdateLedger(ctx context.Context, id string, edit LedgerEditFunc) (Ledger, error)
+	NoteStore
 }
 
 // LedgerEditFunc gets the current budget and a copy of its transactions,

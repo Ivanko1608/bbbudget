@@ -87,6 +87,8 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/budgets/{id}/scenarios/{sid}/adopt", s.adoptScenario)
 	mux.HandleFunc("DELETE /api/budgets/{id}/scenarios/{sid}", s.deleteScenario)
 	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
+	mux.HandleFunc("GET /api/notes", s.listNotes)
+	mux.HandleFunc("DELETE /api/notes/{id}", s.deleteNote)
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
