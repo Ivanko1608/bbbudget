@@ -18,7 +18,9 @@ import (
 )
 
 type App struct {
-	Store     store.Store
+	Store store.Store
+	// Notes keeps the person's notes next to the budgets.
+	Notes     store.NoteStore
 	Templates *templates.Registry
 	// Rates are the exchange-rate providers by source name (see budget.RateSources).
 	Rates map[budget.RateSource]rates.Provider

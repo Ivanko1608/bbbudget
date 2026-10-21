@@ -164,6 +164,7 @@ func openApp(dir, templateDir, settingsFile string) (*app.App, error) {
 	}
 	a := app.New(st, registry)
 	a.SettingsPath = settingsFile
+	a.Notes = st
 	if _, err := a.Settings(); err != nil {
 		return nil, err
 	}
