@@ -221,9 +221,9 @@ This is a one-time pass, run as its own `/ticket`-style job, not by hand:
 5. Set up the board and close the milestones as above.
 
 The old PRs #18 (accounts) and #19 (remote mode) predate the ticket flow and have no issue. The
-backfill opens one ticket for each, under Remote server, using the mobile plan's "Server changes"
-section as the Why. Each PR then gets a `Closes` line and the new description. Otherwise, PRs get
-their feature through the issue they close.
+backfill adds a "Part of" line for Remote server to their descriptions. Their tickets get written
+when the Remote server work is planned, not in the backfill. Otherwise, PRs get their feature
+through the issue they close.
 
 ## Feature Whys
 
