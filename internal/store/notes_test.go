@@ -119,7 +119,12 @@ func TestAddNoteRefusesBadNotes(t *testing.T) {
 			source: NoteSourceChat,
 			want:   ErrNoteTooLong,
 		},
-		{name: "unknown source", text: "hello", source: NoteSource("telepathy"), want: ErrBadNoteSource},
+		{
+			name:   "unknown source",
+			text:   "hello",
+			source: NoteSource("telepathy"),
+			want:   ErrBadNoteSource,
+		},
 		{name: "no source", text: "hello", source: NoteSource(""), want: ErrBadNoteSource},
 	}
 	for _, tt := range tests {
@@ -226,7 +231,8 @@ func TestNotesOfOneStoreAreNotInAnother(t *testing.T) {
 	deleteErr := yours.DeleteNote(ctx, note.ID)
 
 	checkEqual(t, "notes seen by the other store", len(listNotes(t, yours)), 0)
-	checkEqual(t, "other store refuses it as not found", errors.Is(deleteErr, ErrNoteNotFound), true)
+	notFound := errors.Is(deleteErr, ErrNoteNotFound)
+	checkEqual(t, "other store refuses it as not found", notFound, true)
 	checkEqual(t, "notes of the first store", len(listNotes(t, mine)), 1)
 }
 

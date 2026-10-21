@@ -170,8 +170,8 @@ func (s *FileStore) writeNotes(notes []Note) error {
 	if err != nil {
 		return fmt.Errorf("encoding notes: %w", err)
 	}
-	if err := s.writeFile(s.notesPath(), append(raw, '\n')); err != nil {
-		return fmt.Errorf("writing notes: %w", err)
+	if writeErr := s.writeFile(s.notesPath(), append(raw, '\n')); writeErr != nil {
+		return fmt.Errorf("writing notes: %w", writeErr)
 	}
 	return nil
 }

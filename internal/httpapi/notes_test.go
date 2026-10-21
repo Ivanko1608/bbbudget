@@ -108,7 +108,7 @@ func TestDeleteNoteIsRefusedOrNotFound(t *testing.T) {
 		id   string
 		want int
 	}{
-		{name: "well-formed id that does not exist", id: "0123456789abcdef", want: http.StatusNotFound},
+		{name: "unknown id", id: "0123456789abcdef", want: http.StatusNotFound},
 		{name: "too short", id: "nope", want: http.StatusBadRequest},
 		{name: "upper case", id: "0123456789ABCDEF", want: http.StatusBadRequest},
 		{name: "not hex", id: "0123456789abcdeg", want: http.StatusBadRequest},
