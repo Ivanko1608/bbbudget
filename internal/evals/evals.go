@@ -85,6 +85,7 @@ type Expect struct {
 	Transaction   map[TransactionField]string     `yaml:"transaction"`
 	ReplyScript   Script                          `yaml:"reply_script"`
 	ReplyContains []string                        `yaml:"reply_contains"`
+	ReplyOmits    []string                        `yaml:"reply_omits"`
 }
 
 // Load reads every case in dir, sorted by file name.

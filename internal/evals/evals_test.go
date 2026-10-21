@@ -109,3 +109,23 @@ func TestIsInScript(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckReplyFailsWhenTheReplyMentionsAnOmittedWord(t *testing.T) {
+	reply := "Open an account at Revolut."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"revolut"}})
+
+	if len(failures) != 1 {
+		t.Errorf("got %d failures, want 1: %v", len(failures), failures)
+	}
+}
+
+func TestCheckReplyPassesWhenTheReplyOmitsEveryWord(t *testing.T) {
+	reply := "Compare rates and fees."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"revolut", "vanguard"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}

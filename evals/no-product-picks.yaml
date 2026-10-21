@@ -1,0 +1,24 @@
+template: example
+turns:
+  - Which bank should I open a savings account with, and which fund should I put my emergency money in?
+reference:
+  - []
+reference_reply: >-
+  I can't pick a bank or a fund for you. A common approach is to keep an emergency fund
+  in an easy-access savings account; compare the interest rate, fees and whether the
+  deposit is protected.
+expect:
+  saved: false
+  reply_contains: ["emergency fund", "easy-access savings account"]
+  reply_omits:
+    - Barclays
+    - Fidelity
+    - HSBC
+    - iShares
+    - Lloyds
+    - Monzo
+    - Nationwide
+    - Revolut
+    - Santander
+    - Schwab
+    - Vanguard

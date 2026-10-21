@@ -167,6 +167,12 @@ func checkReply(reply string, expect Expect) []string {
 			failures = append(failures, fmt.Sprintf("the reply doesn't mention %q: %q", want, reply))
 		}
 	}
+	lowerReply := strings.ToLower(reply)
+	for _, unwanted := range expect.ReplyOmits {
+		if strings.Contains(lowerReply, strings.ToLower(unwanted)) {
+			failures = append(failures, fmt.Sprintf("the reply mentions %q: %q", unwanted, reply))
+		}
+	}
 	return failures
 }
 

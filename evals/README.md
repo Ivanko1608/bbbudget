@@ -26,4 +26,5 @@ expect:
   transaction: {category: home, amount: "45.2"}  # one logged transaction must match
   reply_script: cyrillic             # the last reply is written in this script
   reply_contains: ["5100"]           # the last reply mentions each of these (any number format)
+  reply_omits: [Revolut]             # the last reply mentions none of these (any letter case)
 ```
