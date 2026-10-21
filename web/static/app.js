@@ -317,7 +317,7 @@ function renderFlow() {
   const debts = b.debts.filter((d) => parseFloat(d.balance) > 0);
   const targets = b.pots.filter((p) => p.target);
   const def = (r?.pots || []).find((x) => x.default)?.name || b.pots[0]?.name || t("flow.a_pot");
-  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, t(`strategy.${s}`)]);
+  const strategies = S.meta.strategies.map((s) => [s, t(`strategy.${s}`)]);
   const step = (what, detail, off = false) => `<li class="${off ? "off" : ""}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
   $("#flow").innerHTML = [
     step(esc(t("flow.repay")), esc(t(owes ? "flow.repay.owes" : "flow.repay.none")), !owes),
