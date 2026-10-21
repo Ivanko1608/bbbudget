@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,6 +91,28 @@ func TestDeleteNoteRemovesIt(t *testing.T) {
 	eq(t, "notes left", len(c.listNotes()), 0)
 }
 
+func TestDeletingTheLastNoteListsAnEmptyList(t *testing.T) {
+	c := setupNotes(t)
+	note := c.addNote("going through a divorce", store.NoteSourceChat)
+	c.req("DELETE", "/api/notes/"+note.ID, "", nil)
+
+	w := c.req("GET", "/api/notes", "", nil)
+
+	eq(t, "status", w.Code, http.StatusOK)
+	eq(t, "body", strings.TrimSpace(w.Body.String()), `{"notes":[]}`)
+}
+
+func TestDeletingANoteTwiceIsNotFound(t *testing.T) {
+	c := setupNotes(t)
+	note := c.addNote("going through a divorce", store.NoteSourceChat)
+	c.req("DELETE", "/api/notes/"+note.ID, "", nil)
+
+	w := c.req("DELETE", "/api/notes/"+note.ID, "", nil)
+
+	eq(t, "status", w.Code, http.StatusNotFound)
+	eq(t, "body", strings.TrimSpace(w.Body.String()), `{"error":"note not found"}`)
+}
+
 func TestDeleteNoteNeedsTheRequestedWithHeader(t *testing.T) {
 	c := setupNotes(t)
 	note := c.addNote("going through a divorce", store.NoteSourceChat)
@@ -112,6 +135,13 @@ func TestDeleteNoteIsRefusedOrNotFound(t *testing.T) {
 		{name: "too short", id: "nope", want: http.StatusBadRequest},
 		{name: "upper case", id: "0123456789ABCDEF", want: http.StatusBadRequest},
 		{name: "not hex", id: "0123456789abcdeg", want: http.StatusBadRequest},
+		{name: "blank", id: "%20", want: http.StatusBadRequest},
+		{name: "empty, so no route matches", id: "", want: http.StatusNotFound},
+		{
+			name: "extra segment, so no route matches",
+			id:   "0123456789abcdef/extra",
+			want: http.StatusNotFound,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -122,30 +152,6 @@ func TestDeleteNoteIsRefusedOrNotFound(t *testing.T) {
 			eq(t, "status", w.Code, tt.want)
 		})
 	}
-}
-
-func TestAnAppFromNewServesNotes(t *testing.T) {
-	st, err := store.NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &client{t, New(app.New(st, nil), Options{})}
-
-	w := c.req("GET", "/api/notes", "", nil)
-
-	eq(t, "status", w.Code, http.StatusOK)
-}
-
-type budgetsOnly struct{ store.Store }
-
-func TestAnAppWithoutNotesAnswersNotFound(t *testing.T) {
-	c := &client{t, New(app.New(budgetsOnly{}, nil), Options{})}
-
-	list := c.req("GET", "/api/notes", "", nil)
-	remove := c.req("DELETE", "/api/notes/0123456789abcdef", "", nil)
-
-	eq(t, "list status", list.Code, http.StatusNotFound)
-	eq(t, "delete status", remove.Code, http.StatusNotFound)
 }
 
 func TestNotesOfOneAppAreNotVisibleToAnother(t *testing.T) {
@@ -160,44 +166,97 @@ func TestNotesOfOneAppAreNotVisibleToAnother(t *testing.T) {
 	eq(t, "notes still listed for the first app", len(mine.listNotes()), 1)
 }
 
-type failingNotes struct{ store.NoteStore }
+type failingNotes struct{ store.Store }
+
+var errDiskOnFire = errors.New("open /srv/bbbudget/.notes.json: disk on fire")
 
 func (failingNotes) ListNotes(context.Context) ([]store.Note, error) {
-	return nil, errors.New("open /srv/bbbudget/.notes.json: disk on fire")
+	return nil, errDiskOnFire
 }
 
-func TestListNotesHidesInternalErrors(t *testing.T) {
-	c := setupNotes(t)
-	c.app.Notes = failingNotes{}
+func (failingNotes) DeleteNote(context.Context, string) error {
+	return errDiskOnFire
+}
 
-	w := c.req("GET", "/api/notes", "", nil)
+func TestNoteRoutesHideInternalErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "list", method: "GET", path: "/api/notes"},
+		{name: "delete", method: "DELETE", path: "/api/notes/0123456789abcdef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &client{t, New(app.New(failingNotes{}, nil), Options{})}
 
-	eq(t, "status", w.Code, http.StatusInternalServerError)
-	eq(t, "body", strings.TrimSpace(w.Body.String()), `{"error":"internal error"}`)
+			w := c.req(tt.method, tt.path, "", nil)
+
+			eq(t, "status", w.Code, http.StatusInternalServerError)
+			eq(t, "body", strings.TrimSpace(w.Body.String()), `{"error":"internal error"}`)
+		})
+	}
 }
 
 func TestNoteErrorsMapToStatuses(t *testing.T) {
 	tests := []struct {
+		name string
 		err  error
 		want int
+		// message is the whole error the client sees.
+		message string
 	}{
-		{store.ErrNoteNotFound, http.StatusNotFound},
-		{store.ErrTooManyNotes, http.StatusConflict},
-		{store.ErrNoteTooLong, http.StatusBadRequest},
-		{store.ErrNoteEmpty, http.StatusBadRequest},
-		{store.ErrBadNoteSource, http.StatusBadRequest},
-		{store.ErrBadNoteID, http.StatusBadRequest},
-		{app.ErrNotesUnavailable, http.StatusNotFound},
+		{
+			name:    "not found",
+			err:     store.ErrNoteNotFound,
+			want:    http.StatusNotFound,
+			message: store.ErrNoteNotFound.Error(),
+		},
+		{
+			name:    "too many",
+			err:     store.ErrTooManyNotes,
+			want:    http.StatusConflict,
+			message: store.ErrTooManyNotes.Error(),
+		},
+		{
+			name:    "too long",
+			err:     store.ErrNoteTooLong,
+			want:    http.StatusBadRequest,
+			message: store.ErrNoteTooLong.Error(),
+		},
+		{
+			name:    "empty",
+			err:     store.ErrNoteEmpty,
+			want:    http.StatusBadRequest,
+			message: store.ErrNoteEmpty.Error(),
+		},
+		{
+			name:    "bad id",
+			err:     store.ErrBadNoteID,
+			want:    http.StatusBadRequest,
+			message: store.ErrBadNoteID.Error(),
+		},
+		{
+			name:    "bad source does not echo the source",
+			err:     fmt.Errorf("%w: %q", store.ErrBadNoteSource, "<script>"),
+			want:    http.StatusBadRequest,
+			message: store.ErrBadNoteSource.Error(),
+		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.err.Error(), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			s := &server{opts: Options{}}
 			w := httptest.NewRecorder()
 
 			s.failNote(w, httptest.NewRequest("GET", "/api/notes", nil), tt.err)
 
 			eq(t, "status", w.Code, tt.want)
-			eq(t, "message", strings.Contains(w.Body.String(), tt.err.Error()), true)
+			var body errBody
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("error body: %v %s", err, w.Body)
+			}
+			eq(t, "message", body.Error, tt.message)
 		})
 	}
 }

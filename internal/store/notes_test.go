@@ -83,7 +83,26 @@ func TestNotesSurviveReopeningTheStore(t *testing.T) {
 func TestAStoreWithoutNotesListsNone(t *testing.T) {
 	s := newNoteStore(t)
 
-	checkEqual(t, "notes", len(listNotes(t, s)), 0)
+	notes := listNotes(t, s)
+
+	checkEqual(t, "notes", len(notes), 0)
+	checkEqual(t, "notes is an empty list, not nil", notes != nil, true)
+}
+
+func TestDeletingTheLastNoteLeavesAnEmptyList(t *testing.T) {
+	s := newNoteStore(t)
+	note, err := s.AddNote(ctx, "works as a freelance designer", NoteSourceChat)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteNote(ctx, note.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	notes := listNotes(t, s)
+	checkEqual(t, "notes", len(notes), 0)
+	checkEqual(t, "notes is an empty list, not nil", notes != nil, true)
 }
 
 func TestNotesDoNotShowUpAsBudgets(t *testing.T) {

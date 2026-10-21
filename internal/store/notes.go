@@ -153,7 +153,7 @@ func newNoteID() (string, error) {
 func (s *FileStore) readNotes() ([]Note, error) {
 	raw, err := os.ReadFile(s.notesPath())
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return []Note{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading notes: %w", err)

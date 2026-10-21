@@ -18,9 +18,7 @@ import (
 )
 
 type App struct {
-	Store store.Store
-	// Notes keeps the person's notes next to the budgets.
-	Notes     store.NoteStore
+	Store     store.Store
 	Templates *templates.Registry
 	// Rates are the exchange-rate providers by source name (see budget.RateSources).
 	Rates map[budget.RateSource]rates.Provider
@@ -40,9 +38,6 @@ func New(s store.Store, t *templates.Registry) *App {
 		t = templates.Builtin()
 	}
 	a := &App{Store: s, Templates: t, Now: time.Now}
-	if notes, ok := s.(store.NoteStore); ok {
-		a.Notes = notes
-	}
 	a.Rates = rates.Registry(&http.Client{Timeout: 20 * time.Second}, func() string {
 		st, _ := a.Settings()
 		return st.CoinGeckoAPIKey

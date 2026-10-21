@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"bbbudget/internal/app"
 	"bbbudget/internal/store"
 )
 
@@ -18,9 +17,6 @@ func (s *server) listNotes(w http.ResponseWriter, r *http.Request) {
 		s.failNote(w, r, err)
 		return
 	}
-	if notes == nil {
-		notes = []store.Note{}
-	}
 	writeJSON(w, http.StatusOK, notesBody{Notes: notes})
 }
 
@@ -32,19 +28,28 @@ func (s *server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// failNote maps the note errors to statuses and leaves everything else to fail.
+type noteError struct {
+	sentinel error
+	status   int
+}
+
+var noteErrors = []noteError{
+	{sentinel: store.ErrNoteNotFound, status: http.StatusNotFound},
+	{sentinel: store.ErrTooManyNotes, status: http.StatusConflict},
+	{sentinel: store.ErrNoteEmpty, status: http.StatusBadRequest},
+	{sentinel: store.ErrNoteTooLong, status: http.StatusBadRequest},
+	{sentinel: store.ErrBadNoteSource, status: http.StatusBadRequest},
+	{sentinel: store.ErrBadNoteID, status: http.StatusBadRequest},
+}
+
+// failNote answers a note error with the sentinel's own message, never with
+// the wrapped text, and leaves everything else to fail.
 func (s *server) failNote(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, store.ErrNoteNotFound), errors.Is(err, app.ErrNotesUnavailable):
-		writeErr(w, http.StatusNotFound, err.Error(), nil)
-	case errors.Is(err, store.ErrTooManyNotes):
-		writeErr(w, http.StatusConflict, err.Error(), nil)
-	case errors.Is(err, store.ErrNoteEmpty),
-		errors.Is(err, store.ErrNoteTooLong),
-		errors.Is(err, store.ErrBadNoteSource),
-		errors.Is(err, store.ErrBadNoteID):
-		writeErr(w, http.StatusBadRequest, err.Error(), nil)
-	default:
-		s.fail(w, r, err)
+	for _, known := range noteErrors {
+		if errors.Is(err, known.sentinel) {
+			writeErr(w, known.status, known.sentinel.Error(), nil)
+			return
+		}
 	}
+	s.fail(w, r, err)
 }
