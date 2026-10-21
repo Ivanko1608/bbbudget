@@ -118,7 +118,7 @@ func fsRead(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, _ := f.Stat()
 	buf := make([]byte, st.Size())
 	_, err = f.Read(buf)

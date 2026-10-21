@@ -68,8 +68,12 @@ func TestCLI(t *testing.T) {
 		"items:\n" +
 		"  - {name: Pay, amount: 2000.10, category: pay}\n" +
 		"  - {name: Rent, amount: 950, category: living}\n"
-	os.WriteFile(file, []byte(mine), 0o600)
-	if out, err := runCLI(t, "import", "mine", file, "-dir", dir); err != nil {
+	err = os.WriteFile(file, []byte(mine), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = runCLI(t, "import", "mine", file, "-dir", dir)
+	if err != nil {
 		t.Fatalf("import: %v %s", err, out)
 	}
 	out, err = runCLI(t, "report", "mine", "-dir", dir)
@@ -77,7 +81,10 @@ func TestCLI(t *testing.T) {
 	requireContains(t, "report after import", out, "£1,050.10")
 	tplDir := t.TempDir()
 	starter := "description: My starter\nbase_currency: EUR\ncategories: [{label: Living}]\n"
-	os.WriteFile(filepath.Join(tplDir, "starter.yaml"), []byte(starter), 0o600)
+	err = os.WriteFile(filepath.Join(tplDir, "starter.yaml"), []byte(starter), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err = runCLI(t, "templates", "-templates", tplDir)
 	requireSuccess(t, "templates", out, err)
 	requireContains(t, "templates", out, "starter")
@@ -130,7 +137,7 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	}
 	for _, bad := range badSettings {
 		args := append([]string{"settings", "-settings", conf}, bad...)
-		if _, err := runCLI(t, args...); err == nil {
+		if _, err = runCLI(t, args...); err == nil {
 			t.Errorf("accepted %v", bad)
 		}
 	}
@@ -150,19 +157,22 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	offlineDryRun := []string{
 		"rates", "home", "-only", "usd", "-dry-run", "-dir", dir, "-settings", conf,
 	}
-	if out, err := runCLI(t, offlineDryRun...); err == nil {
+	if out, err = runCLI(t, offlineDryRun...); err == nil {
 		t.Fatalf("offline dry run: %s", out)
 	}
 	// Dry runs check currencies exactly like real runs.
 	unknownDryRun := []string{
 		"rates", "home", "-only", "XYZ", "-dry-run", "-dir", dir, "-settings", conf,
 	}
-	if out, err := runCLI(t, unknownDryRun...); err == nil {
+	if out, err = runCLI(t, unknownDryRun...); err == nil {
 		t.Fatalf("dry run accepted an unknown currency: %s", out)
 	}
 
 	// A broken settings file is reported, not silently replaced by defaults.
-	os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)
+	err = os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = runCLI(t, "list", "-dir", dir, "-settings", conf)
 	if err == nil {
 		t.Fatal("broken settings file accepted")
@@ -197,7 +207,7 @@ func TestStdioMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	if cs.InitializeResult().Instructions == "" {
 		t.Error("server instructions missing")

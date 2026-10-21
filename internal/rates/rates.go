@@ -77,7 +77,7 @@ func get(
 	if err != nil {
 		return nil, &FetchError{Provider: provider, Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
 		return nil, &FetchError{Provider: provider, Err: err}

@@ -60,24 +60,24 @@ func setupWith(t *testing.T, opts Options) *harness {
 	a.Now = func() time.Time { return time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC) }
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
 	on := true // fetching is off by default; these tests fetch
-	if _, err := a.UpdateSettings(settings.Patch{FetchRates: &on}); err != nil {
+	if _, err = a.UpdateSettings(settings.Patch{FetchRates: &on}); err != nil {
 		t.Fatal(err)
 	}
 	fromCLI := store.Origin{Source: store.SourceCLI}
 	localizer := a.SettingsLocalizer()
-	if _, err := a.Create(ctx, fromCLI, localizer, "home", "Home", "example"); err != nil {
+	if _, err = a.Create(ctx, fromCLI, localizer, "home", "Home", "example"); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(a, opts)
 	ct, srvT := mcp.NewInMemoryTransports()
-	if _, err := srv.Connect(ctx, srvT, nil); err != nil {
+	if _, err = srv.Connect(ctx, srvT, nil); err != nil {
 		t.Fatal(err)
 	}
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, ct, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cs.Close() })
+	t.Cleanup(func() { _ = cs.Close() })
 	return &harness{t, cs, a}
 }
 
@@ -100,7 +100,9 @@ func (h *harness) call(name string, args map[string]any, wantErr bool) map[strin
 	var out map[string]any
 	if strings.HasPrefix(text, "[") {
 		var arr []any
-		json.Unmarshal([]byte(text), &arr)
+		if err = json.Unmarshal([]byte(text), &arr); err != nil {
+			h.t.Fatal(err)
+		}
 		return map[string]any{"items": arr}
 	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
@@ -143,7 +145,9 @@ func TestToolsAreListedWithStringAmounts(t *testing.T) {
 	var schema struct {
 		Properties map[string]struct{ Type any } `json:"properties"`
 	}
-	json.Unmarshal(raw, &schema)
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
 	if schema.Properties["amount"].Type != "string" {
 		t.Errorf("amount must be a string in the schema: %s", raw)
 	}
