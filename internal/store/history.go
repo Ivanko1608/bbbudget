@@ -382,7 +382,7 @@ func (s *FileStore) appendHistory(id string, l line) error {
 	if err != nil {
 		return err
 	}
-	if err := writeLine(f, data); err != nil {
+	if err = writeLine(f, data); err != nil {
 		_ = f.Close()
 		return err
 	}
