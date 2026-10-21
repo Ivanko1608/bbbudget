@@ -127,6 +127,27 @@ func TestFixtureGolden(t *testing.T) {
 }
 
 // A single EUR debt, worked by hand month by month.
+func TestFixtureCategoryTotals(t *testing.T) {
+	r := mustReport(t, fixture(t))
+
+	totals := r.CategoryTotals
+
+	eqMoney(t, "home monthly", totals["home"].MonthlyEquivalent, "1853.41")
+	eqMoney(t, "home one-off", totals["home"].OneOff, "0.00")
+	eqMoney(t, "education monthly", totals["education"].MonthlyEquivalent, "892.98")
+	eqMoney(t, "travel monthly", totals["travel"].MonthlyEquivalent, "0.00")
+	eqMoney(t, "travel one-off", totals["travel"].OneOff, "600.00")
+	eqMoney(t, "income monthly", totals["income"].MonthlyEquivalent, "3900.00")
+}
+
+func TestFixtureLeftAfterRouting(t *testing.T) {
+	r := mustReport(t, fixture(t))
+
+	m0 := r.Months[0]
+
+	eqMoney(t, "left after routing", m0.LeftAfterRouting, "317.49")
+}
+
 func TestDebtPayoffGolden(t *testing.T) {
 	b := blank()
 	b.ExtraToDebtPct = d("50")

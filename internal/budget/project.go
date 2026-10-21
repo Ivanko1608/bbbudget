@@ -69,6 +69,8 @@ type Month struct {
 	ToSavings money.Money `json:"to_savings"`
 	// Saved is ToSavings − FromSavings: the net change in savings.
 	Saved money.Money `json:"saved"`
+	// LeftAfterRouting is ToSavings − IncomeToPots: what the month's own money put into pots.
+	LeftAfterRouting money.Money `json:"left_after_routing"`
 	// Savings is all pots together at the end of the month.
 	Savings     money.Money       `json:"savings"`
 	Pots        []PotMonth        `json:"pots"`
@@ -490,6 +492,7 @@ func (s *monthState) closeMonth() Month {
 	m.Debts = s.debts
 	m.DebtPayments = m.DebtMinCost.Add(m.Payoff).Add(m.ExtraCost)
 	m.Saved = m.ToSavings.Sub(m.FromSavings)
+	m.LeftAfterRouting = m.ToSavings.Sub(m.IncomeToPots)
 	m.Savings = s.zero
 	for k := range s.potMonths {
 		s.potMonths[k].Balance = s.pots[k]

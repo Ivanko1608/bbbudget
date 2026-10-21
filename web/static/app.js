@@ -495,20 +495,9 @@ function renderItemNumbers() {
     const foreign = l.amount.currency !== base;
     el.textContent = once ? (foreign ? t("base.once_foreign", { amount: money(v) }) : t("base.once")) : foreign || l.schedule.every !== 1 ? t("base.per_month", { amount: money(v) }) : "";
   });
-  // Group totals, display only: recurring per month, one-offs separately.
-  const totals = {}, once = {};
-  for (const l of S.report.items) {
-    const cat = S.budget.categories.some((c) => c.id === l.category) ? l.category : "";
-    totals[cat] = (totals[cat] || 0) + parseFloat(l.monthly_equivalent_base.amount);
-    if (l.schedule.every === 0) once[cat] = (once[cat] || 0) + parseFloat(l.per_occurrence_base.amount);
-  }
-  const fmt = (v) => esc(money({ amount: v.toFixed(2), currency: base })); // display only
   document.querySelectorAll("[data-total]").forEach((el) => {
-    const k = el.dataset.total, m = totals[k] || 0, o = once[k] || 0;
-    const parts = [];
-    if (m || !o) parts.push(`${fmt(m)}<small>${esc(t("unit.per_month"))}</small>`);
-    if (o) parts.push(`${fmt(o)}<small>${esc(t("unit.once"))}</small>`);
-    el.innerHTML = parts.join(" + ");
+    const total = S.report.category_totals[el.dataset.total];
+    el.innerHTML = total ? categoryTotalHTML(total) : "";
   });
   // Schedule texts come from the report too; add where a routed item goes.
   document.querySelectorAll('#items .line[data-row^="items."]').forEach((row) => {
@@ -1068,6 +1057,19 @@ function renderInsights() {
     (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(S.allInsights ? t("ins.fewer") : t("ins.all", { count: items.length }))}</button>` : "");
 }
 
+function isZeroMoney(value) {
+  return parseFloat(value.amount) === 0;
+}
+
+function categoryTotalHTML(total) {
+  const monthly = !isZeroMoney(total.monthly_equivalent_base);
+  const once = !isZeroMoney(total.one_off_base);
+  const parts = [];
+  if (monthly || !once) parts.push(`${esc(money(total.monthly_equivalent_base))}<small>${esc(t("unit.per_month"))}</small>`);
+  if (once) parts.push(`${esc(money(total.one_off_base))}<small>${esc(t("unit.once"))}</small>`);
+  return parts.join(" + ");
+}
+
 function renderOutputs() {
   const r = S.report;
   if (!r) return;
@@ -1084,9 +1086,8 @@ function renderOutputs() {
     .filter(([, v]) => parseFloat(v.amount) > 0)
     .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)", ""]);
   if (num(m0.debt_payments) > 0) segs.push([t("split.debt"), m0.debt_payments, "var(--debt)", "hatch"]);
-  const left = { amount: (num(m0.to_savings) - num(m0.income_to_pots)).toFixed(2), currency: r.base_currency }; // display only
   if (num(m0.income_to_pots) > 0) segs.push([t("split.straight"), m0.income_to_pots, "var(--save)", "hatch-save"]);
-  if (num(left) > 0) segs.push([t("split.savings"), left, "var(--save)", ""]);
+  if (num(m0.left_after_routing) > 0) segs.push([t("split.savings"), m0.left_after_routing, "var(--save)", ""]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
   $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");
