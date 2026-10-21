@@ -318,6 +318,8 @@ func opsHelp() string {
 	return b.String() + opsValueFieldsHelp + opsScheduleHelp
 }
 
+const resourceMIMEType = "application/json"
+
 type toolKind int
 
 const (
@@ -428,7 +430,7 @@ func (h *handlers) registerBudgetResource(s *mcp.Server) {
 	template := &mcp.ResourceTemplate{
 		Name:        "budget",
 		URITemplate: "budget://{id}",
-		MIMEType:    "application/json",
+		MIMEType:    resourceMIMEType,
 		Description: "The raw stored budget document (exact decimal strings).",
 	}
 	s.AddResourceTemplate(template, h.readBudgetResource)
@@ -448,7 +450,7 @@ func (h *handlers) readBudgetResource(
 	}
 	contents := &mcp.ResourceContents{
 		URI:      req.Params.URI,
-		MIMEType: "application/json",
+		MIMEType: resourceMIMEType,
 		Text:     string(raw),
 	}
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
