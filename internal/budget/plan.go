@@ -255,11 +255,10 @@ func (c *compiler) checkExtraToDebtPct() {
 }
 
 func (c *compiler) compileDebtStrategy() {
-	switch c.budget.DebtStrategy {
-	case StrategyAvalanche, StrategySnowball, StrategyListed:
-	case "":
+	switch {
+	case c.budget.DebtStrategy == "":
 		c.plan.Strategy = StrategyAvalanche
-	default:
+	case !slices.Contains(Strategies, c.budget.DebtStrategy):
 		c.add("debt_strategy", "issue.strategy", nil)
 	}
 }

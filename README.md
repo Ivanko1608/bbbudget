@@ -410,6 +410,7 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `GET /api/rates?base=EUR&codes=USD,BTC&source=auto` | quote rates, nothing saved; `409` when fetching is off |
 | `GET /api/settings` · `PUT /api/settings` `{fetch_rates?, default_rate_source?, auto_refresh?, coingecko_api_key?, locale?, assistant_provider?, assistant_model?, assistant_url?, assistant_api_key?}` | app settings (keys are reported only as `coingecko_api_key_set` and `assistant_api_key_set`, with `assistant_status` saying whether the assistant is ready) |
 | `POST /api/budgets/{id}/chat` `{message, conversation?}` | ask the assistant; server-sent events `text`, `tool`, `changed`, then `error` if the reply failed, and always `done` with the `conversation` to continue |
+| `GET /api/notes` · `DELETE /api/notes/{id}` | the notes kept about you, each with `text`, `source` (`chat`, `statement_import` or `connector`) and `created_at`; at most 50 notes of 200 characters; kept in `.notes.json` beside the budgets |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
 
 The server binds to 127.0.0.1 and accepts only these requests:
