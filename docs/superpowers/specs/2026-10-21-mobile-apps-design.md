@@ -64,8 +64,14 @@ app, sign in, and everything works.
 
 - The repo rules apply to new code in every language: CLAUDE.md, CONTRIBUTING.md,
   `make check`, and dependencies pointing inward.
-- AGPL-3.0-or-later for the server. Self-hosting stays free. The licence for
-  `mobile/` is open; see "Open".
+- AGPL-3.0-or-later for the server. Self-hosting stays free.
+- `mobile/` is AGPL-3.0-or-later too, with an additional permission under
+  section 7 that allows distribution through app stores whose terms add
+  restrictions, as long as the complete source is offered under the same
+  terms. The notice lives in `mobile/`, and CONTRIBUTING.md says contributions
+  to `mobile/` carry the permission. Without it, the first outside contribution
+  could block publishing the app, because App Store terms conflict with the
+  GPL family and there's no CLA.
 - No real personal data in fixtures, screenshots or store listings.
 - No telemetry, as the README promises. That rules out Firebase and analytics
   SDKs in the app.
@@ -204,6 +210,9 @@ Claude / ChatGPT app ──MCP + OAuth──▶ /mcp on the hosted server only
   the provider and its retention period (30 days by default at Anthropic).
   Prompt caching on the system prompt and tool definitions is on from the
   start. The model can change later if the replacement meets the same terms.
+- **No product picks:** the system prompt tells the assistant never to
+  recommend specific investments, banks, loans or other financial products.
+  That keeps it a planning tool, well away from regulated financial advice.
 - **Connector, hosted only:** `/mcp` on the hosted server accepts OAuth sign-in
   following the MCP authorization spec, so Claude or ChatGPT can add bbbudget as
   a connector. Those apps call the server from their own backends and require
@@ -284,6 +293,13 @@ make it visible; they don't make the model immune.
   and its retention period, and the hosting region.
 - Data at rest on encrypted disks, with backups. Export and account deletion
   are in the app.
+- **Legal footing before the first paid account:**
+  - a limited company runs the service, so claims fall on the company and not
+    on the maintainer personally;
+  - terms of service say bbbudget is a planning tool, not financial advice,
+    and that the person makes the decisions;
+  - professional liability insurance;
+  - a lawyer reviews the company form and the terms.
 
 ## Billing (decided)
 
@@ -305,6 +321,7 @@ make it visible; they don't make the model immune.
 2. **Flutter app MVP**:
    - `mobile/` in this repo, the brand theme, and the connect screen (pair only);
    - the Overview, Ask (SSE chat) and Plan tabs, plus editing an item's amount;
+   - the app store licence notice in `mobile/` and CONTRIBUTING.md;
    - CI for Android and iOS;
    - a Google Play closed test with 12 testers, so the 14-day clock starts early.
 3. **Assistant**: notes with the untrusted-text rules, BYOK settings in the
@@ -313,10 +330,14 @@ make it visible; they don't make the model immune.
    - sign-in, account provisioning, metering and the cap;
    - billing, the privacy page;
    - operations: backups, export, in-app deletion;
-   - the OAuth connector.
+   - the OAuth connector;
+   - the company, terms of service and insurance (maintainer).
 5. **Store release**: signing, store listings, review. Some of it only the
    maintainer can do: developer accounts, tax and banking forms, and trader
-   details.
+   details. Until hosting sells anything, the apps are free and published as a
+   non-trader, so no contact details go on the store page. When hosting
+   launches, the company becomes the trader, with a business address (a
+   virtual office, never the maintainer's home) and a separate phone number.
 6. **Later**: push and its relay, web sign-in for the hosted UI.
 
 ## Left to the builder
@@ -329,14 +350,3 @@ make it visible; they don't make the model immune.
 - How `mobile/` joins `make check`, for example a `make mobile` target that CI runs.
 - Hosting provider and region for the hosted service, stated on the privacy page.
 - The Flutter version pin and the minimum Android and iOS versions.
-
-## Open
-
-- **Licence for `mobile/`.** The FSF considers App Store terms incompatible
-  with GPL-family licences. With no CLA, the first outside contribution to
-  `mobile/` could block publishing the app. Options: MIT or Apache-2.0 for
-  `mobile/`, or AGPL with an explicit App Store exception, stated in
-  CONTRIBUTING.md. Needed before milestone 2.
-- **Publishing as an individual or a company.** As an individual, the EU trader
-  rules put the maintainer's own address and phone number on the public store
-  page. Needed before the milestone 2 closed test.
