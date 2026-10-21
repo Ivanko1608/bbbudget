@@ -40,11 +40,20 @@ func (e *RateError) Unwrap() error { return e.Err }
 // ErrBadInput marks a request the caller got wrong (unknown currency or source).
 var ErrBadInput = errors.New("bad input")
 
+func (a *App) requireFetching() error {
+	s, err := a.Settings()
+	if err != nil {
+		return err
+	}
+	if !s.FetchRates {
+		return ErrRatesOff
+	}
+	return nil
+}
+
 func (a *App) provider(source budget.RateSource) (rates.Provider, error) {
-	if s, err := a.Settings(); err != nil {
+	if err := a.requireFetching(); err != nil {
 		return nil, err
-	} else if !s.FetchRates {
-		return nil, ErrRatesOff
 	}
 	if source == "" || source == budget.RateSourceManual {
 		source = budget.RateSourceAuto
@@ -111,7 +120,8 @@ func (a *App) Quote(
 func (a *App) RefreshRates(
 	ctx context.Context, origin store.Origin, id string, codes []string,
 ) (*View, []RateUpdate, error) {
-	r, targets, updates, err := a.fetchRates(ctx, id, codes)
+	got, err := a.fetchRates(ctx, id, codes)
+	r, targets, updates := got.record, got.targets, got.updates
 	if err != nil || len(targets) == 0 {
 		if err != nil {
 			return nil, updates, err
@@ -165,8 +175,8 @@ func (a *App) RefreshRates(
 // PreviewRates is RefreshRates without saving: the same currencies, sources
 // and providers, so a dry run shows exactly what a refresh would do.
 func (a *App) PreviewRates(ctx context.Context, id string, codes []string) ([]RateUpdate, error) {
-	_, _, updates, err := a.fetchRates(ctx, id, codes)
-	return updates, err
+	got, err := a.fetchRates(ctx, id, codes)
+	return got.updates, err
 }
 
 // changedSince reports whether a currency's rate or source was edited.
@@ -174,14 +184,20 @@ func changedSince(was, now budget.CurrencyRate) bool {
 	return was.Source != now.Source || was.PerBase.Cmp(now.PerBase) != 0
 }
 
+type fetchedRates struct {
+	record  store.Record
+	targets []budget.CurrencyRate
+	updates []RateUpdate
+}
+
 // fetchRates picks the currencies to refresh and fetches them, outside any
 // store lock (the network can be slow), one request per source. targets[i]
 // is the currency (with the source it is fetched from) behind updates[i].
 // It fails only if nothing at all could be fetched.
-func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.Record, []budget.CurrencyRate, []RateUpdate, error) {
+func (a *App) fetchRates(ctx context.Context, id string, codes []string) (fetchedRates, error) {
 	r, err := a.Store.Get(ctx, id)
 	if err != nil {
-		return r, nil, nil, err
+		return fetchedRates{record: r}, err
 	}
 	b := r.Budget
 	var targets []budget.CurrencyRate
@@ -196,7 +212,7 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 			code = strings.ToUpper(strings.TrimSpace(code))
 			i := slices.IndexFunc(b.Currencies, func(c budget.CurrencyRate) bool { return c.Code == code })
 			if i < 0 {
-				return r, nil, nil, &budget.NoMatchError{Kind: "currency", Ref: code}
+				return fetchedRates{record: r}, &budget.NoMatchError{Kind: "currency", Ref: code}
 			}
 			c := b.Currencies[i]
 			if c.IsManual() {
@@ -206,12 +222,10 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 		}
 	}
 	if len(targets) == 0 {
-		return r, nil, []RateUpdate{}, nil
+		return fetchedRates{record: r, updates: []RateUpdate{}}, nil
 	}
-	if s, err := a.Settings(); err != nil {
-		return r, nil, nil, err
-	} else if !s.FetchRates {
-		return r, nil, nil, ErrRatesOff
+	if err := a.requireFetching(); err != nil {
+		return fetchedRates{record: r}, err
 	}
 
 	byRateSource := map[budget.RateSource][]string{}
@@ -243,11 +257,11 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (store.
 	}
 	if !ok {
 		if len(fetchErrs) > 0 {
-			return r, nil, updates, &RateError{errors.Join(fetchErrs...)}
+			return fetchedRates{record: r, updates: updates}, &RateError{errors.Join(fetchErrs...)}
 		}
-		return r, nil, updates, &RateError{errors.New(updates[0].Error)}
+		return fetchedRates{record: r, updates: updates}, &RateError{errors.New(updates[0].Error)}
 	}
-	return r, targets, updates, nil
+	return fetchedRates{record: r, targets: targets, updates: updates}, nil
 }
 
 // SetCurrency adds or edits a currency. A new currency without a per_base,

@@ -84,7 +84,12 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 		if label != "builtin" {
 			source = filepath.Join(label, e.Name())
 		}
-		t, err := parse(fsys, path.Join(root, e.Name()), name, ext[1:], source)
+		t, err := parse(fsys, templateSource{
+			file:   path.Join(root, e.Name()),
+			name:   name,
+			format: ext[1:],
+			source: source,
+		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("template %s: %w", source, err))
 			continue
@@ -94,11 +99,18 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 	return errors.Join(errs...)
 }
 
-func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
-	if !nameRe.MatchString(name) {
+type templateSource struct {
+	file   string
+	name   string
+	format string
+	source string
+}
+
+func parse(fsys fs.FS, src templateSource) (Template, error) {
+	if !nameRe.MatchString(src.name) {
 		return Template{}, fmt.Errorf("file name must be lowercase letters, digits, '-' or '_' (it becomes the template name)")
 	}
-	f, err := fsys.Open(file)
+	f, err := fsys.Open(src.file)
 	if err != nil {
 		return Template{}, err
 	}
@@ -107,7 +119,7 @@ func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
 	if err != nil {
 		return Template{}, err
 	}
-	doc, err := budget.ParseDocument(data, format) // rejects oversized input
+	doc, err := budget.ParseDocument(data, src.format) // rejects oversized input
 	if err != nil {
 		return Template{}, err
 	}
@@ -115,12 +127,12 @@ func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
 	probe := doc
 	probe.StartMonth = "2000-01"
 	if probe.Name == "" {
-		probe.Name = name
+		probe.Name = src.name
 	}
 	if _, err := budget.Compile(probe); err != nil {
 		return Template{}, err
 	}
-	return Template{Name: name, Description: doc.Description, Source: source, Doc: doc}, nil
+	return Template{Name: src.name, Description: doc.Description, Source: src.source, Doc: doc}, nil
 }
 
 // List returns templates sorted by name.
