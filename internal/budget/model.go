@@ -25,6 +25,8 @@ const (
 	StrategyListed    = "listed"    // in the order the debts are listed
 )
 
+var Strategies = []string{StrategyAvalanche, StrategySnowball, StrategyListed}
+
 // Budget is the stored, editable document.
 type Budget struct {
 	Name         string `json:"name"`
