@@ -128,10 +128,6 @@ func (a *App) RefreshRates(
 		v, err := view(fetched.record)
 		return v, fetched.updates, err
 	}
-	original := map[string]budget.CurrencyRate{} // each currency as it was when fetching started
-	for _, c := range fetched.record.Budget.Currencies {
-		original[c.Code] = c
-	}
 	var skipped map[string]bool
 	updateRates := func(cur budget.Budget) (budget.Budget, error) {
 		if cur.BaseCurrency != fetched.record.Budget.BaseCurrency {
@@ -143,8 +139,7 @@ func (a *App) RefreshRates(
 			if u.Error != "" {
 				continue
 			}
-			j := slices.IndexFunc(cur.Currencies, func(c budget.CurrencyRate) bool { return c.Code == u.Code })
-			if j < 0 || changedSince(original[u.Code], cur.Currencies[j]) {
+			if isCurrencyChangedOrRemoved(u.Code, fetched.record.Budget, cur) {
 				skipped[u.Code] = true
 				continue
 			}
@@ -178,9 +173,19 @@ func (a *App) PreviewRates(ctx context.Context, id string, codes []string) ([]Ra
 	return fetched.updates, err
 }
 
-// changedSince reports whether a currency's rate or source was edited.
-func changedSince(was, now budget.CurrencyRate) bool {
-	return was.Source != now.Source || was.PerBase.Cmp(now.PerBase) != 0
+// isCurrencyChangedOrRemoved reports whether currentBudget edited or dropped the
+// currency since originalBudget was read.
+func isCurrencyChangedOrRemoved(
+	code string, originalBudget, currentBudget budget.Budget,
+) bool {
+	originalRate, _ := originalBudget.GetCurrencyRate(code)
+	currentRate, found := currentBudget.GetCurrencyRate(code)
+	if !found {
+		return true
+	}
+	sourceChanged := originalRate.Source != currentRate.Source
+	rateChanged := originalRate.PerBase.Cmp(currentRate.PerBase) != 0
+	return sourceChanged || rateChanged
 }
 
 type fetchedRates struct {
@@ -209,15 +214,14 @@ func (a *App) fetchRates(ctx context.Context, id string, codes []string) (fetche
 	} else {
 		for _, code := range codes {
 			code = strings.ToUpper(strings.TrimSpace(code))
-			i := slices.IndexFunc(b.Currencies, func(c budget.CurrencyRate) bool { return c.Code == code })
-			if i < 0 {
+			currency, found := b.GetCurrencyRate(code)
+			if !found {
 				return fetchedRates{record: r}, &budget.NoMatchError{Kind: "currency", Ref: code}
 			}
-			c := b.Currencies[i]
-			if c.IsManual() {
-				c.Source = a.defaultRateSource()
+			if currency.IsManual() {
+				currency.Source = a.defaultRateSource()
 			}
-			targets = append(targets, c)
+			targets = append(targets, currency)
 		}
 	}
 	if len(targets) == 0 {
@@ -277,8 +281,8 @@ func (a *App) SetCurrency(
 	if err != nil {
 		return nil, err
 	}
-	i := slices.IndexFunc(r.Budget.Currencies, func(c budget.CurrencyRate) bool { return c.Code == code })
-	if patch.PerBase == nil && (i < 0 || patch.Source != nil) {
+	_, exists := r.Budget.GetCurrencyRate(code)
+	if patch.PerBase == nil && (!exists || patch.Source != nil) {
 		src := a.defaultRateSource()
 		if patch.Source != nil {
 			src = *patch.Source
