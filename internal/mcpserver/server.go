@@ -486,7 +486,7 @@ func (h *handlers) addItem(ctx context.Context, in AddItemIn) (any, error) {
 		Amount:   in.Amount,
 		Currency: in.Currency,
 		Category: in.Category,
-		Schedule: in.ScheduleIn.spec(),
+		Schedule: in.spec(),
 	}
 	return h.apply(ctx, in.WriteRef, store.AnyRevision, budget.NewOp(budget.OpAddItem, "", input))
 }
@@ -497,7 +497,7 @@ func (h *handlers) updateItem(ctx context.Context, in UpdateItemIn) (any, error)
 		Amount:   in.Amount,
 		Currency: in.Currency,
 		Category: in.Category,
-		Schedule: in.ScheduleIn.spec(),
+		Schedule: in.spec(),
 	}
 	op := budget.NewOp(budget.OpSetItem, in.Item, patch)
 	return h.apply(ctx, in.WriteRef, store.AnyRevision, op)

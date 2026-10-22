@@ -9,7 +9,12 @@ import (
 
 // The manifest makes the UI installable as an app; browsers only accept it
 // with its own media type, which Go doesn't know by default.
-func init() { mime.AddExtensionType(".webmanifest", "application/manifest+json") }
+func init() {
+	err := mime.AddExtensionType(".webmanifest", "application/manifest+json")
+	if err != nil {
+		panic(err)
+	}
+}
 
 //go:embed static
 var files embed.FS

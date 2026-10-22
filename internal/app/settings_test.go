@@ -136,13 +136,13 @@ func TestRefreshIfDue(t *testing.T) {
 	eq(t, "currencies updated", st.Updated, 1)
 	eq(t, "failures", len(st.Failures), 0)
 	now = now.Add(59 * time.Minute)
-	if ran, _ := a.RefreshIfDue(ctx); ran {
+	if ran, _ = a.RefreshIfDue(ctx); ran {
 		t.Fatal("ran before the hour was up")
 	}
 	now = now.Add(time.Minute)
 	// Make BTC fail on the next run: the failure is reported, not fatal.
 	btcToGecko := setCurrency("BTC", toGecko)
-	if _, err := a.Apply(ctx, byTest, "home", store.AnyRevision, btcToGecko); err != nil {
+	if _, err = a.Apply(ctx, byTest, "home", store.AnyRevision, btcToGecko); err != nil {
 		t.Fatal(err)
 	}
 	ran, err = a.RefreshIfDue(ctx)
@@ -165,7 +165,7 @@ func TestCoinGeckoKeyComesFromSettings(t *testing.T) {
 	got := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got <- r.Header.Get("x-cg-demo-api-key")
-		w.Write([]byte(`{"bitcoin":{"eur":70000}}`))
+		_, _ = w.Write([]byte(`{"bitcoin":{"eur":70000}}`))
 	}))
 	defer srv.Close()
 
