@@ -249,14 +249,14 @@ func (a *App) fetchRates(
 		}
 	}
 	updates := make([]RateUpdate, len(targets))
-	ok := false
+	anyFetched := false
 	for i, c := range targets {
 		u := got[c.Code]
 		u.Code, u.Source, u.Old = c.Code, c.Source, c.PerBase
 		updates[i] = u
-		ok = ok || u.Error == ""
+		anyFetched = anyFetched || u.Error == ""
 	}
-	if !ok {
+	if !anyFetched {
 		if len(fetchErrs) > 0 {
 			return updates, &RateError{errors.Join(fetchErrs...)}
 		}
