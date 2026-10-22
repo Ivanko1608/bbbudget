@@ -195,7 +195,7 @@ func isCurrencyChangedOrRemoved(
 	return sourceChanged || rateChanged
 }
 
-// fetchRates fetches fresh rates for original's currencies named in codes, or for every
+// fetchRates fetches fresh rates for the budget's currencies named in codes, or for every
 // non-manual currency when codes is empty, one request per source. It runs
 // outside any store lock because the network can be slow. It fails only if
 // nothing at all could be fetched.
