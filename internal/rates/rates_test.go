@@ -53,7 +53,7 @@ func serve(t *testing.T, body string, hits *atomic.Int32) *httptest.Server {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(s.Close)
 	return s
@@ -108,7 +108,7 @@ func TestCoinGeckoInvertsPrice(t *testing.T) {
 	var gotQuery string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		w.Write([]byte(`{"bitcoin":{"eur":72565},"tether":{"eur":0.893}}`))
+		_, _ = w.Write([]byte(`{"bitcoin":{"eur":72565},"tether":{"eur":0.893}}`))
 	}))
 	defer s.Close()
 	p := &CoinGeckoProvider{URL: s.URL, Now: func() time.Time { return time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) }}
@@ -165,7 +165,9 @@ func TestCache(t *testing.T) {
 		t.Fatalf("%d fetches, want 1", hits.Load())
 	}
 	now = now.Add(2 * time.Hour)
-	c.Quotes(context.Background(), "EUR", []string{"USD"})
+	if _, err := c.Quotes(context.Background(), "EUR", []string{"USD"}); err != nil {
+		t.Fatal(err)
+	}
 	if hits.Load() != 2 {
 		t.Fatal("expired entry not refetched")
 	}
@@ -208,17 +210,18 @@ func TestCoinGeckoKey(t *testing.T) {
 	var key string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key = r.Header.Get("x-cg-demo-api-key")
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer s.Close()
 	ctx := context.Background()
 
 	t.Setenv("COINGECKO_API_KEY", "from-env")
-	(&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"BTC"})
+	_, _ = (&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"BTC"})
 	if key != "from-env" {
 		t.Fatalf("env fallback: %q", key)
 	}
-	(&CoinGeckoProvider{URL: s.URL, Key: func() string { return "from-settings" }}).Quotes(ctx, "EUR", []string{"BTC"})
+	fromSettings := &CoinGeckoProvider{URL: s.URL, Key: func() string { return "from-settings" }}
+	_, _ = fromSettings.Quotes(ctx, "EUR", []string{"BTC"})
 	if key != "from-settings" {
 		t.Fatalf("Key func wins: %q", key)
 	}
@@ -282,7 +285,7 @@ func TestCacheRemembersMisses(t *testing.T) {
 	}
 	// A failed request is not cached as "missing".
 	failing := NewCache(Fixed{ID: "x", Err: errors.New("down")}, time.Hour)
-	failing.Quotes(context.Background(), "EUR", []string{"USD"})
+	_, _ = failing.Quotes(context.Background(), "EUR", []string{"USD"})
 	if len(failing.entries) != 0 {
 		t.Fatal("cached a failure")
 	}

@@ -354,7 +354,7 @@ func appendText(path, text string) error {
 		return err
 	}
 	if _, err := f.WriteString(text); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()

@@ -126,6 +126,36 @@ func TestFixtureGolden(t *testing.T) {
 	eq(t, "last month key", r.Months[11].Key, "2027-09")
 }
 
+func TestFixtureCategoryTotals(t *testing.T) {
+	r := mustReport(t, fixture(t))
+
+	totals := r.CategoryTotals
+
+	eqMoney(t, "home monthly", totals["home"].RecurringPerMonth, "1853.41")
+	eqMoney(t, "home one-off", totals["home"].OneOffTotal, "0.00")
+	eqMoney(t, "education monthly", totals["education"].RecurringPerMonth, "892.98")
+	eqMoney(t, "travel monthly", totals["travel"].RecurringPerMonth, "0.00")
+	eqMoney(t, "travel one-off", totals["travel"].OneOffTotal, "600.00")
+	eqMoney(t, "income monthly", totals["income"].RecurringPerMonth, "3900.00")
+}
+
+func TestFixtureLeftoverToPots(t *testing.T) {
+	r := mustReport(t, fixture(t))
+
+	m0 := r.Months[0]
+
+	eqMoney(t, "leftover to pots", m0.LeftoverToPots, "317.49")
+}
+
+func TestCategoryWithoutItemsTotalsZero(t *testing.T) {
+	r := mustReport(t, blank())
+
+	living := r.CategoryTotals["living"]
+
+	eqMoney(t, "living monthly", living.RecurringPerMonth, "0.00")
+	eqMoney(t, "living one-off", living.OneOffTotal, "0.00")
+}
+
 // A single EUR debt, worked by hand month by month.
 func TestDebtPayoffGolden(t *testing.T) {
 	b := blank()
