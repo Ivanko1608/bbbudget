@@ -315,6 +315,9 @@ func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
 
 	for _, want := range []string{
 		"Never name or recommend a specific investment",
+		"that the user hasn't named",
+		"compare them",
+		"Don't add options of your own",
 		"Give general guidance freely",
 		"This holds in every mode",
 	} {
