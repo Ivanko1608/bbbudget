@@ -84,7 +84,7 @@ test("the assistant panel shows the not-advice notice", { skip }, async () => {
 
   await page.click("#chatBtn");
 
-  assert.match(await page.text("#chatNotice"), /not financial, legal or tax advice/);
+  assert.match(await page.text("#chatNotice"), /isn't a licensed adviser/);
   assert.ok(await page.eval(`document.querySelector("#chatNotice").offsetHeight > 0`));
 });
 
