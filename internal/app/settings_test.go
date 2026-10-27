@@ -223,7 +223,7 @@ func TestAutoRefreshStatusKeepsErrorTextOutOfFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
-	const upstreamText = "dial tcp 10.0.0.7:443: network is unreachable"
+	const upstreamText = "dial tcp: lookup rates.invalid: network is unreachable"
 	a.Rates[budget.RateSourceAuto] = rates.Fixed{
 		ID:  budget.RateSourceAuto,
 		Err: errors.New(upstreamText),
