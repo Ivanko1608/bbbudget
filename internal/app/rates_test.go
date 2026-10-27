@@ -262,6 +262,35 @@ func TestRefreshKeepsRateTypedDuringFetch(t *testing.T) {
 	}
 }
 
+func usdRate(perBase string, source budget.RateSource) budget.CurrencyRate {
+	return budget.CurrencyRate{Code: "USD", PerBase: money.MustDecimal(perBase), Source: source}
+}
+
+func TestIsCurrencyChangedOrRemoved(t *testing.T) {
+	auto, manual := budget.RateSourceAuto, budget.RateSourceManual
+	original := budget.Budget{Currencies: []budget.CurrencyRate{usdRate("1.08", auto)}}
+	cases := []struct {
+		name    string
+		current []budget.CurrencyRate
+		want    bool
+	}{
+		{"unchanged", []budget.CurrencyRate{usdRate("1.08", auto)}, false},
+		{"same rate written differently", []budget.CurrencyRate{usdRate("1.080", auto)}, false},
+		{"rate typed", []budget.CurrencyRate{usdRate("1.05", auto)}, true},
+		{"source switched", []budget.CurrencyRate{usdRate("1.08", manual)}, true},
+		{"removed", nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			current := budget.Budget{Currencies: c.current}
+
+			got := isCurrencyChangedOrRemoved("USD", original, current)
+
+			eq(t, "changed or removed", got, c.want)
+		})
+	}
+}
+
 func TestPreviewMatchesRefreshAndSavesNothing(t *testing.T) {
 	a, ctx := testApp(t), context.Background()
 	withSettings(t, a, settings.Patch{DefaultRateSource: ptr(budget.RateSourceCurrencyAPI)})

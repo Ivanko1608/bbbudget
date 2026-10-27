@@ -164,7 +164,7 @@ func TestScenarios(t *testing.T) {
 		t.Errorf("id %s", s.ID)
 	}
 	ghost := []Op{NewOp("remove_item", "ghost", nil)}
-	if _, _, err := AddScenario(b, "Broken", "", ghost); err == nil {
+	if _, _, err = AddScenario(b, "Broken", "", ghost); err == nil {
 		t.Error("scenario with a bad op was accepted")
 	}
 

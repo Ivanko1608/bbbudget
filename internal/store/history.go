@@ -208,7 +208,7 @@ func readLines(path string) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var lines [][]byte
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 16<<20)
@@ -382,7 +382,15 @@ func (s *FileStore) appendHistory(id string, l line) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	if err = writeLine(f, data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeLine appends data and a newline to f and syncs it.
+func writeLine(f *os.File, data []byte) error {
 	ended, err := endsWithNewline(f)
 	if err != nil {
 		return err

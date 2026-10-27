@@ -11,3 +11,4 @@ coverage.out
 *.local.yaml
 *.local.json
 .superpowers/
+/.claude/worktrees/

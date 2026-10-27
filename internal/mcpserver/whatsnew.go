@@ -38,7 +38,7 @@ func (h *handlers) registerWhatsNew(s *mcp.Server) {
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
 		URITemplate: "whats-new://{id}",
-		MIMEType:    "application/json",
+		MIMEType:    resourceMIMEType,
 		Description: "What changed in a budget since the assistant's last change, " +
 			"and this month's flags (the same as the whats_new tool).",
 	}, h.readWhatsNew)
@@ -65,7 +65,7 @@ func (h *handlers) readWhatsNew(
 	if err != nil {
 		return nil, err
 	}
-	contents := &mcp.ResourceContents{URI: uri, MIMEType: "application/json", Text: string(text)}
+	contents := &mcp.ResourceContents{URI: uri, MIMEType: resourceMIMEType, Text: string(text)}
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
 }
 

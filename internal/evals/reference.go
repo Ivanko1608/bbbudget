@@ -12,7 +12,7 @@ import (
 
 const (
 	referenceProviderName settings.AssistantProvider = "reference"
-	defaultReferenceReply                            = "Done."
+	defaultReferenceReply string                     = "Done."
 )
 
 // ReferenceProvider is a scripted model that makes a case's reference tool

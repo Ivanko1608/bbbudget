@@ -58,6 +58,6 @@ func (s *eventStream) send(event assistant.Event) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(s.w, "data: %s\n\n", encoded)
-	s.controller.Flush()
+	_, _ = fmt.Fprintf(s.w, "data: %s\n\n", encoded)
+	_ = s.controller.Flush()
 }

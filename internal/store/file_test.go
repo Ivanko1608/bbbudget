@@ -51,7 +51,7 @@ func TestCRUD(t *testing.T) {
 	if err != nil || r.Revision != 1 {
 		t.Fatalf("create: %+v %v", r, err)
 	}
-	if _, err := s.Create(ctx, byCLI, "home", b); !errors.Is(err, ErrExists) {
+	if _, err = s.Create(ctx, byCLI, "home", b); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate create: %v", err)
 	}
 	got, err := s.Get(ctx, "home")
@@ -81,7 +81,7 @@ func TestRejectsUnsafeIDs(t *testing.T) {
 
 func TestOptimisticConcurrency(t *testing.T) {
 	s, b := newStore(t)
-	s.Create(ctx, byCLI, "home", b)
+	mustCreate(t, s, byCLI, b)
 	set := func(amount string) func(budget.Budget) (budget.Budget, error) {
 		return func(b budget.Budget) (budget.Budget, error) {
 			v := money.MustDecimal(amount)
@@ -105,7 +105,7 @@ func TestOptimisticConcurrency(t *testing.T) {
 
 func TestNeverStoresInvalidBudget(t *testing.T) {
 	s, b := newStore(t)
-	s.Create(ctx, byCLI, "home", b)
+	mustCreate(t, s, byCLI, b)
 	_, err := s.Update(ctx, byCLI, "home", AnyRevision, func(b budget.Budget) (budget.Budget, error) {
 		b.Items[0].Currency = "XXX"
 		return b, nil
@@ -130,7 +130,7 @@ func TestNeverStoresInvalidBudget(t *testing.T) {
 func TestConcurrentWritersLoseNothing(t *testing.T) {
 	a, b := newStore(t)
 	other, _ := NewFileStore(a.dir)
-	a.Create(ctx, byCLI, "home", b)
+	mustCreate(t, a, byCLI, b)
 	const n = 40
 	var wg sync.WaitGroup
 	for i := range n {

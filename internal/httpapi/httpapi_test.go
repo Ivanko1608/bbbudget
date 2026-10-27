@@ -157,7 +157,9 @@ func (c *client) do(method, path, body string, want int) map[string]any {
 	}
 	var out map[string]any
 	if strings.HasPrefix(strings.TrimSpace(w.Body.String()), "{") {
-		json.Unmarshal(w.Body.Bytes(), &out)
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			c.t.Fatal(err)
+		}
 	}
 	return out
 }
@@ -229,7 +231,9 @@ func TestOpsWhatIfScenarios(t *testing.T) {
 	c.do("POST", "/api/budgets/home/scenarios", `{"name":"","ops":[]}`, 422)
 	w := c.req("GET", "/api/budgets/home/compare", "", nil)
 	var rows []map[string]any
-	json.Unmarshal(w.Body.Bytes(), &rows)
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
 	eq(t, "compared scenarios", len(rows), 2)
 	eq(t, "second scenario id", rows[1]["id"], "dollar-parity")
 	c.do("GET", "/api/budgets/home/scenarios/dollar-parity/report", "", 200)
