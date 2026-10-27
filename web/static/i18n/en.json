@@ -443,6 +443,7 @@
   "chat.message": "Message",
   "chat.placeholder": "Ask about this budget, or ask for a change",
   "chat.send": "Send",
+  "chat.notice": "bbbudget isn't a licensed adviser and its maker can't be held responsible for your money decisions. Check the numbers, and see a licensed adviser for advice.",
   "chat.working": "Thinking…",
   "chat.failed": "Not sent: {error}",
   "chat.tool": "Used {tool}",

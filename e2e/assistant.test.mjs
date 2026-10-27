@@ -79,6 +79,15 @@ test("the assistant changes the budget and the page shows it", { skip }, async (
   assert.deepEqual(page.errors, [], "the page logged errors");
 });
 
+test("the assistant panel shows the not-advice notice", { skip }, async () => {
+  await page.goto(`${srv.base}/`);
+
+  await page.click("#chatBtn");
+
+  assert.match(await page.text("#chatNotice"), /isn't a licensed adviser/);
+  assert.ok(await page.eval(`document.querySelector("#chatNotice").offsetHeight > 0`));
+});
+
 test("the settings page says where the model runs", { skip }, async () => {
   await page.goto(`${srv.base}/settings.html`, "#form:not([hidden])");
 
