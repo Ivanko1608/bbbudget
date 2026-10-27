@@ -25,9 +25,9 @@ import (
 
 const maxBody = 1 << 20
 
-const errInternal = "internal error"
+const internalErrorMessage = "internal error"
 
-var internalErrorBody = []byte(`{"error":"` + errInternal + `"}` + "\n")
+var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
 
 // The codes go on to the outside rate providers, so the cap bounds what one
 // request can ask of them. The UI asks for one code at a time.
@@ -178,7 +178,7 @@ func (s *server) writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 
-	if _, err := w.Write(body); err != nil {
+	if _, err = w.Write(body); err != nil {
 		s.opts.Log.Error("writing response failed", "status", status, "err", err)
 	}
 }
@@ -253,7 +253,7 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		s.writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-		s.writeErr(w, http.StatusInternalServerError, errInternal, nil)
+		s.writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
 	}
 }
 
@@ -673,7 +673,10 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
-			s.writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "rate_updates": updates})
+			s.writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error":        err.Error(),
+				"rate_updates": updates,
+			})
 			return
 		}
 		s.fail(w, r, err)

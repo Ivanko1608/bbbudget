@@ -12,9 +12,9 @@ import (
 
 func newLoggingServer() (*server, *bytes.Buffer) {
 	var logged bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&logged, nil))
+	logger := slog.New(slog.NewTextHandler(&logged, nil))
 
-	return &server{opts: Options{Log: log}}, &logged
+	return &server{opts: Options{Log: logger}}, &logged
 }
 
 type failingWriter struct {
@@ -67,4 +67,13 @@ func TestWriteJSONLogsAFailedWrite(t *testing.T) {
 
 	eq(t, "logged the failure", strings.Contains(logged.String(), "writing response failed"), true)
 	eq(t, "logged the cause", strings.Contains(logged.String(), errClientGone.Error()), true)
+}
+
+func TestInternalErrorBodyMatchesWhatWriteErrSends(t *testing.T) {
+	want, err := encodeJSON(errBody{Error: internalErrorMessage})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eq(t, "fallback body", string(internalErrorBody), string(want))
 }
