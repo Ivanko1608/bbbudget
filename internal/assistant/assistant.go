@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,9 @@ type Assistant struct {
 	// TTL drops conversations idle for longer.
 	TTL time.Duration
 	Now func() time.Time
+	// Log receives the errors of tool calls, which the chat shows only as
+	// fixed messages; default slog.Default().
+	Log *slog.Logger
 
 	mu    sync.Mutex
 	chats map[string]*chat

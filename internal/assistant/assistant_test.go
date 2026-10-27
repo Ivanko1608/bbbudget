@@ -248,6 +248,33 @@ func TestToolErrorsGoBackToTheModel(t *testing.T) {
 	}
 }
 
+func TestAFailedToolShowsTheChatOnlyTheFixedMessage(t *testing.T) {
+	failing := call("1", "update_item", `{"item":"nothing like it","amount":"1"}`)
+	model := &script{turns: []Turn{calls(failing), says("Sorry, which item?")}}
+	assistant := newAssistant(t, model)
+
+	events, _ := ask(t, assistant, "", "change it")
+
+	var shown string
+	for _, event := range events {
+		if event.Type == EventTool {
+			shown = event.Error
+		}
+	}
+	want := `op 1 (set_item): no item matches "nothing like it"`
+	if shown != want {
+		t.Errorf("chat shows %q, want %q", shown, want)
+	}
+}
+
+func TestAToolResultInAnyOtherShapeIsNotShown(t *testing.T) {
+	shown := parseErrorMessage("open /wrapper/path: permission denied")
+
+	if shown != toolCallFailedMessage {
+		t.Errorf("chat shows %q, want %q", shown, toolCallFailedMessage)
+	}
+}
+
 func TestAModelThatNeverStopsCallingToolsIsCutOff(t *testing.T) {
 	model := &script{}
 	for range MaxToolRounds + 2 {

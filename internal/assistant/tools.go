@@ -1,8 +1,10 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,13 +20,17 @@ type mcpTools struct {
 	tools        []Tool
 	readOnly     map[string]bool
 	instructions string
+	logger       *slog.Logger
 }
 
-func connectTools(ctx context.Context, a *app.App, budget string) (*mcpTools, error) {
+func connectTools(
+	ctx context.Context, a *app.App, budget string, logger *slog.Logger,
+) (*mcpTools, error) {
 	server := mcpserver.New(a, mcpserver.Options{
 		DefaultBudget: budget,
 		Version:       "assistant",
 		Source:        store.SourceAssistant,
+		Log:           logger,
 	})
 	clientEnd, serverEnd := mcp.NewInMemoryTransports()
 	// The connection outlives the request that opened it.
@@ -46,6 +52,7 @@ func connectTools(ctx context.Context, a *app.App, budget string) (*mcpTools, er
 		session:      session,
 		readOnly:     map[string]bool{},
 		instructions: session.InitializeResult().Instructions,
+		logger:       logger,
 	}
 	for _, tool := range listed.Tools {
 		tools.tools = append(tools.tools, toTool(tool))
@@ -91,19 +98,49 @@ func (tools *mcpTools) callTool(ctx context.Context, call ToolCall) ToolResult {
 	arguments := map[string]any{}
 	if len(call.Input) > 0 {
 		if err := json.Unmarshal(call.Input, &arguments); err != nil {
-			return errorResult(call, "the tool input is not valid JSON: "+err.Error())
+			tools.logger.Info("assistant tool input rejected", "tool", call.Name, "err", err)
+			return errorResult(call, toolInputInvalidMessage)
 		}
 	}
 	params := &mcp.CallToolParams{Name: call.Name, Arguments: arguments}
 	result, err := tools.session.CallTool(ctx, params)
 	if err != nil {
-		return errorResult(call, err.Error())
+		tools.logger.Error("assistant tool call failed", "tool", call.Name, "err", err)
+		return errorResult(call, toolCallFailedMessage)
 	}
 	return ToolResult{CallID: call.ID, Content: joinText(result), IsError: result.IsError}
 }
 
-func errorResult(call ToolCall, reason string) ToolResult {
-	return ToolResult{CallID: call.ID, Content: reason, IsError: true}
+const (
+	toolInputInvalidMessage = "the tool input is not valid JSON"
+	toolCallFailedMessage   = "the tool call failed; see the server log"
+)
+
+// errorResult is a failed tool call whose content has the shape of the
+// failures the MCP server reports: {"error": message}.
+func errorResult(call ToolCall, message string) ToolResult {
+	return ToolResult{CallID: call.ID, Content: newErrorContent(message), IsError: true}
+}
+
+func newErrorContent(message string) string {
+	encoded, err := json.Marshal(map[string]string{"error": message})
+	if err != nil {
+		return message
+	}
+	return string(encoded)
+}
+
+// parseErrorMessage returns the message of a failed tool result. The MCP
+// server translates every error into a fixed message, so content in any other
+// shape is not shown.
+func parseErrorMessage(content string) string {
+	var failure struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(content), &failure); err != nil {
+		return toolCallFailedMessage
+	}
+	return cmp.Or(failure.Error, toolCallFailedMessage)
 }
 
 func joinText(result *mcp.CallToolResult) string {
@@ -122,7 +159,7 @@ const maxErrorLen = 200
 func newToolEvent(call ToolCall, result ToolResult) Event {
 	event := Event{Type: EventTool, Tool: call.Name}
 	if result.IsError {
-		event.Error = truncate(firstLine(result.Content), maxErrorLen)
+		event.Error = truncate(firstLine(parseErrorMessage(result.Content)), maxErrorLen)
 	} else {
 		event.Change = parseChange(result.Content)
 	}
