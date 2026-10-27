@@ -4,14 +4,26 @@ linters:
   default: none
   enable:
     - errcheck
+    - forbidigo
     - govet
     - staticcheck
   settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^error\.Error$'
+          msg: >-
+            error text never goes into a response; add the error to knownErrors
+            in internal/httpapi/errors.go with a fixed message
     govet:
       enable:
         - shadow
   exclusions:
     rules:
+      - path-except: ^internal/httpapi/
+        linters: [forbidigo]
+      - path: _test\.go$
+        linters: [forbidigo]
       - path: ^cmd/bbbudget/main\.go$
         linters: [errcheck, govet]
       - path: ^internal/app/rates\.go$
