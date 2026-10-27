@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bbbudget/i18n/catalog.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _serverLocalesDir = '../internal/i18n/locales';
@@ -33,11 +34,14 @@ List<String> listBundleLocalizations() {
     r'<key>CFBundleLocalizations</key>\s*<array>(.*?)</array>',
     dotAll: true,
   ).firstMatch(plist);
+  if (block == null) {
+    fail('$_infoPlist has no CFBundleLocalizations array');
+  }
 
   return [
     for (final match in RegExp(
       r'<string>(.*?)</string>',
-    ).allMatches(block!.group(1)!))
+    ).allMatches(block.group(1)!))
       match.group(1)!,
   ]..sort();
 }
@@ -53,6 +57,12 @@ void main() {
 
   test('the iOS app declares every locale the server has', () {
     expect(listBundleLocalizations(), listServerLanguageCodes());
+  });
+
+  test('the fallback locale is English whatever sorts first', () {
+    const delegate = CatalogDelegate(['de', 'en', 'fr']);
+
+    expect(delegate.supportedLocales.first, const Locale('en'));
   });
 
   test('the app catalogs are the web catalogs, not a copy', () {

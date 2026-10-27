@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'brand_colors.dart';
 
+/// The width of the thin borders that separate surfaces.
 const hairlineWidth = 0.5;
 
 const _pageTransitionsTheme = PageTransitionsTheme(

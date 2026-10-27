@@ -6,6 +6,9 @@ import 'package:flutter/widgets.dart';
 const _catalogDir = 'assets/i18n/';
 const _catalogExtension = '.json';
 
+/// The language the server and web app fall back to when none matches.
+const defaultLanguageCode = 'en';
+
 /// Keys of the shared catalogs in web/static/i18n that the app shows.
 abstract final class CatalogKey {
   static const appTitle = 'app.title';
@@ -61,13 +64,18 @@ class Catalog {
   }
 }
 
+/// Offers the bundled catalogs to Flutter, with the default language listed first.
 class CatalogDelegate extends LocalizationsDelegate<Catalog> {
   const CatalogDelegate(this.languageCodes);
 
   final List<String> languageCodes;
 
   List<Locale> get supportedLocales {
-    return [for (final code in languageCodes) Locale(code)];
+    final others = languageCodes.where((code) => code != defaultLanguageCode);
+
+    return [
+      for (final code in [defaultLanguageCode, ...others]) Locale(code),
+    ];
   }
 
   @override
