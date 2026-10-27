@@ -460,6 +460,9 @@ func runHistory(ctx context.Context, c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
+	if *limit < 0 {
+		return fmt.Errorf("-limit %d: must be a whole number", *limit)
+	}
 	a, err := c.openApp()
 	if err != nil {
 		return err
