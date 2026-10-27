@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -404,8 +405,11 @@ func (a *App) MonthStatus(ctx context.Context, id, month string) (*budget.MonthS
 		month = a.Now().Format("2006-01")
 	}
 	status, err := plan.MonthStatus(month, ledger.Transactions, a.Now())
-	if err != nil {
+	if errors.Is(err, budget.ErrBadMonth) || errors.Is(err, budget.ErrOutsideWindow) {
 		return nil, NewClientErrorFrom(ErrBadInput, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return status, nil
 }
