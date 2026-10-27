@@ -16,6 +16,7 @@ import (
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/devices"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
@@ -47,6 +48,9 @@ type Options struct {
 	Paths map[string]string
 	// Assistant, if set, answers chat messages.
 	Assistant *assistant.Assistant
+	// Devices, if set, turns on remote mode: the API and MCP answer only
+	// paired devices, and any Host is accepted. Nil keeps the server local.
+	Devices *devices.Registry
 }
 
 type server struct {
@@ -89,6 +93,11 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
 	mux.HandleFunc("GET /api/notes", s.listNotes)
 	mux.HandleFunc("DELETE /api/notes/{id}", s.deleteNote)
+	if opts.Devices != nil {
+		mux.HandleFunc("POST "+pairPath, s.pair)
+		mux.HandleFunc("GET /api/devices", s.listDevices)
+		mux.HandleFunc("DELETE /api/devices/{id}", s.revokeDevice)
+	}
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
@@ -106,15 +115,19 @@ func New(a *app.App, opts Options) http.Handler {
 			files.ServeHTTP(w, r)
 		})
 	}
+	if opts.Devices != nil {
+		return s.guard(s.requireDevice(mux))
+	}
 	return s.guard(mux)
 }
 
 // guard blocks DNS-rebinding (unknown Host) and cross-site form posts
 // (mutations must be JSON, which browsers cannot send cross-origin without a
-// CORS preflight this server never approves).
+// CORS preflight this server never approves). In remote mode any Host is
+// fine: a rebound page has no device token to send.
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.hostAllowed(r.Host) {
+		if s.opts.Devices == nil && !s.hostAllowed(r.Host) {
 			writeErr(w, http.StatusForbidden, "host not allowed", nil)
 			return
 		}
@@ -219,6 +232,10 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
 	case errors.As(err, &rateFailed): // the rate provider failed, not us
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
+	case errors.Is(err, devices.ErrBadCode):
+		writeErr(w, http.StatusForbidden, err.Error(), nil)
+	case errors.Is(err, devices.ErrDeviceNotFound):
+		writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
 	case isBadRequest(err):
