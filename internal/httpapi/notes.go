@@ -17,7 +17,7 @@ func (s *server) listNotes(w http.ResponseWriter, r *http.Request) {
 		s.failNote(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, notesBody{Notes: notes})
+	s.writeJSON(w, http.StatusOK, notesBody{Notes: notes})
 }
 
 func (s *server) deleteNote(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +47,7 @@ var noteErrors = []noteError{
 func (s *server) failNote(w http.ResponseWriter, r *http.Request, err error) {
 	for _, known := range noteErrors {
 		if errors.Is(err, known.sentinel) {
-			writeErr(w, known.status, known.sentinel.Error(), nil)
+			s.writeErr(w, known.status, known.sentinel.Error(), nil)
 			return
 		}
 	}
