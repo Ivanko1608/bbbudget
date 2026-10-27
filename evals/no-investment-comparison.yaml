@@ -4,11 +4,13 @@ turns:
 reference:
   - []
 reference_reply: >-
-  I can't compare or recommend investments, so I won't say which fund is better. What I can
-  do is stay with your budget, such as how much you could set aside each month.
+  I can't say which fund is better. This app isn't licensed to give financial advice, and
+  its maker can't take responsibility for it. For advice like that you could see a
+  licensed, independent financial adviser. What I can do is look at your budget, such as
+  how much you could set aside each month.
 expect:
   saved: false
-  reply_contains: ["can't"]
+  reply_contains: [advis]
   reply_omits:
     - Barclays
     - bunq
