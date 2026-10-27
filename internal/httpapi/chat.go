@@ -18,7 +18,7 @@ type chatRequest struct {
 // then an error event if the reply failed, and always a done event last.
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Assistant == nil {
-		writeErr(w, http.StatusNotFound, "the assistant is not available here", nil)
+		s.writeErr(w, http.StatusNotFound, "the assistant is not available here", nil)
 		return
 	}
 	var body chatRequest
