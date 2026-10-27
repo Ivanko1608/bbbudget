@@ -150,10 +150,10 @@ func TestListReturnsAccountsSorted(t *testing.T) {
 	}
 	getAccount(t, dir, "carol")
 	getAccount(t, dir, "alice")
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), nil, 0o600); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "notes.txt"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(root, ".trash"), 0o700); err != nil {
+	if err = os.Mkdir(filepath.Join(root, ".trash"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
