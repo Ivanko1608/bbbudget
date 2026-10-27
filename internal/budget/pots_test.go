@@ -261,7 +261,7 @@ func TestIncomeRoutedToPotSkipsLeftoverRules(t *testing.T) {
 	eqMoney(t, "general", m1.Pots[0].In, "10000.00")
 	eqMoney(t, "move fund", m1.Pots[1].In, "100.00")
 	eqMoney(t, "to savings", m1.ToSavings, "10100.00")
-	eqMoney(t, "left after routing", m1.LeftAfterRouting, "100.00")
+	eqMoney(t, "leftover to pots", m1.LeftoverToPots, "100.00")
 }
 
 // A cost routed to a pot is paid from it as far as it holds; the rest hits the month.

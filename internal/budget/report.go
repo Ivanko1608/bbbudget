@@ -24,10 +24,9 @@ type ItemReport struct {
 
 // CategoryTotal is what a category's items come to in base currency.
 type CategoryTotal struct {
-	// MonthlyEquivalent is the sum of the recurring items' monthly equivalents.
-	MonthlyEquivalent money.Money `json:"monthly_equivalent_base"`
-	// OneOff is the sum of the one-off items' amounts.
-	OneOff money.Money `json:"one_off_base"`
+	// RecurringPerMonth leaves out one-off items; OneOffTotal counts only them.
+	RecurringPerMonth money.Money `json:"recurring_per_month"`
+	OneOffTotal       money.Money `json:"one_off_total"`
 }
 
 // Totals summarises the whole window, base currency.
@@ -134,16 +133,16 @@ func totalItemsByCategory(p *Plan, items []ItemReport) map[string]CategoryTotal 
 	zero := money.Zero(p.Base)
 	totals := map[string]CategoryTotal{}
 	for id := range p.Categories {
-		totals[id] = CategoryTotal{MonthlyEquivalent: zero, OneOff: zero}
+		totals[id] = CategoryTotal{RecurringPerMonth: zero, OneOffTotal: zero}
 	}
 	for _, item := range items {
 		total, ok := totals[item.Category]
 		if !ok {
 			continue
 		}
-		total.MonthlyEquivalent = total.MonthlyEquivalent.Add(item.MonthlyEquivalent)
+		total.RecurringPerMonth = total.RecurringPerMonth.Add(item.MonthlyEquivalent)
 		if item.Schedule.Every == 0 {
-			total.OneOff = total.OneOff.Add(item.PerOccurrence)
+			total.OneOffTotal = total.OneOffTotal.Add(item.PerOccurrence)
 		}
 		totals[item.Category] = total
 	}

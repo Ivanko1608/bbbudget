@@ -131,20 +131,20 @@ func TestFixtureCategoryTotals(t *testing.T) {
 
 	totals := r.CategoryTotals
 
-	eqMoney(t, "home monthly", totals["home"].MonthlyEquivalent, "1853.41")
-	eqMoney(t, "home one-off", totals["home"].OneOff, "0.00")
-	eqMoney(t, "education monthly", totals["education"].MonthlyEquivalent, "892.98")
-	eqMoney(t, "travel monthly", totals["travel"].MonthlyEquivalent, "0.00")
-	eqMoney(t, "travel one-off", totals["travel"].OneOff, "600.00")
-	eqMoney(t, "income monthly", totals["income"].MonthlyEquivalent, "3900.00")
+	eqMoney(t, "home monthly", totals["home"].RecurringPerMonth, "1853.41")
+	eqMoney(t, "home one-off", totals["home"].OneOffTotal, "0.00")
+	eqMoney(t, "education monthly", totals["education"].RecurringPerMonth, "892.98")
+	eqMoney(t, "travel monthly", totals["travel"].RecurringPerMonth, "0.00")
+	eqMoney(t, "travel one-off", totals["travel"].OneOffTotal, "600.00")
+	eqMoney(t, "income monthly", totals["income"].RecurringPerMonth, "3900.00")
 }
 
-func TestFixtureLeftAfterRouting(t *testing.T) {
+func TestFixtureLeftoverToPots(t *testing.T) {
 	r := mustReport(t, fixture(t))
 
 	m0 := r.Months[0]
 
-	eqMoney(t, "left after routing", m0.LeftAfterRouting, "317.49")
+	eqMoney(t, "leftover to pots", m0.LeftoverToPots, "317.49")
 }
 
 func TestCategoryWithoutItemsTotalsZero(t *testing.T) {
@@ -152,8 +152,8 @@ func TestCategoryWithoutItemsTotalsZero(t *testing.T) {
 
 	living := r.CategoryTotals["living"]
 
-	eqMoney(t, "living monthly", living.MonthlyEquivalent, "0.00")
-	eqMoney(t, "living one-off", living.OneOff, "0.00")
+	eqMoney(t, "living monthly", living.RecurringPerMonth, "0.00")
+	eqMoney(t, "living one-off", living.OneOffTotal, "0.00")
 }
 
 // A single EUR debt, worked by hand month by month.

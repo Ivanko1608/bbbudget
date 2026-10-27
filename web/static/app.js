@@ -1062,14 +1062,14 @@ function isZeroMoney(value) {
 }
 
 function categoryTotalHTML(total) {
-  const hasMonthly = !isZeroMoney(total.monthly_equivalent_base);
-  const hasOneOff = !isZeroMoney(total.one_off_base);
-  const monthly = esc(money(total.monthly_equivalent_base));
-  const oneOff = esc(money(total.one_off_base));
+  const hasRecurring = !isZeroMoney(total.recurring_per_month);
+  const hasOneOff = !isZeroMoney(total.one_off_total);
+  const recurring = esc(money(total.recurring_per_month));
+  const oneOff = esc(money(total.one_off_total));
   const perMonth = esc(t("unit.per_month"));
   const once = esc(t("unit.once"));
   const parts = [];
-  if (hasMonthly || !hasOneOff) parts.push(`${monthly}<small>${perMonth}</small>`);
+  if (hasRecurring || !hasOneOff) parts.push(`${recurring}<small>${perMonth}</small>`);
   if (hasOneOff) parts.push(`${oneOff}<small>${once}</small>`);
   return parts.join(" + ");
 }
@@ -1091,8 +1091,8 @@ function renderOutputs() {
     .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)", ""]);
   if (num(m0.debt_payments) > 0) segs.push([t("split.debt"), m0.debt_payments, "var(--debt)", "hatch"]);
   if (num(m0.income_to_pots) > 0) segs.push([t("split.straight"), m0.income_to_pots, "var(--save)", "hatch-save"]);
-  const intoSavings = m0.left_after_routing;
-  if (num(intoSavings) > 0) segs.push([t("split.savings"), intoSavings, "var(--save)", ""]);
+  const leftoverToPots = m0.leftover_to_pots;
+  if (num(leftoverToPots) > 0) segs.push([t("split.savings"), leftoverToPots, "var(--save)", ""]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
   $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");
