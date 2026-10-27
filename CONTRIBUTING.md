@@ -60,3 +60,5 @@ The README's [Extending](README.md#extending) section shows where currencies, in
 ## License
 
 bbbudget is licensed under the [GNU AGPL v3.0 or later](LICENSE). By contributing, you agree that your contribution is licensed under the same terms. You keep your copyright; there's no CLA.
+
+Contributions to `mobile/` also carry the additional permission under AGPL section 7 in [mobile/LICENSE-EXCEPTION.md](mobile/LICENSE-EXCEPTION.md), which allows distribution through app stores whose terms add restrictions, as long as the complete source is offered under the same terms.
