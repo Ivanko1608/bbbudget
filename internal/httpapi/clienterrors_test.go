@@ -22,7 +22,7 @@ import (
 	"bbbudget/internal/store"
 )
 
-const secretPath = "/secret/path"
+const wrapperPath = "/secret/path"
 
 type loggedAPI struct {
 	*client
@@ -54,6 +54,10 @@ func newBareServer() *server {
 	return &server{app: app.New(nil, nil), opts: Options{Log: slog.New(slog.DiscardHandler)}}
 }
 
+func issues(path, message string) []budget.Issue {
+	return []budget.Issue{{Path: path, Message: message}}
+}
+
 func TestFailNeverSendsTextWrappedAroundARecognisedError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -61,7 +65,7 @@ func TestFailNeverSendsTextWrappedAroundARecognisedError(t *testing.T) {
 		want int
 	}{
 		{"op error", &budget.OpError{Index: 1, Op: "set_item", Err: errors.New("x")}, 400},
-		{"validation", &budget.ValidationError{Issues: []budget.Issue{{Path: "a", Message: "b"}}}, 422},
+		{"validation", &budget.ValidationError{Issues: issues("a", "b")}, 422},
 		{"undo conflict", &app.UndoConflictError{Revision: 2}, 409},
 		{"nothing to undo", app.ErrNothingToUndo, 409},
 		{"too old", app.ErrTooOld, 409},
@@ -70,7 +74,7 @@ func TestFailNeverSendsTextWrappedAroundARecognisedError(t *testing.T) {
 		{"no match", &budget.NoMatchError{Kind: "item", Ref: "x"}, 404},
 		{"already exists", store.ErrExists, 409},
 		{"rates off", app.ErrRatesOff, 409},
-		{"rate provider", &app.RateError{Err: errors.New("lookup " + secretPath)}, 502},
+		{"rate provider", &app.RateError{Err: errors.New("lookup " + wrapperPath)}, 502},
 		{"body too large", &http.MaxBytesError{Limit: 1}, 413},
 		{"undecodable body", &badRequestError{cause: errors.New("unexpected end")}, 400},
 		{"bad id", store.ErrBadID, 400},
@@ -83,7 +87,7 @@ func TestFailNeverSendsTextWrappedAroundARecognisedError(t *testing.T) {
 		{"long note", store.ErrNoteTooLong, 400},
 		{"bad note source", store.ErrBadNoteSource, 400},
 		{"bad note id", store.ErrBadNoteID, 400},
-		{"unrecognised", errors.New("open " + secretPath), 500},
+		{"unrecognised", errors.New("open " + wrapperPath), 500},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -91,7 +95,7 @@ func TestFailNeverSendsTextWrappedAroundARecognisedError(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
 
-			s.fail(w, r, fmt.Errorf("at %s: %w", secretPath, c.err))
+			s.fail(w, r, fmt.Errorf("at %s: %w", wrapperPath, c.err))
 
 			if w.Code != c.want {
 				t.Errorf("status %d, want %d", w.Code, c.want)
@@ -107,7 +111,7 @@ func TestFailKeepsTheClientWrittenTextOfAnError(t *testing.T) {
 	s := newBareServer()
 	w := httptest.NewRecorder()
 	clientErr := app.NewClientError(store.ErrNotFound, "no transaction %q", "t9")
-	err := fmt.Errorf("at %s: %w", secretPath, clientErr)
+	err := fmt.Errorf("at %s: %w", wrapperPath, clientErr)
 
 	s.fail(w, httptest.NewRequest("GET", "/", nil), err)
 
@@ -119,7 +123,7 @@ func TestFailKeepsTheClientWrittenTextOfAnError(t *testing.T) {
 
 func TestARateProviderFailureSendsAFixedMessageAndLogsTheDetail(t *testing.T) {
 	api := setupLogged(t, func(a *app.App, _ *Options) {
-		down := rates.Fixed{ID: budget.RateSourceAuto, Err: errors.New("lookup " + secretPath)}
+		down := rates.Fixed{ID: budget.RateSourceAuto, Err: errors.New("lookup " + wrapperPath)}
 		a.Rates = map[budget.RateSource]rates.Provider{budget.RateSourceAuto: down}
 	})
 	api.do("PUT", "/api/settings", `{"fetch_rates":true}`, 200)
@@ -133,14 +137,14 @@ func TestARateProviderFailureSendsAFixedMessageAndLogsTheDetail(t *testing.T) {
 	if !strings.Contains(response.Body.String(), app.RateFetchFailedMessage) {
 		t.Errorf("body lacks the fixed message: %s", response.Body)
 	}
-	if !strings.Contains(api.logs.String(), secretPath) {
+	if !strings.Contains(api.logs.String(), wrapperPath) {
 		t.Errorf("the full error was not logged: %s", api.logs)
 	}
 }
 
 func TestAQuoteFailureSendsAFixedMessage(t *testing.T) {
 	api := setupLogged(t, func(a *app.App, _ *Options) {
-		down := rates.Fixed{ID: budget.RateSourceAuto, Err: errors.New("lookup " + secretPath)}
+		down := rates.Fixed{ID: budget.RateSourceAuto, Err: errors.New("lookup " + wrapperPath)}
 		a.Rates = map[budget.RateSource]rates.Provider{budget.RateSourceAuto: down}
 	})
 	api.do("PUT", "/api/settings", `{"fetch_rates":true}`, 200)
@@ -165,7 +169,7 @@ func (failingModel) Start(string, []assistant.Tool) assistant.Conversation {
 type failingConversation struct{}
 
 func (failingConversation) SendText(context.Context, string) (assistant.Turn, error) {
-	return assistant.Turn{}, fmt.Errorf("open %s: permission denied", secretPath)
+	return assistant.Turn{}, fmt.Errorf("open %s: permission denied", wrapperPath)
 }
 
 func (failingConversation) SendResults(
@@ -189,7 +193,7 @@ func TestAChatFailureSendsAFixedMessageAndLogsTheDetail(t *testing.T) {
 	if strings.Contains(response.Body.String(), "/secret") {
 		t.Errorf("stream leaks the assistant error: %s", response.Body)
 	}
-	if !strings.Contains(api.logs.String(), secretPath) {
+	if !strings.Contains(api.logs.String(), wrapperPath) {
 		t.Errorf("the full error was not logged: %s", api.logs)
 	}
 }

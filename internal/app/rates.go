@@ -34,6 +34,10 @@ type RateUpdate struct {
 	Detail string `json:"-"`
 }
 
+// RatesOffMessage is what clients are told when fetching rates is turned off.
+const RatesOffMessage = "fetching exchange rates is turned off in Settings; " +
+	"type rates by hand or turn it on"
+
 // RateFetchFailedMessage is what clients are told when a rate provider fails.
 const RateFetchFailedMessage = "couldn't reach the exchange rate provider"
 
@@ -281,7 +285,7 @@ func failedUpdate(err error) RateUpdate {
 	case errors.As(err, &clientErr):
 		return RateUpdate{Error: clientErr.Message}
 	case errors.Is(err, ErrRatesOff):
-		return RateUpdate{Error: ErrRatesOff.Error()}
+		return RateUpdate{Error: RatesOffMessage}
 	default:
 		return RateUpdate{Error: RateFetchFailedMessage, Detail: err.Error()}
 	}

@@ -23,5 +23,12 @@ func NewClientErrorFrom(kind, cause error) *ClientError {
 	return &ClientError{Kind: kind, Message: cause.Error(), Cause: cause}
 }
 
-func (e *ClientError) Error() string   { return e.Kind.Error() + ": " + e.Message }
-func (e *ClientError) Unwrap() []error { return []error{e.Kind, e.Cause} }
+func (e *ClientError) Error() string { return e.Kind.Error() + ": " + e.Message }
+
+func (e *ClientError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Kind}
+	}
+
+	return []error{e.Kind, e.Cause}
+}

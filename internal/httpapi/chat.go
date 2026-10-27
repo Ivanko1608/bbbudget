@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -36,8 +35,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	events := startEventStream(w)
 	conversation, err := s.opts.Assistant.Reply(r.Context(), request, events.send)
 	if err != nil {
-		s.logRequestError(r, "assistant reply failed", err)
-		events.send(assistant.Event{Type: assistant.EventError, Error: chatErrorMessage(err)})
+		s.reportChatError(r, events, err)
 	}
 	events.send(assistant.Event{Type: assistant.EventDone, Conversation: conversation})
 }
@@ -67,11 +65,17 @@ func (s *eventStream) send(event assistant.Event) {
 
 const assistantFailedMessage = "the assistant couldn't answer; see the server log"
 
-// chatErrorMessage is what the stream says about a failed reply: the request's
-// own mistake in the client's terms, anything else a fixed message.
-func chatErrorMessage(err error) string {
-	if errors.Is(err, app.ErrBadInput) {
-		return detailOr(err, "bad input")
+// reportChatError tells the stream about a failed reply: the request's own
+// mistake in the client's terms, anything else a fixed message. Only the
+// latter is the server's fault, so only it is logged as an error.
+func (s *server) reportChatError(r *http.Request, events *eventStream, err error) {
+	message, isClientError := app.GetClientMessage(err)
+	if isClientError {
+		s.opts.Log.Info("assistant reply rejected", "path", r.URL.Path, "err", err)
+	} else {
+		s.logRequestError(r, "assistant reply failed", err)
+		message = assistantFailedMessage
 	}
-	return assistantFailedMessage
+
+	events.send(assistant.Event{Type: assistant.EventError, Error: message})
 }

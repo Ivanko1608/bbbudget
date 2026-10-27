@@ -14,7 +14,7 @@ import (
 )
 
 // ErrRatesOff means fetching rates is turned off in the app settings.
-var ErrRatesOff = errors.New("fetching exchange rates is turned off in Settings; type rates by hand or turn it on")
+var ErrRatesOff = errors.New(RatesOffMessage)
 
 // Settings reads the app settings. They are read from disk on every call, so
 // a change made by another process (the CLI, a second server) applies at once.

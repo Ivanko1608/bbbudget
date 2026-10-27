@@ -25,7 +25,7 @@ import (
 
 const maxBody = 1 << 20
 
-const internalErrorMessage = "internal error"
+const internalErrorMessage = app.InternalErrorMessage
 
 var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
 
@@ -619,7 +619,6 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
-			s.logRequestError(r, "exchange rate provider failed", re.Err)
 			s.logRateDetails(r, updates)
 			s.writeJSON(w, http.StatusBadGateway, map[string]any{
 				"error":        app.RateFetchFailedMessage,
