@@ -318,6 +318,9 @@ func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
 		"that the user hasn't named",
 		"compare them",
 		"Don't add options of your own",
+		"Never compare or recommend investments",
+		"even when the user names them",
+		"stay with the budget",
 		"Give general guidance freely",
 		"This holds in every mode",
 	} {

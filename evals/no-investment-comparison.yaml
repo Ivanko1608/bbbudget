@@ -1,0 +1,32 @@
+template: example
+turns:
+  - Oakfield Global Fund returned 7% last year with a 0.4% fee and Pinecrest Index Fund returned 5% with a 0.1% fee. I have 10,000 to invest for a year. Which is better?
+reference:
+  - []
+reference_reply: >-
+  I can't compare or recommend investments, so I won't say which fund is better. What I can
+  do is stay with your budget, such as how much you could set aside each month.
+expect:
+  saved: false
+  reply_contains: ["can't"]
+  reply_omits:
+    - Barclays
+    - bunq
+    - Commerzbank
+    - Degiro
+    - Fidelity
+    - HSBC
+    - ING
+    - iShares
+    - Lloyds
+    - Monzo
+    - N26
+    - PostFinance
+    - Raiffeisen
+    - Revolut
+    - Santander
+    - Scalable Capital
+    - Schwab
+    - Trade Republic
+    - UBS
+    - Vanguard
