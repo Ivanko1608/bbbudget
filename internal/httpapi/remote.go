@@ -26,12 +26,12 @@ func (s *server) requireDevice(next http.Handler) http.Handler {
 		}
 		token, ok := bearerToken(r)
 		if !ok {
-			unauthorized(w, "send a paired device's token as Authorization: Bearer <token>")
+			s.unauthorized(w, missingTokenMessage)
 			return
 		}
 		_, err := s.opts.Devices.Authenticate(token)
 		if errors.Is(err, devices.ErrBadToken) {
-			unauthorized(w, devices.ErrBadToken.Error())
+			s.unauthorized(w, badTokenMessage)
 			return
 		}
 		if err != nil {
@@ -55,9 +55,9 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, ok && token != ""
 }
 
-func unauthorized(w http.ResponseWriter, msg string) {
+func (s *server) unauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
-	writeErr(w, http.StatusUnauthorized, msg, nil)
+	s.writeErr(w, http.StatusUnauthorized, msg, nil)
 }
 
 // failDevices answers a registry error. Only the sentinels' own text reaches
@@ -66,14 +66,14 @@ func unauthorized(w http.ResponseWriter, msg string) {
 func (s *server) failDevices(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, devices.ErrBadCode):
-		writeErr(w, http.StatusForbidden, devices.ErrBadCode.Error(), nil)
+		s.writeErr(w, http.StatusForbidden, badPairingCodeMessage, nil)
 	case errors.Is(err, devices.ErrDeviceNotFound):
-		writeErr(w, http.StatusNotFound, devices.ErrDeviceNotFound.Error(), nil)
+		s.writeErr(w, http.StatusNotFound, deviceNotFoundMessage, nil)
 	default:
 		s.opts.Log.Error(
 			"device registry failed", "method", r.Method, "path", r.URL.Path, "err", err,
 		)
-		writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
+		s.writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
 	}
 }
 
@@ -110,7 +110,7 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opts.Log.Info("device paired", "id", paired.Device.ID, "name", paired.Device.Name)
-	writeJSON(w, http.StatusCreated, pairResponse{
+	s.writeJSON(w, http.StatusCreated, pairResponse{
 		Device: viewDevice(paired.Device),
 		Token:  paired.Token,
 	})
@@ -126,7 +126,7 @@ func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	for i, device := range list {
 		views[i] = viewDevice(device)
 	}
-	writeJSON(w, http.StatusOK, views)
+	s.writeJSON(w, http.StatusOK, views)
 }
 
 func (s *server) revokeDevice(w http.ResponseWriter, r *http.Request) {

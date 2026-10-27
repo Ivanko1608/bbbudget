@@ -245,11 +245,12 @@ func TestRemoteAcceptsAnyHost(t *testing.T) {
 func TestDeviceErrorsDoNotLeakTheWrappedChain(t *testing.T) {
 	s := &server{opts: Options{Log: slog.New(slog.DiscardHandler)}}
 	cases := []struct {
-		name string
-		err  error
+		name    string
+		err     error
+		message string
 	}{
-		{"bad code", devices.ErrBadCode},
-		{"device not found", devices.ErrDeviceNotFound},
+		{"bad code", devices.ErrBadCode, badPairingCodeMessage},
+		{"device not found", devices.ErrDeviceNotFound, deviceNotFoundMessage},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -262,8 +263,8 @@ func TestDeviceErrorsDoNotLeakTheWrappedChain(t *testing.T) {
 			if strings.Contains(w.Body.String(), "/secret") {
 				t.Errorf("body leaks the path: %s", w.Body)
 			}
-			if !strings.Contains(w.Body.String(), c.err.Error()) {
-				t.Errorf("body lacks the sentinel text: %s", w.Body)
+			if !strings.Contains(w.Body.String(), c.message) {
+				t.Errorf("body lacks the fixed message: %s", w.Body)
 			}
 		})
 	}
