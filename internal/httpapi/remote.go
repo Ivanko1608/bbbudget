@@ -35,7 +35,7 @@ func (s *server) requireDevice(next http.Handler) http.Handler {
 			return
 		}
 		if err != nil {
-			s.fail(w, r, err)
+			s.failDevices(w, r, err)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -58,6 +58,23 @@ func bearerToken(r *http.Request) (string, bool) {
 func unauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	writeErr(w, http.StatusUnauthorized, msg, nil)
+}
+
+// failDevices answers a registry error. Only the sentinels' own text reaches
+// the client: any other error comes from reading or writing devices.json, and
+// its text can carry the file's path or contents.
+func (s *server) failDevices(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, devices.ErrBadCode):
+		writeErr(w, http.StatusForbidden, devices.ErrBadCode.Error(), nil)
+	case errors.Is(err, devices.ErrDeviceNotFound):
+		writeErr(w, http.StatusNotFound, devices.ErrDeviceNotFound.Error(), nil)
+	default:
+		s.opts.Log.Error(
+			"device registry failed", "method", r.Method, "path", r.URL.Path, "err", err,
+		)
+		writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
+	}
 }
 
 type deviceView struct {
@@ -89,7 +106,7 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	paired, err := s.opts.Devices.Pair(req.Code, req.Name)
 	if err != nil {
-		s.fail(w, r, err)
+		s.failDevices(w, r, err)
 		return
 	}
 	s.opts.Log.Info("device paired", "id", paired.Device.ID, "name", paired.Device.Name)
@@ -102,7 +119,7 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	list, err := s.opts.Devices.List()
 	if err != nil {
-		s.fail(w, r, err)
+		s.failDevices(w, r, err)
 		return
 	}
 	views := make([]deviceView, len(list))
@@ -114,7 +131,7 @@ func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	if err := s.opts.Devices.Revoke(r.PathValue("id")); err != nil {
-		s.fail(w, r, err)
+		s.failDevices(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

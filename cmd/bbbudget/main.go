@@ -189,7 +189,8 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 		"allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)",
 	)
 	remote := c.flags.Bool(
-		"remote", false, "answer paired devices from any address; put HTTPS in front (see bbbudget pair)",
+		"remote", false,
+		"answer paired devices, accepting any Host header; put HTTPS in front (see bbbudget pair)",
 	)
 	if err := c.flags.Parse(args); err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +20,8 @@ import (
 type remoteServer struct {
 	*client
 	devices *devices.Registry
+	// devicesFile is where devices keeps its state.
+	devicesFile string
 }
 
 func setupRemote(t *testing.T) remoteServer {
@@ -30,11 +33,12 @@ func setupRemote(t *testing.T) remoteServer {
 	a := app.New(st, nil)
 	a.Rates = offlineRates()
 	a.SettingsPath = filepath.Join(t.TempDir(), "settings.json")
-	registry := devices.Open(filepath.Join(t.TempDir(), "devices.json"))
+	devicesFile := filepath.Join(t.TempDir(), "devices.json")
+	registry := devices.Open(devicesFile)
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>ui</title>")}}
 	mcpStub := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(299) })
 	opts := Options{Static: static, MCP: mcpStub, Devices: registry}
-	return remoteServer{&client{t, New(a, opts)}, registry}
+	return remoteServer{&client{t, New(a, opts)}, registry, devicesFile}
 }
 
 // pairDevice pairs a device over HTTP, as a phone would, and returns its token.
@@ -253,13 +257,49 @@ func TestDeviceErrorsDoNotLeakTheWrappedChain(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
 
-			s.fail(w, r, wrapped)
+			s.failDevices(w, r, wrapped)
 
 			if strings.Contains(w.Body.String(), "/secret") {
 				t.Errorf("body leaks the path: %s", w.Body)
 			}
 			if !strings.Contains(w.Body.String(), c.err.Error()) {
 				t.Errorf("body lacks the sentinel text: %s", w.Body)
+			}
+		})
+	}
+}
+
+func TestCorruptDevicesFileIsAnInternalErrorWithoutItsPath(t *testing.T) {
+	s := setupRemote(t)
+	if err := os.WriteFile(s.devicesFile, []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, method, path, body string
+		mutate                   func(*http.Request)
+	}{
+		{
+			name:   "pair",
+			method: "POST",
+			path:   "/api/pair",
+			body:   `{"code":"AAAAA-AAAAA","name":"x"}`,
+		},
+		{
+			name:   "bearer request",
+			method: "GET",
+			path:   "/api/budgets",
+			mutate: withToken("bogus"),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := s.req(c.method, c.path, c.body, c.mutate)
+
+			if w.Code != http.StatusInternalServerError {
+				t.Errorf("status %d, want 500", w.Code)
+			}
+			if strings.Contains(w.Body.String(), s.devicesFile) {
+				t.Errorf("body leaks the file path: %s", w.Body)
 			}
 		})
 	}

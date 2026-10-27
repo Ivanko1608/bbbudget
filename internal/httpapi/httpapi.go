@@ -25,6 +25,9 @@ import (
 
 const maxBody = 1 << 20
 
+// internalErrorMessage is all a client learns about a failure that is ours.
+const internalErrorMessage = "internal error"
+
 // The codes go on to the outside rate providers, so the cap bounds what one
 // request can ask of them. The UI asks for one code at a time.
 const maxCurrenciesPerRatesRequest = 50
@@ -232,17 +235,13 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
 	case errors.As(err, &rateFailed): // the rate provider failed, not us
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
-	case errors.Is(err, devices.ErrBadCode):
-		writeErr(w, http.StatusForbidden, devices.ErrBadCode.Error(), nil)
-	case errors.Is(err, devices.ErrDeviceNotFound):
-		writeErr(w, http.StatusNotFound, devices.ErrDeviceNotFound.Error(), nil)
 	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
 	case isBadRequest(err):
 		writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal error", nil)
+		writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
 	}
 }
 

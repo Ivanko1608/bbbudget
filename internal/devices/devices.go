@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -142,7 +143,7 @@ func (r *Registry) Authenticate(token string) (Device, error) {
 	}
 	tokenHash := hash(token)
 	for _, d := range s.Devices {
-		if d.TokenHash == tokenHash {
+		if subtle.ConstantTimeCompare([]byte(d.TokenHash), []byte(tokenHash)) == 1 {
 			return d, nil
 		}
 	}
