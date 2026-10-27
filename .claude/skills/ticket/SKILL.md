@@ -20,7 +20,7 @@ GitHub issues are the backlog. Labels say who can act:
 
 ## Why this skill writes so much down
 
-The user reviews pull requests days after the session that planned them, and that session's chat is gone by then. Whatever the user decided, and why, must be on GitHub before the session ends: on the issue, in the PR description, and beside the lines it explains. If the reason is only in chat, it is lost.
+The user reviews pull requests days after the session that planned them, and that session's chat is gone by then. Whatever the user decided, and why, must be on GitHub before the session ends: on the issue and in the PR description. If the reason is only in chat, it is lost.
 
 ## Features
 
@@ -86,26 +86,32 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
    - Aim for under about 1000 added lines. If the work needs more, make one commit per step, each passing `make check`, and list the steps in the PR body.
    - A rule change goes in its own commit (see "Rule changes").
-   - Never change the git identity. No Claude trailers or mentions in commits, the PR or its comments. No personal data anywhere.
+   - Never change the git identity. No Claude trailers or mentions in commits or the PR. No personal data anywhere.
+   - Never post comments or reviews on the PR. Only humans comment on pull requests.
    - Don't force-push, rewrite history, run `gh pr ready` or resolve review threads.
    - Push the branch and open a pull request with the description below.
-   - Write every PR body or review body to a uniquely named file inside your own worktree, never to a shared scratchpad, so parallel agents can't overwrite each other's text.
+   - Write every PR body to a uniquely named file inside your own worktree, never to a shared scratchpad, so parallel agents can't overwrite each other's text.
    - Reply with the PR number, the `make check` result, anything left undone, any decision you made that the criteria don't cover, and the list of surprising changes (below).
 
-4. **Annotate the surprises.** Post the build agent's list of surprising changes yourself, as one review with inline comments (see "Surprising changes"). Record its decisions on the issue, and update the PR description to match.
+4. **List the surprises.** Put the build agent's list of surprising changes in the PR description's **Where to look** section (see "Surprising changes"). Record its decisions on the issue, and update the PR description to match.
 
 5. **Review, on Opus.** The user asked for Opus here, so this overrides the Sonnet default. Spawn a `general-purpose` agent with `model: "opus"`. Its prompt holds the PR number, the issue's Why, acceptance criteria and Decisions, the feature's Why, and these instructions:
    - Read the diff with `gh pr diff <pr>`. Check out the branch in a fresh worktree and run `make check`.
    - Check each acceptance criterion: met, partly met or not met, with evidence.
-   - Check correctness, the rules in `CONTRIBUTING.md` and the readability rules in `CLAUDE.md`.
-   - Check that every surprising change has an inline comment on the PR, from any review. A missing one is a blocking finding.
+   - Check correctness and the rules in `CONTRIBUTING.md`.
+   - Do a separate style pass. Go through every section of `CLAUDE.md` (Structure, Expressions, Names, Comments, Tests, JavaScript) against each added or changed hunk, and also check these rules:
+     - Functions are verb-first, in standard vocabulary (get, create, remove, parse, run, handle, `toX`, `xFromY`), with no preposition names (`chatFor`, `detailOf`), metaphors or cryptic abbreviations.
+     - Blank lines separate the logical steps inside a function: setup, guard clauses, the main work, the return.
+     - Comments explain a non-obvious why, never what. Field comments go on the line above the field.
+   - Report each violation with `file:line` and the rule it breaks. A violation in new or changed code is a blocking finding. A case you're unsure about goes in a separate list for the user.
+   - Check that every surprising change is listed under **Where to look** in the PR description. A missing one is a blocking finding.
    - Check that the PR description's feature, Why and decisions match the issue. A mismatch is a blocking finding.
    - Check that no rule change is mixed into other work. A mixed one is a blocking finding.
    - Run `gh pr checks <pr>`. A failing check is a blocking finding.
-   - Post the review with `gh pr review <pr> --comment --body-file <file>`, where the file is uniquely named and inside your own worktree. Approving isn't possible, because the same account opened the PR.
-   - Reply with a verdict, `merge` or `changes needed`, and the blocking findings.
+   - Write the review to a uniquely named file inside your own worktree, and never post it or any other comment on the PR. Only humans comment on pull requests.
+   - Reply with a verdict, `merge` or `changes needed`, the blocking findings, the list for the user and the path of the review file.
 
-6. **Fix, at most twice.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Each fix round that changes the approach adds a decision line, and every new surprising change gets an inline comment, as in step 4. After two rounds, stop and hand the rest to the user.
+6. **Fix, at most twice.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Each fix round that changes the approach adds a decision line, and every new surprising change is added to **Where to look**, as in step 4. After two rounds, stop and hand the rest to the user.
 
 7. **Check CI.** Run `gh pr checks <pr> --watch` yourself, and don't take the reviewer's word for it. A local `make check` doesn't count as CI.
    - Every check passes: the verdict stands.
@@ -133,9 +139,12 @@ Closes #<n> · Part of #<feature>: <feature title>
 
 **Acceptance criteria:**
 - <how each one is met>
+
+**Where to look:**
+- `<path>:<line>`: <why this surprising change is here; "None." when there are none>
 ```
 
-Whenever a decision is added to the issue, update "Decisions so far" with `gh pr edit <pr> --body-file <file>`.
+Whenever a decision is added to the issue, or a fix round adds a surprising change, update the description with `gh pr edit <pr> --body-file <file>`.
 
 ## Surprising changes
 
@@ -146,15 +155,9 @@ A change is surprising when a reader who has only read the issue would stop at i
 - it keeps something the issue asked to remove, or skips part of a criterion;
 - it is there because of a review round.
 
-The build agent returns each one as the path, the line in the new file, and the reason in one or two sentences. A change made in a review round says which round and what was asked. Mechanical changes, such as moved code, renames and formatting, get no comment. A comment on every hunk would bury the ones that matter.
+The build agent returns each one as the path, the line in the new file, and the reason in one or two sentences. A change made in a review round says which round and what was asked. Mechanical changes, such as moved code, renames and formatting, aren't listed. A note on every hunk would bury the ones that matter.
 
-Post the list as one review:
-
-```
-gh api repos/{owner}/{repo}/pulls/<pr>/reviews --input <file>
-```
-
-where the file holds `{"event": "COMMENT", "body": "Why the surprising changes are here.", "comments": [{"path": "...", "line": 12, "side": "RIGHT", "body": "..."}]}`. Comments read as plain explanations from the author and never mention an agent or a tool. Leave comments on lines that a later fix moved or deleted. GitHub marks them outdated.
+List them under **Where to look** in the PR description, one line each: `` `<path>:<line>`: <reason> ``. The lines read as plain explanations from the author and never mention an agent or a tool. Never post them as PR comments: only humans comment on pull requests.
 
 ## Writing a new ticket
 
