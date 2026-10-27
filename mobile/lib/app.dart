@@ -7,10 +7,14 @@ import 'screens/home_screen.dart';
 import 'theme/brand_theme.dart';
 
 class BbbudgetApp extends StatelessWidget {
-  const BbbudgetApp({super.key});
+  const BbbudgetApp({required this.languageCodes, super.key});
+
+  final List<String> languageCodes;
 
   @override
   Widget build(BuildContext context) {
+    final catalogDelegate = CatalogDelegate(languageCodes);
+
     return MaterialApp(
       onGenerateTitle: (context) {
         return Catalog.of(context).text(CatalogKey.appTitle);
@@ -24,13 +28,13 @@ class BbbudgetApp extends StatelessWidget {
         platform: defaultTargetPlatform,
       ),
       themeMode: ThemeMode.system,
-      localizationsDelegates: const [
-        Catalog.delegate,
+      localizationsDelegates: [
+        catalogDelegate,
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
       ],
-      supportedLocales: Catalog.supportedLocales,
+      supportedLocales: catalogDelegate.supportedLocales,
       home: const HomeScreen(),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:bbbudget/app.dart';
+import 'package:bbbudget/i18n/catalog.dart';
 import 'package:bbbudget/screens/home_tab.dart';
 import 'package:bbbudget/theme/brand_theme.dart';
 import 'package:flutter/cupertino.dart';
@@ -23,10 +24,15 @@ Future<void> waitForCatalog(WidgetTester tester) async {
       return;
     }
   }
+
+  fail('The catalog did not load in ${attempts * pause.inMilliseconds} ms');
 }
 
 Future<void> pumpApp(WidgetTester tester) async {
-  await tester.pumpWidget(const BbbudgetApp());
+  final languageCodes = await tester.runAsync(
+    () => Catalog.listLanguageCodes(rootBundle),
+  );
+  await tester.pumpWidget(BbbudgetApp(languageCodes: languageCodes!));
   await waitForCatalog(tester);
   await tester.pumpAndSettle();
 }
@@ -62,6 +68,8 @@ Future<void> pumpPushedPage(WidgetTester tester) async {
 }
 
 void main() {
+  // The bundle caches the catalog's load future from the first test's clock,
+  // so later tests' clocks never see it complete.
   setUp(rootBundle.clear);
 
   group('on iOS', () {
@@ -105,6 +113,7 @@ void main() {
 
     testWidgets('swipes back from the left edge', (tester) async {
       await pumpPushedPage(tester);
+      expect(find.text('pushed'), findsOneWidget);
 
       await tester.dragFrom(const Offset(2, 300), const Offset(500, 0));
       await tester.pumpAndSettle();
@@ -119,6 +128,16 @@ void main() {
 
       expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.byType(CupertinoTabBar), findsNothing);
+    }, variant: _android);
+
+    testWidgets('has no swipe-back from the left edge', (tester) async {
+      await pumpPushedPage(tester);
+      expect(find.text('pushed'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(2, 300), const Offset(500, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('pushed'), findsOneWidget);
     }, variant: _android);
 
     testWidgets('scrolls without a bounce', (tester) async {

@@ -8,6 +8,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
     required this.card,
     required this.border,
     required this.ink,
+    required this.inkMuted,
     required this.accent,
   });
 
@@ -18,6 +19,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
     card: Color(0xFFFFFFFF),
     border: Color(0xFFE2E0D8),
     ink: Color(0xFF16181D),
+    inkMuted: Color(0x7316181D),
     accent: _accent,
   );
 
@@ -26,6 +28,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
     card: Color(0xFF17181C),
     border: Color(0xFF2A2C32),
     ink: Color(0xFFF2F1EC),
+    inkMuted: Color(0x73F2F1EC),
     accent: _accent,
   );
 
@@ -33,6 +36,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
   final Color card;
   final Color border;
   final Color ink;
+  final Color inkMuted;
   final Color accent;
 
   static BrandColors of(BuildContext context) {
@@ -45,6 +49,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
     Color? card,
     Color? border,
     Color? ink,
+    Color? inkMuted,
     Color? accent,
   }) {
     return BrandColors(
@@ -52,6 +57,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
       card: card ?? this.card,
       border: border ?? this.border,
       ink: ink ?? this.ink,
+      inkMuted: inkMuted ?? this.inkMuted,
       accent: accent ?? this.accent,
     );
   }
@@ -67,6 +73,7 @@ class BrandColors extends ThemeExtension<BrandColors> {
       card: Color.lerp(card, other.card, t)!,
       border: Color.lerp(border, other.border, t)!,
       ink: Color.lerp(ink, other.ink, t)!,
+      inkMuted: Color.lerp(inkMuted, other.inkMuted, t)!,
       accent: Color.lerp(accent, other.accent, t)!,
     );
   }

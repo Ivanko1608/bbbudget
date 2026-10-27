@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+const _catalogDir = 'assets/i18n/';
+const _catalogExtension = '.json';
+
 /// Keys of the shared catalogs in web/static/i18n that the app shows.
 abstract final class CatalogKey {
   static const appTitle = 'app.title';
@@ -17,22 +20,32 @@ abstract final class CatalogKey {
 class Catalog {
   Catalog(this._texts);
 
-  static const delegate = _CatalogDelegate();
-
-  static const languageCodes = ['en', 'ru'];
-
-  static final supportedLocales = [
-    for (final code in languageCodes) Locale(code),
-  ];
-
   final Map<String, String> _texts;
 
   static Catalog of(BuildContext context) {
     return Localizations.of<Catalog>(context, Catalog)!;
   }
 
+  /// The locales of the bundled catalogs, which are the web app's.
+  static Future<List<String>> listLanguageCodes(AssetBundle bundle) async {
+    final manifest = await AssetManifest.loadFromAssetBundle(bundle);
+    final codes = [
+      for (final asset in manifest.listAssets())
+        if (asset.startsWith(_catalogDir) && asset.endsWith(_catalogExtension))
+          asset.substring(
+            _catalogDir.length,
+            asset.length - _catalogExtension.length,
+          ),
+    ];
+    codes.sort();
+
+    return codes;
+  }
+
   static Future<Catalog> load(String languageCode, AssetBundle bundle) async {
-    final json = await bundle.loadString('assets/i18n/$languageCode.json');
+    final json = await bundle.loadString(
+      '$_catalogDir$languageCode$_catalogExtension',
+    );
     final decoded = jsonDecode(json) as Map<String, dynamic>;
 
     return Catalog(decoded.cast<String, String>());
@@ -48,12 +61,18 @@ class Catalog {
   }
 }
 
-class _CatalogDelegate extends LocalizationsDelegate<Catalog> {
-  const _CatalogDelegate();
+class CatalogDelegate extends LocalizationsDelegate<Catalog> {
+  const CatalogDelegate(this.languageCodes);
+
+  final List<String> languageCodes;
+
+  List<Locale> get supportedLocales {
+    return [for (final code in languageCodes) Locale(code)];
+  }
 
   @override
   bool isSupported(Locale locale) {
-    return Catalog.languageCodes.contains(locale.languageCode);
+    return languageCodes.contains(locale.languageCode);
   }
 
   @override
@@ -62,5 +81,5 @@ class _CatalogDelegate extends LocalizationsDelegate<Catalog> {
   }
 
   @override
-  bool shouldReload(_CatalogDelegate old) => false;
+  bool shouldReload(CatalogDelegate old) => false;
 }

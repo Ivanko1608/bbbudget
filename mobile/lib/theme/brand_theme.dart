@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'brand_colors.dart';
 
-const _hairlineWidth = 0.5;
+const hairlineWidth = 0.5;
 
 const _pageTransitionsTheme = PageTransitionsTheme(
   builders: {
@@ -76,7 +76,7 @@ CardThemeData createCardTheme(BrandColors colors) {
     margin: EdgeInsets.zero,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
-      side: BorderSide(color: colors.border, width: _hairlineWidth),
+      side: BorderSide(color: colors.border, width: hairlineWidth),
     ),
   );
 }

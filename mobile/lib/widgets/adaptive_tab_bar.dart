@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../i18n/catalog.dart';
 import '../screens/home_tab.dart';
 import '../theme/brand_colors.dart';
+import '../theme/brand_theme.dart';
 
 /// The Cupertino tab bar on iOS and the Material navigation bar elsewhere.
 class AdaptiveTabBar extends StatelessWidget {
@@ -35,8 +36,10 @@ class AdaptiveTabBar extends StatelessWidget {
       onTap: (index) => onSelected(HomeTab.values[index]),
       backgroundColor: colors.card,
       activeColor: colors.ink,
-      inactiveColor: colors.ink.withValues(alpha: 0.45),
-      border: Border(top: BorderSide(color: colors.border, width: 0.5)),
+      inactiveColor: colors.inkMuted,
+      border: Border(
+        top: BorderSide(color: colors.border, width: hairlineWidth),
+      ),
       items: [
         for (final tab in HomeTab.values)
           BottomNavigationBarItem(
