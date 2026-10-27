@@ -22,6 +22,13 @@ type ItemReport struct {
 	ScheduleText      string      `json:"schedule_text"`
 }
 
+// CategoryTotal is what a category's items come to in base currency.
+type CategoryTotal struct {
+	// RecurringPerMonth leaves out one-off items; OneOffTotal counts only them.
+	RecurringPerMonth money.Money `json:"recurring_per_month"`
+	OneOffTotal       money.Money `json:"one_off_total"`
+}
+
 // Totals summarises the whole window, base currency.
 type Totals struct {
 	Income        money.Money `json:"income"`
@@ -51,6 +58,8 @@ type Report struct {
 	Insights   []Insight   `json:"insights"`
 	// Currencies lists each foreign currency with what one unit is worth.
 	Currencies []CurrencyReport `json:"currencies"`
+	// CategoryTotals maps each category id to the totals of its items.
+	CategoryTotals map[string]CategoryTotal `json:"category_totals"`
 }
 
 // CurrencyReport is a foreign currency as a UI shows it: "1 BTC = €73,957.31",
@@ -99,6 +108,7 @@ func buildReport(pr *Projection) (r *Report, err error) {
 			Schedule: l.Schedule,
 		})
 	}
+	r.CategoryTotals = totalItemsByCategory(p, r.Items)
 	r.Currencies = []CurrencyReport{}
 	for _, c := range p.Doc.Currencies {
 		cur, _ := p.Currency(c.Code)
@@ -117,6 +127,26 @@ func buildReport(pr *Projection) (r *Report, err error) {
 	r.Totals = t
 	r.Localize(i18n.For(i18n.Default))
 	return r, nil
+}
+
+func totalItemsByCategory(p *Plan, items []ItemReport) map[string]CategoryTotal {
+	zero := money.Zero(p.Base)
+	totals := map[string]CategoryTotal{}
+	for id := range p.Categories {
+		totals[id] = CategoryTotal{RecurringPerMonth: zero, OneOffTotal: zero}
+	}
+	for _, item := range items {
+		total, ok := totals[item.Category]
+		if !ok {
+			continue
+		}
+		total.RecurringPerMonth = total.RecurringPerMonth.Add(item.MonthlyEquivalent)
+		if item.Schedule.Every == 0 {
+			total.OneOffTotal = total.OneOffTotal.Add(item.PerOccurrence)
+		}
+		totals[item.Category] = total
+	}
+	return totals
 }
 
 // unitValue finds the smallest 10^k units of cur worth at least 0.1 in base.
