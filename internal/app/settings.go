@@ -77,9 +77,14 @@ func (a *App) AutoRefresh() AutoRefreshStatus {
 // autoRefresh is the origin of the rate updates RefreshIfDue makes.
 var autoRefresh = store.Origin{Source: store.SourceAutoRefresh}
 
+// autoRefreshFailedMessage is what the status says about a budget whose
+// refresh failed for a reason a person can't act on. The error is logged.
+const autoRefreshFailedMessage = "couldn't refresh the rates; see the server log"
+
 // RefreshIfDue refreshes the rates of every budget when the auto-refresh
-// interval has passed since the last run. It reports whether it ran.
-func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
+// interval has passed since the last run. It reports whether it ran. The
+// errors behind the status's failures go to logger.
+func (a *App) RefreshIfDue(ctx context.Context, logger *slog.Logger) (bool, error) {
 	s, err := a.Settings()
 	if err != nil {
 		return false, err
@@ -107,12 +112,14 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 		for _, u := range updates {
 			if u.Error != "" {
 				st.Failures = append(st.Failures, fmt.Sprintf("%s: %s: %s", m.ID, u.Code, u.Error))
+				logRateDetail(logger, m.ID, u)
 			} else {
 				st.Updated++
 			}
 		}
 		if err != nil && len(updates) == 0 {
-			st.Failures = append(st.Failures, fmt.Sprintf("%s: %v", m.ID, err))
+			logger.Error("auto-refresh of a budget failed", "budget", m.ID, "err", err)
+			st.Failures = append(st.Failures, fmt.Sprintf("%s: %s", m.ID, getFailureMessage(err)))
 		}
 	}
 	a.auto.mu.Lock()
@@ -122,13 +129,31 @@ func (a *App) RefreshIfDue(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func logRateDetail(logger *slog.Logger, budgetID string, u RateUpdate) {
+	if u.Detail != "" {
+		logger.Error("auto-refresh of a rate failed",
+			"budget", budgetID, "currency", u.Code, "detail", u.Detail)
+	}
+}
+
+// getFailureMessage is the text of err when a client may hear about it, else
+// autoRefreshFailedMessage.
+func getFailureMessage(err error) string {
+	message, isClientError := GetClientMessage(err)
+	if !isClientError {
+		return autoRefreshFailedMessage
+	}
+
+	return message
+}
+
 // RunAutoRefresh calls RefreshIfDue every minute until ctx ends. The settings
 // are re-read each time, so turning auto-refresh on or off needs no restart.
 func (a *App) RunAutoRefresh(ctx context.Context, log *slog.Logger) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
-		ran, err := a.RefreshIfDue(ctx)
+		ran, err := a.RefreshIfDue(ctx, log)
 		if err != nil {
 			log.Warn("auto-refresh of rates", "err", err)
 		} else if ran {
