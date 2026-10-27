@@ -434,10 +434,24 @@ func TestUndoNamesChangesSomeoneElseMadeSince(t *testing.T) {
 	}
 
 	undo := h.call("undo", map[string]any{"detail": "full", "revision": 2}, true)
-	refusal := undo["error"].(string)
+	var refusal struct {
+		Later []struct {
+			Revision int    `json:"revision"`
+			Source   string `json:"source"`
+		} `json:"later"`
+	}
+	if err := json.Unmarshal([]byte(undo["error"].(string)), &refusal); err != nil {
+		t.Fatal(err)
+	}
 
-	if !strings.Contains(refusal, "r3 (web)") {
-		t.Errorf("refusal doesn't name the web change: %s", refusal)
+	if len(refusal.Later) != 1 {
+		t.Fatalf("refusal lists %d later changes, want 1", len(refusal.Later))
+	}
+	if refusal.Later[0].Revision != 3 {
+		t.Errorf("later change is r%d, want r3", refusal.Later[0].Revision)
+	}
+	if refusal.Later[0].Source != "web" {
+		t.Errorf("later change is from %q, want web", refusal.Later[0].Source)
 	}
 }
 

@@ -7,11 +7,14 @@ import (
 	"testing"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/store"
 )
 
 const wrapperPath = "/wrapper/path"
+
+func getEnglish() *i18n.Localizer { return i18n.For("en") }
 
 func TestGetClientFailureIgnoresTheTextAroundARecognisedError(t *testing.T) {
 	cases := []struct {
@@ -57,7 +60,7 @@ func TestGetClientFailureIgnoresTheTextAroundARecognisedError(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			wrapped := fmt.Errorf("at %s: %w", wrapperPath, c.err)
 
-			got, ok := GetClientFailure(wrapped)
+			got, ok := GetClientFailure(wrapped, getEnglish)
 
 			if !ok {
 				t.Fatal("error not recognised")

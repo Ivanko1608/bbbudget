@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"bbbudget/internal/app"
 )
 
 // View is the part of a budget get_budget returns.
@@ -42,7 +44,7 @@ func part(s Summary, in GetIn) (Summary, error) {
 		view = ViewOverview
 	}
 	if !slices.Contains(views, view) {
-		return Summary{}, fmt.Errorf("view must be one of %s", viewNames())
+		return Summary{}, app.NewClientError(app.ErrBadInput, "view must be one of %s", viewNames())
 	}
 	months, err := monthsBetween(s.Months, in.From, in.To)
 	if err != nil {
@@ -80,7 +82,8 @@ func monthsBetween(months []monthRow, from, to string) ([]monthRow, error) {
 	}
 	if len(kept) == 0 {
 		first, last := months[0].Month, months[len(months)-1].Month
-		return nil, fmt.Errorf("no months between %q and %q; the budget covers %s to %s",
+		return nil, app.NewClientError(app.ErrBadInput,
+			"no months between %q and %q; the budget covers %s to %s",
 			from, to, first, last)
 	}
 	return kept, nil

@@ -3,11 +3,12 @@ package mcpserver
 import (
 	"context"
 	"embed"
-	"fmt"
 	"strings"
 	"text/template"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"bbbudget/internal/app"
 )
 
 // promptTemplate is a common job, offered to the user as a slash command. Its
@@ -122,7 +123,7 @@ func (t promptTemplate) renderText(args promptArgs) (string, error) {
 	return strings.TrimSuffix(text.String(), "\n"), err
 }
 
-func registerPrompts(s *mcp.Server) {
+func registerPrompts(s *mcp.Server, translate translator) {
 	for _, t := range promptTemplates {
 		prompt := &mcp.Prompt{
 			Name:        t.name,
@@ -130,16 +131,25 @@ func registerPrompts(s *mcp.Server) {
 			Description: t.description,
 			Arguments:   t.arguments,
 		}
-		s.AddPrompt(prompt, t.render)
+		s.AddPrompt(prompt, t.renderWith(translate))
 	}
 }
 
-func (t promptTemplate) render(
-	ctx context.Context, req *mcp.GetPromptRequest,
-) (*mcp.GetPromptResult, error) {
+func (t promptTemplate) renderWith(translate translator) mcp.PromptHandler {
+	return func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		result, err := t.render(req)
+		if err != nil {
+			return nil, translate.toError("prompt "+t.name, err)
+		}
+
+		return result, nil
+	}
+}
+
+func (t promptTemplate) render(req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	args := promptArgs(req.Params.Arguments)
 	if missing := t.missingArgument(args); missing != "" {
-		return nil, fmt.Errorf("%s needs %q", t.name, missing)
+		return nil, app.NewClientError(app.ErrBadInput, "%s needs %q", t.name, missing)
 	}
 	text, err := t.renderText(args)
 	if err != nil {

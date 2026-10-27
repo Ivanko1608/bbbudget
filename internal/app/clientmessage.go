@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"bbbudget/internal/budget"
+	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/store"
 )
@@ -32,6 +33,19 @@ const (
 type ClientFailure struct {
 	Class   ClientClass
 	Message string
+	// Fields are structured data that goes with the message, such as the
+	// issues of an invalid budget.
+	Fields map[string]any
+}
+
+// Body is the failure as a JSON object: the message under "error" next to the fields.
+func (f ClientFailure) Body() map[string]any {
+	body := map[string]any{"error": f.Message}
+	for key, value := range f.Fields {
+		body[key] = value
+	}
+
+	return body
 }
 
 type clientRule struct {
@@ -65,9 +79,30 @@ var clientRules = []clientRule{
 	sentinelRule(store.ErrBadNoteID, ClassBadRequest),
 }
 
-// GetClientFailure returns what a client is told about err, and false when
-// err is not one the client may hear about.
-func GetClientFailure(err error) (ClientFailure, bool) {
+// GetClientFailure returns what a client is told about err, and false when err
+// is not one the client may hear about. Text that has translations is rendered
+// with the localizer getLocalizer returns, which is asked only when needed.
+func GetClientFailure(
+	err error, getLocalizer func() *i18n.Localizer,
+) (ClientFailure, bool) {
+	failure, ok := getClientMessageFailure(err)
+	if !ok {
+		return ClientFailure{}, false
+	}
+	failure.Fields = getClientFields(err, getLocalizer)
+
+	return failure, true
+}
+
+// GetClientMessage returns only the message a client is told about err, and
+// false when err is not one the client may hear about.
+func GetClientMessage(err error) (string, bool) {
+	failure, ok := getClientMessageFailure(err)
+
+	return failure.Message, ok
+}
+
+func getClientMessageFailure(err error) (ClientFailure, bool) {
 	for _, rule := range clientRules {
 		if rule.matches(err) {
 			return rule.describe(err), true
@@ -77,12 +112,37 @@ func GetClientFailure(err error) (ClientFailure, bool) {
 	return ClientFailure{}, false
 }
 
-// GetClientMessage returns the message a client is told about err, and false
-// when err is not one the client may hear about.
-func GetClientMessage(err error) (string, bool) {
-	failure, ok := GetClientFailure(err)
+func getClientFields(err error, getLocalizer func() *i18n.Localizer) map[string]any {
+	fields := map[string]any{}
 
-	return failure.Message, ok
+	var badOp *budget.OpError
+	if errors.As(err, &badOp) {
+		fields["op_index"] = badOp.Index
+		fields["op"] = badOp.Op
+	}
+
+	var invalid *budget.ValidationError
+	if errors.As(err, &invalid) {
+		l := getLocalizer()
+		issues := make([]budget.Issue, len(invalid.Issues))
+		for i, issue := range invalid.Issues {
+			issues[i] = issue.Localized(l)
+		}
+		fields["issues"] = issues
+	}
+
+	var undoLater *UndoConflictError
+	if errors.As(err, &undoLater) {
+		LocalizeHistory(undoLater.Later, getLocalizer())
+		fields["later"] = undoLater.Later
+	}
+
+	var conflict *store.ConflictError
+	if errors.As(err, &conflict) {
+		fields["revision"] = conflict.Actual
+	}
+
+	return fields
 }
 
 // sentinelRule tells the client the text of the sentinel itself. That text is
