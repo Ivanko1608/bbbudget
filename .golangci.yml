@@ -1,0 +1,26 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+  settings:
+    govet:
+      enable:
+        - shadow
+  exclusions:
+    rules:
+      - path: ^cmd/bbbudget/main\.go$
+        linters: [errcheck, govet]
+      - path: ^internal/app/rates\.go$
+        linters: [govet]
+      - path: ^internal/httpapi/httpapi\.go$
+        linters: [errcheck]
+      - path: ^internal/templates/templates\.go$
+        linters: [errcheck]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

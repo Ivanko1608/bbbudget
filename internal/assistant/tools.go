@@ -39,7 +39,7 @@ func connectTools(ctx context.Context, a *app.App, budget string) (*mcpTools, er
 	}
 	listed, err := session.ListTools(ctx, nil)
 	if err != nil {
-		session.Close()
+		_ = session.Close()
 		return nil, err
 	}
 	tools := &mcpTools{
@@ -62,7 +62,7 @@ func isReadOnly(tool *mcp.Tool) bool {
 	return tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 }
 
-func (tools *mcpTools) close() { tools.session.Close() }
+func (tools *mcpTools) close() { _ = tools.session.Close() }
 
 // runCalls makes the calls in order and reports each one, and then whether any
 // of them changed the budget.

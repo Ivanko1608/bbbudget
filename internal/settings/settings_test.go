@@ -71,7 +71,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestPartialFileKeepsDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	os.WriteFile(path, []byte(`{"auto_refresh": "hourly"}`), 0o600)
+	if err := os.WriteFile(path, []byte(`{"auto_refresh": "hourly"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +91,9 @@ func TestBadFilesAreErrors(t *testing.T) {
 		"not json":      `fetch_rates = true`,
 	} {
 		path := filepath.Join(t.TempDir(), "settings.json")
-		os.WriteFile(path, []byte(body), 0o600)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		s, err := Load(path)
 		if err == nil {
 			t.Errorf("%s: want an error", name)

@@ -17,12 +17,12 @@ func lockFile(path string, exclusive bool) (func(), error) {
 		how = syscall.LOCK_EX
 	}
 	if err := syscall.Flock(int(f.Fd()), how); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	return func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
 	}, nil
 }
 
@@ -31,6 +31,6 @@ func syncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
