@@ -430,6 +430,8 @@ type outcomeRow struct {
 	ID               string            `json:"id"`
 	Name             string            `json:"name"`
 	NegativeSavingIn string            `json:"savings_negative_in,omitempty"`
+	Op               budget.OpKind     `json:"op,omitempty"`
+	OpIndex          int               `json:"op_index,omitempty"`
 	TotalInterest    *string           `json:"total_interest,omitempty"`
 }
 
@@ -443,7 +445,13 @@ func outcomeRows(outcomes []budget.Outcome) []outcomeRow {
 
 func newOutcomeRow(outcome budget.Outcome) outcomeRow {
 	if outcome.Error != "" {
-		return outcomeRow{ID: outcome.ID, Name: outcome.Name, Error: outcome.Error}
+		return outcomeRow{
+			ID:      outcome.ID,
+			Name:    outcome.Name,
+			Error:   outcome.Error,
+			Op:      outcome.Op,
+			OpIndex: outcome.OpIndex,
+		}
 	}
 	row := outcomeRow{
 		Debts:            outcomeDebts(outcome),
