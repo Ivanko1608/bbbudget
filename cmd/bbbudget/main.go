@@ -11,6 +11,8 @@
 //	bbbudget history <id>     list recent changes and who made them
 //	bbbudget undo <id>        undo a change
 //	bbbudget settings         show or change app settings
+//	bbbudget pair             make a code that pairs a phone with `serve -remote`
+//	bbbudget devices          list or revoke paired devices
 package main
 
 import (
@@ -77,6 +79,8 @@ commands:
   status   this month's plan versus actual:  bbbudget status home [-month 2026-10]
   history  list recent changes and who made them:  bbbudget history home [-limit 20]
   undo     undo a change:  bbbudget undo home [-revision REV] [-force]
+  pair     make a code that pairs a phone or computer with serve -remote
+  devices  list paired devices:  bbbudget devices [-revoke ID]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
@@ -84,6 +88,7 @@ Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates
 	`-templates overrides.
 App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); ` +
 	`-settings overrides.
+Paired devices live in devices.json next to the settings file.
 `
 
 // fromCLI is the origin of every write made by a command.
@@ -114,6 +119,8 @@ var commands = map[string]command{
 	"history":   runHistory,
 	"undo":      runUndo,
 	"settings":  runSettings,
+	"pair":      runPair,
+	"devices":   runDevices,
 	"version":   runVersion,
 	"help":      runHelp,
 	"-h":        runHelp,
@@ -181,6 +188,9 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 	hosts := c.flags.String(
 		"allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)",
 	)
+	remote := c.flags.Bool(
+		"remote", false, "answer paired devices from any address; put HTTPS in front (see bbbudget pair)",
+	)
 	if err := c.flags.Parse(args); err != nil {
 		return err
 	}
@@ -201,6 +211,14 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 	go a.RunAutoRefresh(ctx, c.logger)
 	if *hosts != "" {
 		opts.AllowedHosts = strings.Split(*hosts, ",")
+	}
+	if *remote {
+		if opts.Devices, err = openDevices(*c.settingsFile); err != nil {
+			return err
+		}
+		fmt.Fprintln(
+			c.stdout, "remote mode: only paired devices can use the API; pair one with `bbbudget pair`",
+		)
 	}
 	if *withMCP {
 		opts.MCP = newMCPHandler(mcpserver.New(a, mcpOptions(*defaultBudget)))
