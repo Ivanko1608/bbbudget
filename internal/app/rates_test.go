@@ -342,7 +342,7 @@ func TestOutageIsNotReportedAsUnsupported(t *testing.T) {
 	if !strings.Contains(q[1].Error, "try again") {
 		t.Fatalf("BTC error %q does not say to try again", q[1].Error)
 	}
-	if !strings.Contains(q[1].Error, "503") {
-		t.Fatalf("BTC error %q does not name the HTTP status", q[1].Error)
+	if !strings.Contains(q[1].Detail, "503") {
+		t.Fatalf("BTC detail %q does not name the HTTP status", q[1].Detail)
 	}
 }

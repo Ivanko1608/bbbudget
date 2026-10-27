@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	"bbbudget/internal/budget"
@@ -50,7 +49,7 @@ func (a *App) WhatsNew(ctx context.Context, id string, req WhatsNewRequest) (*Wh
 	if fromRevision == FromOwnLastChange {
 		ownLastChange, found := findOwnLastChange(history, req.Asker)
 		if !found {
-			return nil, fmt.Errorf("%w: the budget has no history", ErrBadInput)
+			return nil, NewClientError(ErrBadInput, "the budget has no history")
 		}
 		fromRevision = ownLastChange
 	}
@@ -91,14 +90,14 @@ func (a *App) budgetAsOf(
 	ctx context.Context, id string, history []store.Entry, fromRevision, current int64,
 ) (budget.Budget, error) {
 	if fromRevision > current {
-		return budget.Budget{}, fmt.Errorf("%w: r%d is newer than the budget (r%d)",
-			ErrBadInput, fromRevision, current)
+		return budget.Budget{}, NewClientError(
+			ErrBadInput, "r%d is newer than the budget (r%d)", fromRevision, current)
 	}
 	notLater := func(entry store.Entry) bool { return entry.Revision <= fromRevision }
 	i := slices.IndexFunc(history, notLater)
 	if i < 0 {
-		return budget.Budget{}, fmt.Errorf("%w: the history no longer reaches back to r%d",
-			ErrBadInput, fromRevision)
+		return budget.Budget{}, NewClientError(
+			ErrBadInput, "the history no longer reaches back to r%d", fromRevision)
 	}
 	return a.Store.Snapshot(ctx, id, history[i].Revision)
 }

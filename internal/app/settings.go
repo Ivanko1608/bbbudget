@@ -30,7 +30,7 @@ func (a *App) UpdateSettings(p settings.Patch) (settings.Settings, error) {
 	}
 	ns, err := s.Apply(p)
 	if err != nil {
-		return s, fmt.Errorf("%w: %v", ErrBadInput, err)
+		return s, NewClientErrorFrom(ErrBadInput, err)
 	}
 	return ns, settings.Save(a.SettingsPath, ns)
 }

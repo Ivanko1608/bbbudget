@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -140,7 +139,7 @@ type Request struct {
 func (a *Assistant) Reply(ctx context.Context, req Request, emit func(Event)) (string, error) {
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
-		return req.Conversation, fmt.Errorf("%w: empty message", app.ErrBadInput)
+		return req.Conversation, app.NewClientError(app.ErrBadInput, "empty message")
 	}
 	current, err := a.getOrCreateChat(ctx, req.Conversation, req.Budget)
 	if err != nil {

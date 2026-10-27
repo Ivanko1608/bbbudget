@@ -688,7 +688,7 @@ func printRates(w io.Writer, updates []app.RateUpdate) {
 	fmt.Fprintln(table, "CURRENCY\tOLD\tNEW\tFROM\tDATE")
 	for _, u := range updates {
 		if u.Error != "" {
-			fmt.Fprintf(table, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, u.Error)
+			fmt.Fprintf(table, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, cmp.Or(u.Detail, u.Error))
 			continue
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", u.Code, u.Old, u.New, u.From, u.Date)

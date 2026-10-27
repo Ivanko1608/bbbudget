@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,7 +30,12 @@ type RateUpdate struct {
 	New    money.Decimal     `json:"new,omitzero"`
 	// Error is set when this currency could not be priced; the rest still update.
 	Error string `json:"error,omitempty"`
+	// Detail is the full error behind Error, for logs. It never goes to clients.
+	Detail string `json:"-"`
 }
+
+// RateFetchFailedMessage is what clients are told when a rate provider fails.
+const RateFetchFailedMessage = "couldn't reach the exchange rate provider"
 
 // RateError means no rate could be fetched at all.
 type RateError struct{ Err error }
@@ -61,7 +67,8 @@ func (a *App) provider(source budget.RateSource) (rates.Provider, error) {
 	p, ok := a.Rates[source]
 	if !ok {
 		sources := budget.FormatRateSources()
-		return nil, fmt.Errorf("%w: unknown rate source %q (use one of %s)", ErrBadInput, source, sources)
+		return nil, NewClientError(
+			ErrBadInput, "unknown rate source %q (use one of %s)", source, sources)
 	}
 	return p, nil
 }
@@ -75,7 +82,7 @@ func (a *App) Quote(
 	codes []string,
 ) ([]RateUpdate, error) {
 	if _, err := money.Lookup(base); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
+		return nil, NewClientErrorFrom(ErrBadInput, err)
 	}
 	p, err := a.provider(source)
 	if err != nil {
@@ -88,7 +95,7 @@ func (a *App) Quote(
 	for i, c := range codes {
 		codes[i] = strings.ToUpper(strings.TrimSpace(c))
 		if _, err := money.Lookup(codes[i]); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrBadInput, err)
+			return nil, NewClientErrorFrom(ErrBadInput, err)
 		}
 	}
 	q, err := p.Quotes(ctx, base, codes)
@@ -102,7 +109,8 @@ func (a *App) Quote(
 		if v, ok := q[c]; ok {
 			out[i].New, out[i].From, out[i].Date = money.RoundSignificant(v.PerBase, rateDigits), v.From, v.Date
 		} else if partial != nil {
-			out[i].Error = fmt.Sprintf("could not get a %s rate right now (%v); try again later", c, partial.Err)
+			out[i].Error = fmt.Sprintf("could not get a %s rate right now; try again later", c)
+			out[i].Detail = partial.Err.Error()
 		} else {
 			out[i].Error = fmt.Sprintf("%s has no %s rate for %s", source, c, base)
 		}
@@ -240,7 +248,7 @@ func (a *App) fetchRates(
 		if err != nil {
 			fetchErrs = append(fetchErrs, err)
 			for _, c := range cs {
-				got[c] = RateUpdate{Error: err.Error()}
+				got[c] = failedUpdate(err)
 			}
 			continue
 		}
@@ -260,9 +268,23 @@ func (a *App) fetchRates(
 		if len(fetchErrs) > 0 {
 			return updates, &RateError{errors.Join(fetchErrs...)}
 		}
-		return updates, &RateError{errors.New(updates[0].Error)}
+		return updates, &RateError{errors.New(cmp.Or(updates[0].Detail, updates[0].Error))}
 	}
 	return updates, nil
+}
+
+// failedUpdate is the outcome of a currency whose quote failed with err. Only
+// errors written for the client keep their text.
+func failedUpdate(err error) RateUpdate {
+	var clientErr *ClientError
+	switch {
+	case errors.As(err, &clientErr):
+		return RateUpdate{Error: clientErr.Message}
+	case errors.Is(err, ErrRatesOff):
+		return RateUpdate{Error: ErrRatesOff.Error()}
+	default:
+		return RateUpdate{Error: RateFetchFailedMessage, Detail: err.Error()}
+	}
 }
 
 // SetCurrency adds or edits a currency. A new currency without a per_base,
