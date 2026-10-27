@@ -233,9 +233,9 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &rateFailed): // the rate provider failed, not us
 		writeErr(w, http.StatusBadGateway, err.Error(), nil)
 	case errors.Is(err, devices.ErrBadCode):
-		writeErr(w, http.StatusForbidden, err.Error(), nil)
+		writeErr(w, http.StatusForbidden, devices.ErrBadCode.Error(), nil)
 	case errors.Is(err, devices.ErrDeviceNotFound):
-		writeErr(w, http.StatusNotFound, err.Error(), nil)
+		writeErr(w, http.StatusNotFound, devices.ErrDeviceNotFound.Error(), nil)
 	case errors.As(err, &tooLarge):
 		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
 	case isBadRequest(err):

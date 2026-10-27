@@ -31,7 +31,7 @@ func (s *server) requireDevice(next http.Handler) http.Handler {
 		}
 		_, err := s.opts.Devices.Authenticate(token)
 		if errors.Is(err, devices.ErrBadToken) {
-			unauthorized(w, err.Error())
+			unauthorized(w, devices.ErrBadToken.Error())
 			return
 		}
 		if err != nil {

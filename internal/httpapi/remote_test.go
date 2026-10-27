@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -232,6 +235,33 @@ func TestRemoteAcceptsAnyHost(t *testing.T) {
 
 	if got != http.StatusOK {
 		t.Errorf("proxied host: %d, want 200", got)
+	}
+}
+
+func TestDeviceErrorsDoNotLeakTheWrappedChain(t *testing.T) {
+	s := &server{opts: Options{Log: slog.New(slog.DiscardHandler)}}
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"bad code", devices.ErrBadCode},
+		{"device not found", devices.ErrDeviceNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("reading /secret/devices.json: %w", c.err)
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("GET", "/", nil)
+
+			s.fail(w, r, wrapped)
+
+			if strings.Contains(w.Body.String(), "/secret") {
+				t.Errorf("body leaks the path: %s", w.Body)
+			}
+			if !strings.Contains(w.Body.String(), c.err.Error()) {
+				t.Errorf("body lacks the sentinel text: %s", w.Body)
+			}
+		})
 	}
 }
 
