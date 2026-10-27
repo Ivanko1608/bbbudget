@@ -443,6 +443,7 @@
   "chat.message": "Message",
   "chat.placeholder": "Ask about this budget, or ask for a change",
   "chat.send": "Send",
+  "chat.notice": "Planning tool, not financial, legal or tax advice. Check figures and decide for yourself.",
   "chat.working": "Thinking…",
   "chat.failed": "Not sent: {error}",
   "chat.tool": "Used {tool}",
