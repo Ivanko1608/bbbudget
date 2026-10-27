@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
+	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
 )
 
@@ -34,7 +36,8 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	events := startEventStream(w)
 	conversation, err := s.opts.Assistant.Reply(r.Context(), request, events.send)
 	if err != nil {
-		events.send(assistant.Event{Type: assistant.EventError, Error: err.Error()})
+		s.logRequestError(r, "assistant reply failed", err)
+		events.send(assistant.Event{Type: assistant.EventError, Error: chatErrorMessage(err)})
 	}
 	events.send(assistant.Event{Type: assistant.EventDone, Conversation: conversation})
 }
@@ -60,4 +63,15 @@ func (s *eventStream) send(event assistant.Event) {
 	}
 	_, _ = fmt.Fprintf(s.w, "data: %s\n\n", encoded)
 	_ = s.controller.Flush()
+}
+
+const assistantFailedMessage = "the assistant couldn't answer; see the server log"
+
+// chatErrorMessage is what the stream says about a failed reply: the request's
+// own mistake in the client's terms, anything else a fixed message.
+func chatErrorMessage(err error) string {
+	if errors.Is(err, app.ErrBadInput) {
+		return detailOr(err, "bad input")
+	}
+	return assistantFailedMessage
 }
