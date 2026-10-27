@@ -32,10 +32,10 @@ const (
 	settingsFile = "settings.json"
 )
 
-// Registry opens the App of each account under one root directory:
-// <root>/<account>/budgets/ holds its budgets and
+// Dir is the directory holding every account, and a cache of their Apps:
+// <root>/<account>/budgets/ holds an account's budgets and
 // <root>/<account>/settings.json its settings.
-type Registry struct {
+type Dir struct {
 	root      string
 	templates *templates.Registry
 
@@ -43,49 +43,61 @@ type Registry struct {
 	apps map[string]*app.App
 }
 
-// NewRegistry opens (and creates if needed) a root directory. Every account
+// OpenDir opens (and creates if needed) the accounts directory. Every account
 // shares templateRegistry; nil means built-in templates only.
-func NewRegistry(root string, templateRegistry *templates.Registry) (*Registry, error) {
+func OpenDir(root string, templateRegistry *templates.Registry) (*Dir, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	return &Registry{root: root, templates: templateRegistry, apps: map[string]*app.App{}}, nil
+
+	return &Dir{
+		root:      root,
+		templates: templateRegistry,
+		apps:      map[string]*app.App{},
+	}, nil
 }
 
-// Open returns the App of an account, creating the account's directory the
-// first time. Every call for the same account returns the same App, so its
+// GetOrCreate returns the App of an account, creating the account's directory
+// the first time. Every call for the same account returns the same App, so its
 // settings lock and auto-refresh state are shared.
-func (r *Registry) Open(id string) (*app.App, error) {
+func (d *Dir) GetOrCreate(id string) (*app.App, error) {
 	if !ValidID(id) {
 		return nil, ErrBadID
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if existing, ok := r.apps[id]; ok {
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if existing, ok := d.apps[id]; ok {
 		return existing, nil
 	}
-	opened, err := r.newApp(id)
+
+	loaded, err := d.loadAccount(id)
 	if err != nil {
 		return nil, err
 	}
-	r.apps[id] = opened
-	return opened, nil
+	d.apps[id] = loaded
+
+	return loaded, nil
 }
 
-func (r *Registry) newApp(id string) (*app.App, error) {
-	dir := filepath.Join(r.root, id)
-	budgetStore, err := store.NewFileStore(filepath.Join(dir, budgetsDir))
+func (d *Dir) loadAccount(id string) (*app.App, error) {
+	accountDir := filepath.Join(d.root, id)
+
+	budgetStore, err := store.NewFileStore(filepath.Join(accountDir, budgetsDir))
 	if err != nil {
 		return nil, err
 	}
-	accountApp := app.New(budgetStore, r.templates)
-	accountApp.SettingsPath = filepath.Join(dir, settingsFile)
+
+	accountApp := app.New(budgetStore, d.templates)
+	accountApp.SettingsPath = filepath.Join(accountDir, settingsFile)
+
 	return accountApp, nil
 }
 
 // List returns the ids of every account that has a directory, sorted.
-func (r *Registry) List() ([]string, error) {
-	entries, err := os.ReadDir(r.root)
+func (d *Dir) List() ([]string, error) {
+	entries, err := os.ReadDir(d.root)
 	if err != nil {
 		return nil, err
 	}
