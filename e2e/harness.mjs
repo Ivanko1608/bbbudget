@@ -115,13 +115,27 @@ export async function startBrowser(chrome) {
   await send("Page.enable");
   await send("Network.enable");
 
-  // eval runs an expression in the page and returns its JSON value.
-  page.eval = async (expr) => {
-    const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
+  const valueOf = (r) => {
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value;
   };
-  const q = (sel) => JSON.stringify(sel);
+  // eval runs an expression in the page and returns its JSON value.
+  page.eval = async (expr) =>
+    valueOf(await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true }));
+  // call runs fn in the page with args passed as values, never spliced into
+  // its source, and returns its JSON value. fn must not use outer variables.
+  page.call = async (fn, ...args) => {
+    const global = await send("Runtime.evaluate", { expression: "globalThis", objectGroup: "harness" });
+    const r = await send("Runtime.callFunctionOn", {
+      functionDeclaration: fn.toString(),
+      objectId: global.result.objectId,
+      arguments: args.map((value) => ({ value })),
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    await send("Runtime.releaseObjectGroup", { objectGroup: "harness" });
+    return valueOf(r);
+  };
   // goto loads a page and waits until `ready` matches: by default a budget's
   // summary, which renders only once the budget has loaded (the workspace
   // itself shows earlier, while the budget is still being fetched).
@@ -131,20 +145,19 @@ export async function startBrowser(chrome) {
     // A new hash alone wouldn't reload the page: start each visit from scratch.
     await send("Page.navigate", { url: "about:blank" });
     await send("Page.navigate", { url });
-    await waitFor(() => page.eval(`document.readyState === "complete" && !!document.querySelector(${q(ready)})`), `${url} to load`);
+    await waitFor(() => page.call(isLoaded, ready), `${url} to load`);
   };
-  page.exists = (sel) => page.eval(`!!document.querySelector(${q(sel)})`);
-  page.visible = (sel) => page.eval(`(() => { const el = document.querySelector(${q(sel)}); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden"; })()`);
-  page.text = (sel) => page.eval(`document.querySelector(${q(sel)})?.textContent ?? null`);
+  page.exists = (sel) => page.call((s) => !!document.querySelector(s), sel);
+  page.visible = (sel) => page.call(isVisible, sel);
+  page.text = (sel) => page.call((s) => document.querySelector(s)?.textContent ?? null, sel);
   page.click = async (sel) => {
     await waitFor(() => page.exists(sel), `${sel} to exist`);
-    await page.eval(`document.querySelector(${q(sel)}).click()`);
+    await page.call((s) => document.querySelector(s).click(), sel);
   };
   // fill sets a field the way typing would, then commits it (input + change).
   page.fill = async (sel, value) => {
     await waitFor(() => page.exists(sel), `${sel} to exist`);
-    await page.eval(`(() => { const el = document.querySelector(${q(sel)}); el.focus(); el.value = ${q(value)};
-      el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await page.call(fillField, sel, value);
   };
   page.viewport = (width, height, mobile = false) =>
     send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
@@ -155,4 +168,26 @@ export async function startBrowser(chrome) {
     rmSync(profile, { recursive: true, force: true });
   };
   return page;
+}
+
+// The functions below run inside the page through page.call.
+
+function isLoaded(ready) {
+  return document.readyState === "complete" && !!document.querySelector(ready);
+}
+
+function isVisible(sel) {
+  const el = document.querySelector(sel);
+  if (!el) return false;
+
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+}
+
+function fillField(sel, value) {
+  const el = document.querySelector(sel);
+  el.focus();
+  el.value = value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
 }
