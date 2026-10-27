@@ -137,7 +137,7 @@ func (s *FileStore) History(ctx context.Context, id string, limit int) ([]Entry,
 
 func newestFirst(lines []line, limit int) []Entry {
 	n := len(lines)
-	if limit != AllEntries {
+	if limit > 0 {
 		n = min(n, limit)
 	}
 	entries := make([]Entry, 0, n)
