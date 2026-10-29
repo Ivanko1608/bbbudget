@@ -21,7 +21,10 @@ import (
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
+	"bbbudget/internal/templates"
 )
+
+const apiVersion = 1
 
 const maxBody = 1 << 20
 
@@ -309,16 +312,34 @@ func locales() []localeInfo {
 }
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
+	type meta struct {
+		APIVersion  int16                    `json:"apiVersion"`
+		Currencies  []string                 `json:"currencies"`
+		Crypto      []string                 `json:"crypto"`
+		RateSources []budget.RateSource      `json:"rate_sources"`
+		Digits      map[string]int           `json:"digits"`
+		Templates   []templates.Template     `json:"templates"`
+		OpKinds     map[budget.OpKind]string `json:"op_kinds"`
+		Strategies  []string                 `json:"strategies"`
+		Locale      string                   `json:"locale"`
+		Locales     []localeInfo             `json:"locales"`
+	}
+
 	digits := map[string]int{}
 	for _, c := range money.Codes() {
 		digits[c] = money.MustLookup(c).Digits
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
-		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
-		"strategies": budget.Strategies,
-		"locale":     s.reader(r).Locale(),
-		"locales":    locales(),
+	s.writeJSON(w, http.StatusOK, meta{
+		APIVersion:  apiVersion,
+		Currencies:  money.Codes(),
+		Crypto:      money.CryptoCodes(),
+		RateSources: budget.RateSources,
+		Digits:      digits,
+		Templates:   s.app.Templates.List(),
+		OpKinds:     budget.OpKinds,
+		Strategies:  budget.Strategies,
+		Locale:      s.reader(r).Locale(),
+		Locales:     locales(),
 	})
 }
 
