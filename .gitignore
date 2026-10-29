@@ -10,3 +10,7 @@ coverage.out
 /templates/
 *.local.yaml
 *.local.json
+
+# Local code-graph tools
+graphify-out/
+.ua/
