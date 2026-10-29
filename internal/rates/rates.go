@@ -17,14 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// Provider names. They match the budget's currency "source" values.
-const (
-	Auto        = "auto"
-	ECB         = "ecb"
-	CurrencyAPI = "currency-api"
-	CoinGecko   = "coingecko"
+	"bbbudget/internal/budget"
 )
 
 // Quote is one exchange rate.
@@ -35,33 +29,39 @@ type Quote struct {
 	// Date is the day the provider published the rate (YYYY-MM-DD).
 	Date string
 	// From is the provider that supplied it.
-	From string
+	From budget.RateSource
 }
 
 // Provider fetches rates. Codes the provider doesn't price are left out of
 // the result rather than reported as errors, so providers can be chained.
 type Provider interface {
-	Name() string
+	Name() budget.RateSource
 	Quotes(ctx context.Context, base string, codes []string) (map[string]Quote, error)
 }
 
 // FetchError is a provider that could not be reached or returned something
 // unusable: an upstream problem, not bad input.
 type FetchError struct {
-	Provider string
+	Provider budget.RateSource
 	Err      error
 	// Status is the HTTP status when the provider answered with an error.
 	Status int
 }
 
-func (e *FetchError) Error() string { return e.Provider + ": " + e.Err.Error() }
+func (e *FetchError) Error() string { return string(e.Provider) + ": " + e.Err.Error() }
 func (e *FetchError) Unwrap() error { return e.Err }
 
 // maxResponse bounds any provider response.
 const maxResponse = 4 << 20
 
 // get fetches url and returns the body, or a FetchError.
-func get(ctx context.Context, c *http.Client, provider, url string, header http.Header) ([]byte, error) {
+func get(
+	ctx context.Context,
+	c *http.Client,
+	provider budget.RateSource,
+	url string,
+	header http.Header,
+) ([]byte, error) {
 	if c == nil {
 		c = http.DefaultClient
 	}
@@ -77,7 +77,7 @@ func get(ctx context.Context, c *http.Client, provider, url string, header http.
 	if err != nil {
 		return nil, &FetchError{Provider: provider, Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
 		return nil, &FetchError{Provider: provider, Err: err}
@@ -124,11 +124,11 @@ func (e *PartialError) Unwrap() error { return e.Err }
 // if every provider failed. If some failed and codes are still missing, the
 // quotes it has come with a *PartialError.
 type Chain struct {
-	ID        string
+	ID        budget.RateSource
 	Providers []Provider
 }
 
-func (c Chain) Name() string { return c.ID }
+func (c Chain) Name() budget.RateSource { return c.ID }
 
 func (c Chain) Quotes(ctx context.Context, base string, codes []string) (map[string]Quote, error) {
 	out := map[string]Quote{}
@@ -224,15 +224,18 @@ func (c *Cache) Quotes(ctx context.Context, base string, codes []string) (map[st
 // official reference rates and falls back to currency-api, which also covers
 // crypto and the currencies the ECB doesn't publish. coinGeckoKey, if not nil,
 // supplies CoinGecko's API key at request time.
-func Registry(client *http.Client, coinGeckoKey func() string) map[string]Provider {
+func Registry(client *http.Client, coinGeckoKey func() string) map[budget.RateSource]Provider {
 	ecb := NewCache(&ECBProvider{Client: client}, time.Hour)
 	capi := NewCache(&CurrencyAPIProvider{Client: client}, time.Hour)
 	cg := NewCache(&CoinGeckoProvider{Client: client, Key: coinGeckoKey}, time.Hour)
-	return map[string]Provider{
-		ECB:         ecb,
-		CurrencyAPI: capi,
-		CoinGecko:   cg,
-		Auto:        Chain{ID: Auto, Providers: []Provider{ecb, capi}},
+	return map[budget.RateSource]Provider{
+		budget.RateSourceECB:         ecb,
+		budget.RateSourceCurrencyAPI: capi,
+		budget.RateSourceCoinGecko:   cg,
+		budget.RateSourceAuto: Chain{
+			ID:        budget.RateSourceAuto,
+			Providers: []Provider{ecb, capi},
+		},
 	}
 }
 
@@ -240,12 +243,13 @@ func Registry(client *http.Client, coinGeckoKey func() string) map[string]Provid
 // offline use. Rates are decimal strings, units per 1 base; Err, if set, is
 // returned instead.
 type Fixed struct {
-	ID, Base, Date string
-	Rates          map[string]string
-	Err            error
+	ID         budget.RateSource
+	Base, Date string
+	Rates      map[string]string
+	Err        error
 }
 
-func (f Fixed) Name() string { return f.ID }
+func (f Fixed) Name() budget.RateSource { return f.ID }
 
 func (f Fixed) Quotes(_ context.Context, base string, codes []string) (map[string]Quote, error) {
 	if f.Err != nil {

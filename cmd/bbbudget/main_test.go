@@ -33,6 +33,20 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return out.String() + errb.String(), err
 }
 
+func requireContains(t *testing.T, what, out, want string) {
+	t.Helper()
+	if !strings.Contains(out, want) {
+		t.Fatalf("%s: output lacks %q:\n%s", what, want, out)
+	}
+}
+
+func requireSuccess(t *testing.T, what, out string, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", what, err, out)
+	}
+}
+
 func TestCLI(t *testing.T) {
 	dir := t.TempDir()
 	if out, err := runCLI(t, "init", "home", "-template", "example", "-dir", dir); err != nil {
@@ -42,30 +56,41 @@ func TestCLI(t *testing.T) {
 		t.Fatal("duplicate init succeeded")
 	}
 	out, err := runCLI(t, "list", "-dir", dir)
-	if err != nil || !strings.Contains(out, "home") {
-		t.Fatalf("list: %v %s", err, out)
-	}
+	requireSuccess(t, "list", out, err)
+	requireContains(t, "list", out, "home")
 	out, err = runCLI(t, "report", "-dir", dir, "home")
-	if err != nil || !strings.Contains(out, "€10,409.88") {
-		t.Fatalf("report: %v %s", err, out)
-	}
+	requireSuccess(t, "report", out, err)
+	requireContains(t, "report", out, "€10,409.88")
 	// Flags may follow positionals; YAML imports keep exact amounts.
 	file := filepath.Join(t.TempDir(), "mine.yaml")
-	os.WriteFile(file, []byte("name: Mine\nbase_currency: GBP\ncategories: [{label: Pay, kind: income}, {label: Living}]\nitems:\n  - {name: Pay, amount: 2000.10, category: pay}\n  - {name: Rent, amount: 950, category: living}\n"), 0o600)
-	if out, err := runCLI(t, "import", "mine", file, "-dir", dir); err != nil {
+	mine := "name: Mine\nbase_currency: GBP\n" +
+		"categories: [{label: Pay, kind: income}, {label: Living}]\n" +
+		"items:\n" +
+		"  - {name: Pay, amount: 2000.10, category: pay}\n" +
+		"  - {name: Rent, amount: 950, category: living}\n"
+	err = os.WriteFile(file, []byte(mine), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = runCLI(t, "import", "mine", file, "-dir", dir)
+	if err != nil {
 		t.Fatalf("import: %v %s", err, out)
 	}
 	out, err = runCLI(t, "report", "mine", "-dir", dir)
-	if err != nil || !strings.Contains(out, "£1,050.10") {
-		t.Fatalf("report after import: %v %s", err, out)
-	}
+	requireSuccess(t, "report after import", out, err)
+	requireContains(t, "report after import", out, "£1,050.10")
 	tplDir := t.TempDir()
-	os.WriteFile(filepath.Join(tplDir, "starter.yaml"), []byte("description: My starter\nbase_currency: EUR\ncategories: [{label: Living}]\n"), 0o600)
-	out, err = runCLI(t, "templates", "-templates", tplDir)
-	if err != nil || !strings.Contains(out, "starter") || !strings.Contains(out, "example") {
-		t.Fatalf("templates: %v %s", err, out)
+	starter := "description: My starter\nbase_currency: EUR\ncategories: [{label: Living}]\n"
+	err = os.WriteFile(filepath.Join(tplDir, "starter.yaml"), []byte(starter), 0o600)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if out, err := runCLI(t, "init", "s", "-template", "starter", "-templates", tplDir, "-dir", dir); err != nil {
+	out, err = runCLI(t, "templates", "-templates", tplDir)
+	requireSuccess(t, "templates", out, err)
+	requireContains(t, "templates", out, "starter")
+	requireContains(t, "templates", out, "example")
+	initStarter := []string{"init", "s", "-template", "starter", "-templates", tplDir, "-dir", dir}
+	if out, err := runCLI(t, initStarter...); err != nil {
 		t.Fatalf("init from user template: %v %s", err, out)
 	}
 
@@ -79,27 +104,40 @@ func TestCLI(t *testing.T) {
 
 func TestSettingsAndRatesCLI(t *testing.T) {
 	dir, conf := t.TempDir(), filepath.Join(t.TempDir(), "settings.json")
-	if out, err := runCLI(t, "init", "home", "-template", "example", "-dir", dir, "-settings", conf); err != nil {
+	initHome := []string{"init", "home", "-template", "example", "-dir", dir, "-settings", conf}
+	if out, err := runCLI(t, initHome...); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 
 	out, err := runCLI(t, "settings", "-settings", conf)
-	if err != nil || !strings.Contains(out, "default_rate_source  auto") || !strings.Contains(out, "coingecko_api_key    not set") {
-		t.Fatalf("defaults: %v\n%s", err, out)
-	}
-	out, err = runCLI(t, "settings", "-settings", conf, "-set", "auto_refresh=daily", "-set", "fetch_rates=false", "-set", "coingecko_api_key=CG-x")
-	if err != nil || !strings.Contains(out, "auto_refresh         daily") || !strings.Contains(out, "fetch_rates          false") {
-		t.Fatalf("set: %v\n%s", err, out)
-	}
-	if strings.Contains(out, "CG-x") || !strings.Contains(out, "coingecko_api_key    set") {
+	requireSuccess(t, "defaults", out, err)
+	requireContains(t, "defaults", out, "default_rate_source  auto")
+	requireContains(t, "defaults", out, "coingecko_api_key    not set")
+	out, err = runCLI(t, "settings", "-settings", conf,
+		"-set", "auto_refresh=daily",
+		"-set", "fetch_rates=false",
+		"-set", "coingecko_api_key=CG-x")
+	requireSuccess(t, "set", out, err)
+	requireContains(t, "set", out, "auto_refresh         daily")
+	requireContains(t, "set", out, "fetch_rates          false")
+	requireContains(t, "set", out, "coingecko_api_key    set")
+	if strings.Contains(out, "CG-x") {
 		t.Fatalf("the key must not be printed:\n%s", out)
 	}
 	raw, _ := os.ReadFile(conf)
 	if !strings.Contains(string(raw), `"auto_refresh": "daily"`) {
 		t.Fatalf("not saved:\n%s", raw)
 	}
-	for _, bad := range [][]string{{"-set", "auto_refresh=weekly"}, {"-set", "colour=blue"}, {"-set", "fetch_rates=maybe"}, {"-set", "novalue"}, {"extra"}} {
-		if _, err := runCLI(t, append([]string{"settings", "-settings", conf}, bad...)...); err == nil {
+	badSettings := [][]string{
+		{"-set", "auto_refresh=weekly"},
+		{"-set", "colour=blue"},
+		{"-set", "fetch_rates=maybe"},
+		{"-set", "novalue"},
+		{"extra"},
+	}
+	for _, bad := range badSettings {
+		args := append([]string{"settings", "-settings", conf}, bad...)
+		if _, err = runCLI(t, args...); err == nil {
 			t.Errorf("accepted %v", bad)
 		}
 	}
@@ -107,24 +145,40 @@ func TestSettingsAndRatesCLI(t *testing.T) {
 	// Rates: nothing to do while every rate is manual; offline mode refuses a fetch
 	// without touching the network.
 	out, err = runCLI(t, "rates", "home", "-dir", dir, "-settings", conf)
-	if err != nil || !strings.Contains(out, "every rate is manual") {
-		t.Fatalf("all manual: %v\n%s", err, out)
+	requireSuccess(t, "all manual", out, err)
+	requireContains(t, "all manual", out, "every rate is manual")
+	out, err = runCLI(t, "rates", "home", "-only", "usd", "-dir", dir, "-settings", conf)
+	if err == nil {
+		t.Fatalf("offline refresh succeeded: %s", out)
 	}
-	if out, err := runCLI(t, "rates", "home", "-only", "usd", "-dir", dir, "-settings", conf); err == nil || !strings.Contains(err.Error(), "turned off") {
+	if !strings.Contains(err.Error(), "turned off") {
 		t.Fatalf("offline: %v\n%s", err, out)
 	}
-	if out, err := runCLI(t, "rates", "home", "-only", "usd", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
+	offlineDryRun := []string{
+		"rates", "home", "-only", "usd", "-dry-run", "-dir", dir, "-settings", conf,
+	}
+	if out, err = runCLI(t, offlineDryRun...); err == nil {
 		t.Fatalf("offline dry run: %s", out)
 	}
 	// Dry runs check currencies exactly like real runs.
-	if out, err := runCLI(t, "rates", "home", "-only", "XYZ", "-dry-run", "-dir", dir, "-settings", conf); err == nil {
+	unknownDryRun := []string{
+		"rates", "home", "-only", "XYZ", "-dry-run", "-dir", dir, "-settings", conf,
+	}
+	if out, err = runCLI(t, unknownDryRun...); err == nil {
 		t.Fatalf("dry run accepted an unknown currency: %s", out)
 	}
 
 	// A broken settings file is reported, not silently replaced by defaults.
-	os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)
-	if _, err := runCLI(t, "list", "-dir", dir, "-settings", conf); err == nil || !strings.Contains(err.Error(), conf) {
-		t.Fatalf("broken settings file: %v", err)
+	err = os.WriteFile(conf, []byte(`{"auto_refresh": "weekly"}`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runCLI(t, "list", "-dir", dir, "-settings", conf)
+	if err == nil {
+		t.Fatal("broken settings file accepted")
+	}
+	if !strings.Contains(err.Error(), conf) {
+		t.Fatalf("error does not name the settings file: %v", err)
 	}
 }
 
@@ -133,31 +187,41 @@ func TestStdioMCP(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the binary")
 	}
-	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json")) // inherited by the binary
+	// inherited by the binary
+	t.Setenv("BBBUDGET_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
 	t.Setenv("BBBUDGET_TEMPLATES", t.TempDir())
 	bin := filepath.Join(t.TempDir(), "bbbudget")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	dir := t.TempDir()
-	if out, err := exec.Command(bin, "init", "home", "-template", "example", "-dir", dir).CombinedOutput(); err != nil {
+	initHome := exec.Command(bin, "init", "home", "-template", "example", "-dir", dir)
+	if out, err := initHome.CombinedOutput(); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
 
 	ctx := context.Background()
 	cmd := exec.Command(bin, "mcp", "-dir", dir, "-budget", "home")
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "e2e"}, nil).Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e"}, nil)
+	cs, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	if cs.InitializeResult().Instructions == "" {
 		t.Error("server instructions missing")
 	}
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "update_item", Arguments: map[string]any{"item": "rent", "amount": "1200"}})
-	if err != nil || res.IsError {
-		t.Fatalf("update_item: %v %+v", err, res)
+	rentTo1200 := &mcp.CallToolParams{
+		Name:      "update_item",
+		Arguments: map[string]any{"item": "rent", "amount": "1200"},
+	}
+	res, err := cs.CallTool(ctx, rentTo1200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("update_item failed: %+v", res)
 	}
 	text := res.Content[0].(*mcp.TextContent).Text
 	if !strings.Contains(text, "amount 1150 → 1200") {

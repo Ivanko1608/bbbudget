@@ -16,15 +16,50 @@ import (
 
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
+	"bbbudget/internal/budget"
 	"bbbudget/internal/rates"
 	"bbbudget/internal/store"
 	"bbbudget/web"
 )
 
-func offlineRates() map[string]rates.Provider {
-	f := rates.Fixed{ID: rates.CurrencyAPI, Base: "EUR", Date: "2026-10-07", Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"}}
-	down := rates.Fixed{ID: rates.ECB, Err: errors.New("HTTP 503")}
-	return map[string]rates.Provider{rates.Auto: f, rates.CurrencyAPI: f, rates.ECB: down, rates.CoinGecko: down}
+const (
+	setUSDParity = `{"op":"set_currency","target":"USD","value":{"per_base":"1"}}`
+	cyrillic     = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+)
+
+func eq[T comparable](t *testing.T, what string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func setItemAmountOps(target, amount string) string {
+	return fmt.Sprintf(
+		`{"ops":[{"op":"set_item","target":%q,"value":{"amount":%q}}]}`,
+		target,
+		amount,
+	)
+}
+
+func sendAsPlainText(r *http.Request) {
+	r.Header.Set("Content-Type", "text/plain")
+}
+
+func offlineRates() map[budget.RateSource]rates.Provider {
+	f := rates.Fixed{
+		ID:    budget.RateSourceCurrencyAPI,
+		Base:  "EUR",
+		Date:  "2026-10-07",
+		Rates: map[string]string{"USD": "1.1186", "BTC": "0.00001352"},
+	}
+	down := rates.Fixed{ID: budget.RateSourceECB, Err: errors.New("HTTP 503")}
+	return map[budget.RateSource]rates.Provider{
+		budget.RateSourceAuto:        f,
+		budget.RateSourceCurrencyAPI: f,
+		budget.RateSourceECB:         down,
+		budget.RateSourceCoinGecko:   down,
+	}
 }
 
 func TestRates(t *testing.T) {
@@ -32,23 +67,29 @@ func TestRates(t *testing.T) {
 	c.do("PUT", "/api/settings", `{"fetch_rates":true}`, 200) // off by default
 	var q []map[string]any
 	w := c.req("GET", "/api/rates?base=EUR&codes=usd,BTC", "", nil)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &q) != nil || len(q) != 2 || q[1]["new"] != "0.00001352" {
-		t.Fatalf("quote: %d %s", w.Code, w.Body)
+	eq(t, "quote status", w.Code, 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &q); err != nil {
+		t.Fatalf("quote: %v %s", err, w.Body)
 	}
+	eq(t, "quotes", len(q), 2)
+	eq(t, "BTC new rate", q[1]["new"], "0.00001352")
 	c.do("GET", "/api/rates?base=EUR&codes=USD&source=google", "", 400)
 	c.do("GET", "/api/rates?base=EUR&codes=USD&source=ecb", "", 502)
 
 	// Refreshing nothing (all manual) succeeds; naming USD fetches it.
-	if v := c.do("POST", "/api/budgets/home/rates/refresh", `{}`, 200); len(v["rate_updates"].([]any)) != 0 {
-		t.Fatal(v["rate_updates"])
-	}
+	nothingToRefresh := c.do("POST", "/api/budgets/home/rates/refresh", `{}`, 200)
+	eq(t, "rate updates", len(nothingToRefresh["rate_updates"].([]any)), 0)
 	v := c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["USD"]}`, 200)
 	usd := v["budget"].(map[string]any)["currencies"].([]any)[1].(map[string]any)
-	if usd["per_base"] != "1.1186" || usd["source"] != "auto" || usd["rate_date"] != "2026-10-07" || v["report"] == nil {
-		t.Fatalf("refresh: %v", usd)
+	eq(t, "USD per_base", usd["per_base"], "1.1186")
+	eq(t, "USD source", usd["source"], "auto")
+	eq(t, "USD rate_date", usd["rate_date"], "2026-10-07")
+	if v["report"] == nil {
+		t.Fatal("refresh returned no report")
 	}
 	c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["JPY"]}`, 404)
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_currency","target":"USD","value":{"source":"ecb"}}]}`, 200)
+	usdToECB := `{"ops":[{"op":"set_currency","target":"USD","value":{"source":"ecb"}}]}`
+	c.do("POST", "/api/budgets/home/ops", usdToECB, 200)
 	if v := c.do("POST", "/api/budgets/home/rates/refresh", `{}`, 502); v["rate_updates"] == nil {
 		t.Fatal("a failed refresh should still say what failed")
 	}
@@ -86,7 +127,10 @@ func setupWith(t *testing.T, newAssistant func(*app.App) *assistant.Assistant) *
 	return c
 }
 
-func (c *client) req(method, path, body string, mut func(*http.Request)) *httptest.ResponseRecorder {
+func (c *client) req(
+	method, path, body string,
+	mut func(*http.Request),
+) *httptest.ResponseRecorder {
 	c.t.Helper()
 	var r io.Reader
 	if body != "" {
@@ -113,13 +157,16 @@ func (c *client) do(method, path, body string, want int) map[string]any {
 	}
 	var out map[string]any
 	if strings.HasPrefix(strings.TrimSpace(w.Body.String()), "{") {
-		json.Unmarshal(w.Body.Bytes(), &out)
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			c.t.Fatal(err)
+		}
 	}
 	return out
 }
 
 func endSavings(v map[string]any) string {
-	return v["report"].(map[string]any)["totals"].(map[string]any)["end_savings"].(map[string]any)["amount"].(string)
+	totals := v["report"].(map[string]any)["totals"].(map[string]any)
+	return totals["end_savings"].(map[string]any)["amount"].(string)
 }
 
 func TestGetAndReplace(t *testing.T) {
@@ -150,25 +197,28 @@ func TestValidationIssuesAreReturned(t *testing.T) {
 	bad := strings.Replace(string(b), `"amount":"1150"`, `"amount":"1150.001"`, 1)
 	out := c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":`+bad+`}`, 422)
 	issues := out["issues"].([]any)
-	if len(issues) != 1 || issues[0].(map[string]any)["path"] != "items[1].amount" {
-		t.Fatalf("issues: %v", issues)
-	}
+	eq(t, "issues", len(issues), 1)
+	eq(t, "issue path", issues[0].(map[string]any)["path"], "items[1].amount")
 	// A float-y or malformed amount never reaches the domain.
-	c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":`+strings.Replace(string(b), `"amount":"1150"`, `"amount":1.15e3`, 1)+`}`, 400)
+	floaty := strings.Replace(string(b), `"amount":"1150"`, `"amount":1.15e3`, 1)
+	c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":`+floaty+`}`, 400)
 	c.do("PUT", "/api/budgets/home", `{"revision":1,"budget":{},"extra":1}`, 400)
 }
 
 func TestOpsWhatIfScenarios(t *testing.T) {
 	c := setup(t)
-	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"tuition","value":{"amount":"450"}}]}`, 200)
+	v := c.do("POST", "/api/budgets/home/ops", setItemAmountOps("tuition", "450"), 200)
 	if endSavings(v) != "15509.88" { // +5100.00
 		t.Fatalf("ops: %s", endSavings(v))
 	}
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"school","value":{"amount":"1"}}]}`, 400) // ambiguous
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"nope","value":{"amount":"1"}}]}`, 400)   // no match inside an op
-	c.do("POST", "/api/budgets/home/ops", `{"revision":1,"ops":[{"op":"remove_item","target":"rent"}]}`, 409)
+	ambiguousTarget := setItemAmountOps("school", "1")
+	c.do("POST", "/api/budgets/home/ops", ambiguousTarget, 400)
+	unmatchedTarget := setItemAmountOps("nope", "1")
+	c.do("POST", "/api/budgets/home/ops", unmatchedTarget, 400)
+	staleRemoval := `{"revision":1,"ops":[{"op":"remove_item","target":"rent"}]}`
+	c.do("POST", "/api/budgets/home/ops", staleRemoval, 409)
 
-	wi := c.do("POST", "/api/budgets/home/what-if", `{"ops":[{"op":"set_currency","target":"USD","value":{"per_base":"1"}}]}`, 200)
+	wi := c.do("POST", "/api/budgets/home/what-if", `{"ops":[`+setUSDParity+`]}`, 200)
 	if wi["report"] == nil {
 		t.Fatal("what-if report missing")
 	}
@@ -176,14 +226,16 @@ func TestOpsWhatIfScenarios(t *testing.T) {
 		t.Fatal("what-if saved something")
 	}
 
-	c.do("POST", "/api/budgets/home/scenarios", `{"name":"Dollar parity","ops":[{"op":"set_currency","target":"USD","value":{"per_base":"1"}}]}`, 201)
+	parityScenario := `{"name":"Dollar parity","ops":[` + setUSDParity + `]}`
+	c.do("POST", "/api/budgets/home/scenarios", parityScenario, 201)
 	c.do("POST", "/api/budgets/home/scenarios", `{"name":"","ops":[]}`, 422)
 	w := c.req("GET", "/api/budgets/home/compare", "", nil)
 	var rows []map[string]any
-	json.Unmarshal(w.Body.Bytes(), &rows)
-	if len(rows) != 2 || rows[1]["id"] != "dollar-parity" {
-		t.Fatalf("compare: %s", w.Body)
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "compared scenarios", len(rows), 2)
+	eq(t, "second scenario id", rows[1]["id"], "dollar-parity")
 	c.do("GET", "/api/budgets/home/scenarios/dollar-parity/report", "", 200)
 	c.do("POST", "/api/budgets/home/scenarios/dollar-parity/adopt", "{}", 200)
 	c.do("DELETE", "/api/budgets/home/scenarios/dollar-parity", "", 404)
@@ -205,23 +257,29 @@ func TestCreateListDelete(t *testing.T) {
 func TestGuards(t *testing.T) {
 	c := setup(t)
 	// DNS rebinding: a foreign Host is refused even for reads.
-	if w := c.req("GET", "/api/budgets", "", func(r *http.Request) { r.Host = "evil.example" }); w.Code != 403 {
+	foreignHost := func(r *http.Request) { r.Host = "evil.example" }
+	w := c.req("GET", "/api/budgets", "", foreignHost)
+	if w.Code != 403 {
 		t.Errorf("foreign host: %d", w.Code)
 	}
-	if w := c.req("GET", "/api/budgets", "", func(r *http.Request) { r.Host = "[::1]:8080" }); w.Code != 200 {
+	ipv6Loopback := func(r *http.Request) { r.Host = "[::1]:8080" }
+	w = c.req("GET", "/api/budgets", "", ipv6Loopback)
+	if w.Code != 200 {
 		t.Errorf("ipv6 loopback: %d", w.Code)
 	}
 	// Cross-site form post (text/plain needs no CORS preflight): refused.
-	w := c.req("POST", "/api/budgets/home/ops", `{"ops":[]}`, func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") })
+	w = c.req("POST", "/api/budgets/home/ops", `{"ops":[]}`, sendAsPlainText)
 	if w.Code != 415 {
 		t.Errorf("text/plain post: %d", w.Code)
 	}
-	w = c.req("DELETE", "/api/budgets/home", "", func(r *http.Request) { r.Header.Del("X-Requested-With") })
+	withoutMarker := func(r *http.Request) { r.Header.Del("X-Requested-With") }
+	w = c.req("DELETE", "/api/budgets/home", "", withoutMarker)
 	if w.Code != 403 {
 		t.Errorf("bare DELETE: %d", w.Code)
 	}
 	big := `{"id":"x","name":"` + strings.Repeat("a", 2<<20) + `"}`
-	if w := c.req("POST", "/api/budgets", big, nil); w.Code != 413 {
+	w = c.req("POST", "/api/budgets", big, nil)
+	if w.Code != 413 {
 		t.Errorf("huge body: %d", w.Code)
 	}
 }
@@ -229,51 +287,62 @@ func TestGuards(t *testing.T) {
 func TestStaticAndMeta(t *testing.T) {
 	c := setup(t)
 	w := c.req("GET", "/", "", nil)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "<title>ui</title>") {
-		t.Fatalf("index: %d %s", w.Code, w.Body)
+	eq(t, "index status", w.Code, 200)
+	if !strings.Contains(w.Body.String(), "<title>ui</title>") {
+		t.Fatalf("index body: %s", w.Body)
 	}
-	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "connect-src 'self'") {
-		t.Fatalf("UI without a same-origin CSP: %q", csp)
+	csp := w.Header().Get("Content-Security-Policy")
+	for _, directive := range []string{"default-src 'self'", "connect-src 'self'"} {
+		if !strings.Contains(csp, directive) {
+			t.Fatalf("UI without a same-origin CSP, lacking %q: %q", directive, csp)
+		}
 	}
-	if w := c.req("POST", "/mcp", `{}`, nil); w.Code != 299 {
-		t.Fatalf("mcp not mounted alongside the UI: %d", w.Code)
-	}
-	if w := c.req("POST", "/index.html", `{}`, nil); w.Code != 405 {
-		t.Fatalf("POST to a static file: %d", w.Code)
-	}
+	w = c.req("POST", "/mcp", `{}`, nil)
+	eq(t, "mcp status alongside the UI", w.Code, 299)
+	w = c.req("POST", "/index.html", `{}`, nil)
+	eq(t, "POST to a static file status", w.Code, 405)
 	m := c.do("GET", "/api/meta", "", 200)
-	if len(m["currencies"].([]any)) < 10 || m["op_kinds"] == nil {
-		t.Fatalf("meta: %v", m)
+	if len(m["currencies"].([]any)) < 10 {
+		t.Fatalf("meta lists too few currencies: %v", m["currencies"])
+	}
+	if m["op_kinds"] == nil {
+		t.Fatal("meta lacks op_kinds")
 	}
 }
 
 func TestSettings(t *testing.T) {
 	c := setup(t)
 	v := c.do("GET", "/api/settings", "", 200)
-	if v["fetch_rates"] != false || v["default_rate_source"] != "auto" || v["auto_refresh"] != "off" || v["coingecko_api_key_set"] != false {
-		t.Fatalf("defaults: %v", v)
-	}
-	if v["paths"].(map[string]any)["data"] != "/d" || v["auto_refresh_status"] == nil {
-		t.Fatalf("paths/status: %v", v)
+	eq(t, "fetch_rates", v["fetch_rates"], false)
+	eq(t, "default_rate_source", v["default_rate_source"], "auto")
+	eq(t, "auto_refresh", v["auto_refresh"], "off")
+	eq(t, "coingecko_api_key_set", v["coingecko_api_key_set"], false)
+	eq(t, "data path", v["paths"].(map[string]any)["data"], "/d")
+	if v["auto_refresh_status"] == nil {
+		t.Fatalf("no auto_refresh_status: %v", v)
 	}
 
-	w := c.req("PUT", "/api/settings", `{"auto_refresh":"daily","coingecko_api_key":"CG-secret"}`, nil)
-	if w.Code != 200 || strings.Contains(w.Body.String(), "CG-secret") {
-		t.Fatalf("the key must never be sent back: %d %s", w.Code, w.Body)
+	withKey := `{"auto_refresh":"daily","coingecko_api_key":"CG-secret"}`
+	w := c.req("PUT", "/api/settings", withKey, nil)
+	eq(t, "settings PUT status", w.Code, 200)
+	if strings.Contains(w.Body.String(), "CG-secret") {
+		t.Fatalf("the key must never be sent back: %s", w.Body)
 	}
-	if v := c.do("GET", "/api/settings", "", 200); v["auto_refresh"] != "daily" || v["coingecko_api_key_set"] != true {
-		t.Fatalf("after PUT: %v", v)
-	}
+	v = c.do("GET", "/api/settings", "", 200)
+	eq(t, "auto_refresh after PUT", v["auto_refresh"], "daily")
+	eq(t, "coingecko_api_key_set after PUT", v["coingecko_api_key_set"], true)
 	c.do("PUT", "/api/settings", `{"auto_refresh":"weekly"}`, 400)
 	c.do("PUT", "/api/settings", `{"colour":"blue"}`, 400)
-	if w := c.req("PUT", "/api/settings", `{"fetch_rates":false}`, func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }); w.Code != 415 {
+	w = c.req("PUT", "/api/settings", `{"fetch_rates":false}`, sendAsPlainText)
+	if w.Code != 415 {
 		t.Fatalf("settings writes need JSON like every mutation: %d", w.Code)
 	}
 
 	// Offline: quotes and refreshes are refused with a clear conflict, not a 5xx.
 	c.do("PUT", "/api/settings", `{"fetch_rates":false}`, 200)
-	if v := c.do("GET", "/api/rates?base=EUR&codes=USD", "", 409); !strings.Contains(v["error"].(string), "turned off") {
-		t.Fatal(v)
+	offline := c.do("GET", "/api/rates?base=EUR&codes=USD", "", 409)
+	if !strings.Contains(offline["error"].(string), "turned off") {
+		t.Fatal(offline)
 	}
 	c.do("POST", "/api/budgets/home/rates/refresh", `{"codes":["USD"]}`, 409)
 }
@@ -281,7 +350,11 @@ func TestSettings(t *testing.T) {
 func TestSettingsPageIsServed(t *testing.T) {
 	st, _ := store.NewFileStore(t.TempDir())
 	h := New(app.New(st, nil), Options{Static: web.FS()})
-	for _, path := range []string{"/settings.html", "/settings.js", "/", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/icon-180.png"} {
+	pages := []string{
+		"/settings.html", "/settings.js", "/", "/manifest.webmanifest", "/icon.svg",
+		"/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/icon-180.png",
+	}
+	for _, path := range pages {
 		req := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -292,15 +365,23 @@ func TestSettingsPageIsServed(t *testing.T) {
 			t.Error("the budget page must link to the settings page")
 		}
 		if path == "/manifest.webmanifest" {
-			if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
+			ct := w.Header().Get("Content-Type")
+			if !strings.HasPrefix(ct, "application/manifest+json") {
 				t.Errorf("manifest served as %q: browsers won't install the app", ct)
 			}
 			var m struct {
 				Display string `json:"display"`
 				Icons   []struct{ Src, Purpose string }
 			}
-			if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Display != "standalone" || len(m.Icons) < 3 {
-				t.Errorf("manifest: %v %+v", err, m)
+			if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+				t.Errorf("manifest: %v", err)
+				continue
+			}
+			if m.Display != "standalone" {
+				t.Errorf("manifest display = %q, want standalone", m.Display)
+			}
+			if len(m.Icons) < 3 {
+				t.Errorf("manifest has %d icons, want at least 3", len(m.Icons))
 			}
 		}
 	}
@@ -309,12 +390,15 @@ func TestSettingsPageIsServed(t *testing.T) {
 func TestMetaListsCrypto(t *testing.T) {
 	v := setup(t).do("GET", "/api/meta", "", 200)
 	crypto, sources := v["crypto"].([]any), v["rate_sources"].([]any)
-	if len(crypto) == 0 || crypto[0] != "ADA" || len(sources) != 5 {
-		t.Fatalf("crypto %v, sources %v", crypto, sources)
+	if len(crypto) == 0 {
+		t.Fatal("no crypto currencies")
 	}
-	if d := v["digits"].(map[string]any); d["EUR"] != 2.0 || d["JPY"] != 0.0 || d["BTC"] != 8.0 {
-		t.Fatalf("digits: %v", d)
-	}
+	eq(t, "first crypto currency", crypto[0], "ADA")
+	eq(t, "rate sources", len(sources), 5)
+	digits := v["digits"].(map[string]any)
+	eq(t, "EUR digits", digits["EUR"], 2.0)
+	eq(t, "JPY digits", digits["JPY"], 0.0)
+	eq(t, "BTC digits", digits["BTC"], 8.0)
 }
 
 // Budgets saved before pots existed (no "pots"/"withdrawals") or saved with
@@ -322,16 +406,19 @@ func TestMetaListsCrypto(t *testing.T) {
 func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 	dir := t.TempDir()
 	legacy := `{"id":"old","revision":3,"updated_at":"2026-10-01T00:00:00Z","budget":{
-		"name":"Old","base_currency":"EUR","start_month":"2026-10","months":12,"savings_start":"250",
+		"name":"Old","base_currency":"EUR","start_month":"2026-10","months":12,
+		"savings_start":"250",
 		"currencies":[],"categories":[{"id":"income","label":"Income","kind":"income"}],
-		"items":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income","schedule":{"start":0,"every":1}}],
+		"items":[{"id":"pay","name":"Pay","amount":"1000","currency":"EUR","category":"income",
+			"schedule":{"start":0,"every":1}}],
 		"debts":[],"extra_to_debt_pct":"0","debt_strategy":"avalanche",
 		"goals":[{"id":"emergency","name":"Emergency fund","target":"2000"}],"scenarios":[]}}`
 	nulls := `{"id":"nulls","revision":1,"updated_at":"2026-10-01T00:00:00Z","budget":{
 		"name":"Nulls","base_currency":"EUR","start_month":"2026-10","months":12,
-		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],"items":null,"debts":null,
-		"extra_to_debt_pct":"0","debt_strategy":"avalanche",
-		"pots":[{"id":"savings","name":"General savings","kind":"general","balance":"0"}],"withdrawals":null,"scenarios":null}}`
+		"currencies":null,"categories":[{"id":"income","label":"Income","kind":"income"}],
+		"items":null,"debts":null,"extra_to_debt_pct":"0","debt_strategy":"avalanche",
+		"pots":[{"id":"savings","name":"General savings","kind":"general","balance":"0"}],
+		"withdrawals":null,"scenarios":null}}`
 	for name, raw := range map[string]string{"old.json": legacy, "nulls.json": nulls} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
@@ -357,7 +444,10 @@ func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 			t.Fatal(err)
 		}
-		for _, k := range []string{"currencies", "categories", "items", "debts", "pots", "withdrawals", "scenarios"} {
+		budgetLists := []string{
+			"currencies", "categories", "items", "debts", "pots", "withdrawals", "scenarios",
+		}
+		for _, k := range budgetLists {
 			if _, ok := v.Budget[k].([]any); !ok {
 				t.Errorf("%s: budget.%s = %v, want a list", id, k, v.Budget[k])
 			}
@@ -373,16 +463,20 @@ func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
 func TestDebtPayoffOverHTTP(t *testing.T) {
 	c := setup(t)
 	v := c.do("POST", "/api/budgets/home/ops", `{"ops":[
-		{"op":"add_item","value":{"name":"Bike sale","amount":"3000","category":"income","schedule":{"start":2,"every":0},"pot":"General"}},
-		{"op":"add_debt","value":{"name":"Store card","balance":"2500","apr_pct":"24","min_payment":"80","payoff_month":2,"payoff_from":"General"}}]}`, 200)
+		{"op":"add_item","value":{"name":"Bike sale","amount":"3000","category":"income",
+			"schedule":{"start":2,"every":0},"pot":"General"}},
+		{"op":"add_debt","value":{"name":"Store card","balance":"2500","apr_pct":"24",
+			"min_payment":"80","payoff_month":2,"payoff_from":"General"}}]}`, 200)
 	d := v["budget"].(map[string]any)["debts"].([]any)[0].(map[string]any)
-	if d["payoff_from"] != "savings" || d["payoff_month"] != float64(2) {
-		t.Fatalf("payoff stored as: %v", d)
-	}
+	eq(t, "stored payoff_from", d["payoff_from"], "savings")
+	eq(t, "stored payoff_month", d["payoff_month"], 2.0)
 	m2 := v["report"].(map[string]any)["months"].([]any)[2].(map[string]any)
-	if m2["payoff"].(map[string]any)["amount"] == "0" || m2["payoff_from_pots"].(map[string]any)["amount"] != m2["payoff"].(map[string]any)["amount"] {
-		t.Fatalf("month 2: payoff %v from pots %v", m2["payoff"], m2["payoff_from_pots"])
+	payoff := m2["payoff"].(map[string]any)["amount"]
+	payoffFromPots := m2["payoff_from_pots"].(map[string]any)["amount"]
+	if payoff == "0" {
+		t.Fatalf("month 2 pays nothing off: %v", m2["payoff"])
 	}
+	eq(t, "month 2 payoff from pots", payoffFromPots, payoff)
 	if m2["debts"].([]any)[0].(map[string]any)["balance"].(map[string]any)["amount"] != "0" {
 		t.Errorf("not cleared: %v", m2["debts"])
 	}
@@ -390,12 +484,15 @@ func TestDebtPayoffOverHTTP(t *testing.T) {
 	// A payoff from a pot that doesn't exist is a validation issue with its path.
 	b, _ := json.Marshal(v["budget"])
 	bad := strings.Replace(string(b), `"payoff_from":"savings"`, `"payoff_from":"nowhere"`, 1)
-	out := c.do("PUT", "/api/budgets/home", fmt.Sprintf(`{"revision":%v,"budget":%s}`, v["revision"], bad), 422)
-	if issues := out["issues"].([]any); len(issues) != 1 || issues[0].(map[string]any)["path"] != "debts[0].payoff_from" {
-		t.Fatalf("issues: %v", issues)
-	}
+	replaceBody := fmt.Sprintf(`{"revision":%v,"budget":%s}`, v["revision"], bad)
+	out := c.do("PUT", "/api/budgets/home", replaceBody, 422)
+	issues := out["issues"].([]any)
+	eq(t, "issues", len(issues), 1)
+	eq(t, "issue path", issues[0].(map[string]any)["path"], "debts[0].payoff_from")
 	// The pot can't be removed while the payoff uses it.
-	c.do("POST", "/api/budgets/home/ops", `{"ops":[{"op":"set_item","target":"bike","value":{"pot":""}},{"op":"remove_pot","target":"savings"}]}`, 400)
+	c.do("POST", "/api/budgets/home/ops", `{"ops":[
+		{"op":"set_item","target":"bike","value":{"pot":""}},
+		{"op":"remove_pot","target":"savings"}]}`, 400)
 }
 
 const setRentTo1200 = `{"ops":[{"op":"set_item","target":"rent","value":{"amount":"1200"}}]}`
@@ -408,8 +505,9 @@ func TestHistoryListsBrowserChanges(t *testing.T) {
 	w := c.req("GET", "/api/budgets/home/history", "", nil)
 
 	var entries []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil || w.Code != 200 {
-		t.Fatalf("history: %d %s", w.Code, w.Body)
+	eq(t, "history status", w.Code, 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("history: %v %s", err, w.Body)
 	}
 	if len(entries) != 2 {
 		t.Fatalf("want the creation and one change, got %d entries", len(entries))
@@ -475,30 +573,43 @@ func TestLocaleNegotiation(t *testing.T) {
 		t.Helper()
 		w := c.req("GET", path, "", mut)
 		var out map[string]any
-		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+		if w.Code != 200 {
 			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body)
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("GET %s: %v %s", path, err, w.Body)
 		}
 		return out
 	}
-	if m := get("/api/meta", ru); m["locale"] != "ru" || len(m["locales"].([]any)) < 2 {
-		t.Fatalf("meta: %v %v", m["locale"], m["locales"])
+	russianMeta := get("/api/meta", ru)
+	eq(t, "locale", russianMeta["locale"], "ru")
+	if len(russianMeta["locales"].([]any)) < 2 {
+		t.Fatalf("meta lists too few locales: %v", russianMeta["locales"])
 	}
 	month := func(v map[string]any) string {
 		return v["report"].(map[string]any)["months"].([]any)[0].(map[string]any)["label"].(string)
 	}
 	ruView, enView := get("/api/budgets/home", ru), get("/api/budgets/home", nil)
-	if !strings.ContainsAny(month(ruView), "абвгдеёжзийклмнопрстуфхцчшщъыьэюя") || strings.ContainsAny(month(enView), "абвгдеёжзийклмнопрстуфхцчшщъыьэюя") {
-		t.Fatalf("month labels: ru %q, en %q", month(ruView), month(enView))
+	if !strings.ContainsAny(month(ruView), cyrillic) {
+		t.Fatalf("Russian month label %q has no Cyrillic letters", month(ruView))
+	}
+	if strings.ContainsAny(month(enView), cyrillic) {
+		t.Fatalf("English month label %q has Cyrillic letters", month(enView))
 	}
 
 	// Validation issues come back in the reader's language, with their key.
-	w := c.req("PUT", "/api/budgets/home", `{"revision":1,"budget":{"name":"","base_currency":"EUR","start_month":"2026-10","months":12}}`, ru)
+	nameless := `{"revision":1,"budget":{"name":"","base_currency":"EUR",` +
+		`"start_month":"2026-10","months":12}}`
+	w := c.req("PUT", "/api/budgets/home", nameless, ru)
 	var bad struct {
 		Issues []struct{ Path, Message, Key string } `json:"issues"`
 	}
-	if w.Code != 422 || json.Unmarshal(w.Body.Bytes(), &bad) != nil || bad.Issues[0].Message != "обязательное поле" || bad.Issues[0].Key != "issue.required" {
-		t.Fatalf("issues: %d %s", w.Code, w.Body)
+	eq(t, "issues status", w.Code, 422)
+	if err := json.Unmarshal(w.Body.Bytes(), &bad); err != nil {
+		t.Fatalf("issues: %v %s", err, w.Body)
 	}
+	eq(t, "issue message", bad.Issues[0].Message, "обязательное поле")
+	eq(t, "issue key", bad.Issues[0].Key, "issue.required")
 
 	// An explicit language setting wins over the browser's.
 	c.do("PUT", "/api/settings", `{"locale":"en"}`, 200)

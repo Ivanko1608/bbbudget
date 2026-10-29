@@ -14,3 +14,5 @@ coverage.out
 # Local code-graph tools
 graphify-out/
 .ua/
+.superpowers/
+/.claude/worktrees/

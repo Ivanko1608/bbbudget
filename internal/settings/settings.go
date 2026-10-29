@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 // Auto-refresh intervals.
@@ -58,7 +60,7 @@ type Settings struct {
 	FetchRates bool `json:"fetch_rates"`
 	// DefaultRateSource is the source a new currency gets ("auto", "ecb",
 	// "currency-api", "coingecko" or "manual").
-	DefaultRateSource string `json:"default_rate_source"`
+	DefaultRateSource budget.RateSource `json:"default_rate_source"`
 	// AutoRefresh refreshes every budget's non-manual rates while `bbbudget
 	// serve` runs: "off", "hourly" or "daily".
 	AutoRefresh string `json:"auto_refresh"`
@@ -85,7 +87,7 @@ type Settings struct {
 func Defaults() Settings {
 	return Settings{
 		FetchRates:        false,
-		DefaultRateSource: "auto",
+		DefaultRateSource: budget.RateSourceAuto,
 		AutoRefresh:       RefreshOff,
 		Locale:            LocaleAuto,
 		AssistantProvider: AssistantOff,
@@ -98,10 +100,6 @@ const LocaleAuto = "auto"
 // localeRe is the shape of a language tag. Which languages exist is up to
 // the i18n package; a tag it lacks falls back to English.
 var localeRe = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
-
-// RateSources is the set DefaultRateSource must come from. The app checks it
-// against budget.RateSources in a test; this package depends on nothing.
-var RateSources = []string{"manual", "auto", "ecb", "currency-api", "coingecko"}
 
 // Interval is AutoRefresh as a duration; zero means off.
 func (s Settings) Interval() time.Duration {
@@ -117,8 +115,9 @@ func (s Settings) Interval() time.Duration {
 // Validate reports every bad field.
 func (s Settings) Validate() error {
 	var errs []error
-	if !slices.Contains(RateSources, s.DefaultRateSource) {
-		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", strings.Join(RateSources, ", ")))
+	if !slices.Contains(budget.RateSources, s.DefaultRateSource) {
+		sources := budget.FormatRateSources()
+		errs = append(errs, fmt.Errorf("default_rate_source must be one of %s", sources))
 	}
 	if !slices.Contains([]string{RefreshOff, RefreshHourly, RefreshDaily}, s.AutoRefresh) {
 		errs = append(errs, errors.New("auto_refresh must be off, hourly or daily"))
@@ -164,11 +163,11 @@ func isWebURL(text string) bool {
 // Patch changes some settings; nil fields stay as they are. An empty key
 // removes it.
 type Patch struct {
-	FetchRates        *bool   `json:"fetch_rates,omitempty"`
-	DefaultRateSource *string `json:"default_rate_source,omitempty"`
-	AutoRefresh       *string `json:"auto_refresh,omitempty"`
-	CoinGeckoAPIKey   *string `json:"coingecko_api_key,omitempty"`
-	Locale            *string `json:"locale,omitempty"`
+	FetchRates        *bool              `json:"fetch_rates,omitempty"`
+	DefaultRateSource *budget.RateSource `json:"default_rate_source,omitempty"`
+	AutoRefresh       *string            `json:"auto_refresh,omitempty"`
+	CoinGeckoAPIKey   *string            `json:"coingecko_api_key,omitempty"`
+	Locale            *string            `json:"locale,omitempty"`
 
 	AssistantProvider *AssistantProvider `json:"assistant_provider,omitempty"`
 	AssistantModel    *string            `json:"assistant_model,omitempty"`
@@ -186,7 +185,9 @@ func (s Settings) Apply(p Patch) (Settings, error) {
 	if p.FetchRates != nil {
 		s.FetchRates = *p.FetchRates
 	}
-	set(&s.DefaultRateSource, p.DefaultRateSource)
+	if p.DefaultRateSource != nil {
+		s.DefaultRateSource = budget.RateSource(strings.TrimSpace(string(*p.DefaultRateSource)))
+	}
 	set(&s.AutoRefresh, p.AutoRefresh)
 	set(&s.CoinGeckoAPIKey, p.CoinGeckoAPIKey)
 	set(&s.Locale, p.Locale)
@@ -258,13 +259,13 @@ func Save(path string, s Settings) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
 	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

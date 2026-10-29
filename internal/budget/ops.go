@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -132,14 +133,14 @@ type CurrencyPatch struct {
 	PerBase        *money.Decimal `json:"per_base,omitempty"`
 	TransferFeePct *money.Decimal `json:"transfer_fee_pct,omitempty"`
 	CashOutFeePct  *money.Decimal `json:"cash_out_fee_pct,omitempty"`
-	Source         *string        `json:"source,omitempty"`
+	Source         *RateSource    `json:"source,omitempty"`
 	RateDate       *string        `json:"rate_date,omitempty"`
-	RateFrom       *string        `json:"rate_from,omitempty"`
+	RateFrom       *RateSource    `json:"rate_from,omitempty"`
 }
 
 func (v CurrencyPatch) apply(c *CurrencyRate) {
 	if v.PerBase != nil && v.Source == nil {
-		c.Source = SourceManual
+		c.Source = RateSourceManual
 	}
 	setIf(&c.PerBase, v.PerBase)
 	setIf(&c.TransferFeePct, v.TransferFeePct)
@@ -368,7 +369,7 @@ func applyOne(b *Budget, op Op) error {
 				return fmt.Errorf("currency %s is used by debt %q", code, d.Name)
 			}
 		}
-		i := indexWhere(b.Currencies, func(c CurrencyRate) bool { return c.Code == code })
+		i := slices.IndexFunc(b.Currencies, func(c CurrencyRate) bool { return c.Code == code })
 		if i < 0 {
 			return fmt.Errorf("no currency %s", code)
 		}
@@ -458,11 +459,11 @@ func applyOne(b *Budget, op Op) error {
 		setIf(&l.Currency, v.Currency)
 		setIf(&l.Category, v.Category)
 		if v.Schedule != nil {
-			s, err := v.Schedule.resolve(b.StartMonth, &l.Schedule)
-			if err != nil {
-				return err
+			resolved, resolveErr := v.Schedule.resolve(b.StartMonth, &l.Schedule)
+			if resolveErr != nil {
+				return resolveErr
 			}
-			l.Schedule = s
+			l.Schedule = resolved
 		}
 		if v.Pot != nil {
 			id := ""
@@ -660,15 +661,6 @@ func setIf[T any](dst *T, v *T) {
 }
 
 func remove[T any](s []T, i int) []T { return append(s[:i:i], s[i+1:]...) }
-
-func indexWhere[T any](s []T, f func(T) bool) int {
-	for i, v := range s {
-		if f(v) {
-			return i
-		}
-	}
-	return -1
-}
 
 type idName struct{ id, name string }
 

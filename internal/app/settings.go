@@ -35,12 +35,12 @@ func (a *App) UpdateSettings(p settings.Patch) (settings.Settings, error) {
 	return ns, settings.Save(a.SettingsPath, ns)
 }
 
-// defaultSource is the source a currency gets when none is given. A "manual"
+// defaultRateSource is the rate source a currency gets when none is given. A "manual"
 // default still fetches when a fetch is explicitly asked for.
-func (a *App) defaultSource() string {
+func (a *App) defaultRateSource() budget.RateSource {
 	s, err := a.Settings()
-	if err != nil || s.DefaultRateSource == budget.SourceManual {
-		return budget.SourceAuto
+	if err != nil || s.DefaultRateSource == budget.RateSourceManual {
+		return budget.RateSourceAuto
 	}
 	return s.DefaultRateSource
 }

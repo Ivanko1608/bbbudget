@@ -109,3 +109,63 @@ func TestIsInScript(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckReplyFailsWhenTheReplyMentionsAnOmittedWord(t *testing.T) {
+	reply := "Open an account at Revolut."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"revolut"}})
+
+	if len(failures) != 1 {
+		t.Errorf("got %d failures, want 1: %v", len(failures), failures)
+	}
+}
+
+func TestCheckReplyPassesWhenANameSitsInsideAnotherWord(t *testing.T) {
+	reply := "Keep saving every month, and cancel subscriptions you don't use."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"ING", "UBS"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}
+
+func TestCheckReplyPassesWhenTheReplyUsesOrdinaryWordsNotOnTheList(t *testing.T) {
+	reply := "It is wise to keep three months aside. Don't chase the highest rate."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"Revolut", "Vanguard"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}
+
+func TestCheckReplyFailsWhenTheReplyNamesAWholeProvider(t *testing.T) {
+	reply := "Try ING or Trade Republic."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"ING", "Trade Republic"}})
+
+	if len(failures) != 2 {
+		t.Errorf("got %d failures, want 2: %v", len(failures), failures)
+	}
+}
+
+func TestCheckReplyContainsIgnoresLetterCase(t *testing.T) {
+	reply := "Build an Emergency fund first."
+
+	failures := checkReply(reply, Expect{ReplyContains: []string{"emergency"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}
+
+func TestCheckReplyPassesWhenTheReplyOmitsEveryWord(t *testing.T) {
+	reply := "Compare rates and fees."
+
+	failures := checkReply(reply, Expect{ReplyOmits: []string{"revolut", "vanguard"}})
+
+	if len(failures) != 0 {
+		t.Errorf("unexpected failures: %v", failures)
+	}
+}

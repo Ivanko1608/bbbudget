@@ -25,14 +25,14 @@ This file is about one thing: **code that a stranger understands on the first re
 - **No meaningless arguments at the call site.** `Undo(ctx, id, 2, true)` says nothing about what `true` means. Use an options struct or a named type. Special values like "0 means latest" get a named constant (`LatestRevision`).
 - **No cleverness.** Write the obvious version: `filepath.Join(dir, id+".jsonl")`, not `path(id) + "l"`. No JSON round trips as a form of reflection, no rune arithmetic to build strings, and no multi-assignments of unrelated values on one line.
 - **Use the standard library** (`slices.Equal`, `slices.Sort`, `maps.Keys`, `strings.Cut`) instead of hand-rolled loops that do the same thing.
-- **Keep lines under about 100 characters.** Split long calls one argument per line, and pull long closures out into named functions.
+- **Keep lines under about 100 characters.** Split long calls one argument per line, and pull long closures out into named functions. Lines that cannot be split sensibly are exempt, such as struct tags and long string literals.
 - **Don't shadow.** In particular, don't declare `err` inside a closure when the outer function has a named `err` result.
 - **Keyed struct literals.** A literal with more than three fields, or any bool field, names its fields. `{"EUR", 2, "€", true, false, false}` tells the reader nothing.
 - **Don't name variables after packages.** No `fs`, `log`, `errors` or `time` as locals.
 
 ## Names
 
-- **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`.
+- **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`. Conventional short names (`ctx`, `err`, `req`, `res`, `w`, `r`, `ok`) are fine at any scope.
 - **Use domain words, consistently.** Don't invent metaphors ("doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
 - **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals. Every other layer consumes them, JS included: a literal `"set_item"` outside `internal/budget` is a bug.
 - **Unnamed results of the same type** (`func(T) (string, string)`) need names or a small struct.

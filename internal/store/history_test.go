@@ -96,6 +96,36 @@ func TestHistoryListsWritesNewestFirst(t *testing.T) {
 	}
 }
 
+func TestHistoryLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit int
+		want  []int64
+	}{
+		{name: "all entries", limit: AllEntries, want: []int64{3, 2, 1}},
+		{name: "fewer than kept", limit: 2, want: []int64{3, 2}},
+		{name: "more than kept", limit: 10, want: []int64{3, 2, 1}},
+		{name: "negative", limit: -1, want: []int64{3, 2, 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, b := newStore(t)
+			mustCreate(t, s, byCLI, b)
+			mustUpdate(t, s, byCLI, setRent("1200"))
+			mustUpdate(t, s, byCLI, setRent("1300"))
+
+			entries, err := s.History(ctx, "home", tt.limit)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := revisions(entries); !slices.Equal(got, tt.want) {
+				t.Errorf("revisions %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEntryListsWhatChanged(t *testing.T) {
 	s, b := newStore(t)
 	mustCreate(t, s, byCLI, b)
@@ -354,7 +384,7 @@ func appendText(path, text string) error {
 		return err
 	}
 	if _, err := f.WriteString(text); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()

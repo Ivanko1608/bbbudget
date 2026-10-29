@@ -255,11 +255,10 @@ func (c *compiler) checkExtraToDebtPct() {
 }
 
 func (c *compiler) compileDebtStrategy() {
-	switch c.budget.DebtStrategy {
-	case StrategyAvalanche, StrategySnowball, StrategyListed:
-	case "":
+	switch {
+	case c.budget.DebtStrategy == "":
 		c.plan.Strategy = StrategyAvalanche
-	default:
+	case !slices.Contains(Strategies, c.budget.DebtStrategy):
 		c.add("debt_strategy", "issue.strategy", nil)
 	}
 }
@@ -297,7 +296,7 @@ func (c *compiler) checkRateFees(path string, rate CurrencyRate) {
 		c.add(path+".cash_out_fee_pct", "issue.cash_out_range", nil)
 	}
 	if rate.Source != "" && !slices.Contains(RateSources, rate.Source) {
-		values := i18n.Text(strings.Join(RateSources, ", "))
+		values := i18n.Text(FormatRateSources())
 		c.add(path+".source", "issue.one_of", args{"values": values})
 	}
 }
@@ -472,12 +471,12 @@ func (c *compiler) linkDebtPots() {
 }
 
 func (c *compiler) itemPotPath(itemID string) string {
-	budgetIndex := indexWhere(c.budget.Items, func(item Item) bool { return item.ID == itemID })
+	budgetIndex := slices.IndexFunc(c.budget.Items, func(item Item) bool { return item.ID == itemID })
 	return fmt.Sprintf("items[%d].pot", budgetIndex)
 }
 
 func (c *compiler) debtPotPath(debtID string) string {
-	budgetIndex := indexWhere(c.budget.Debts, func(debt Debt) bool { return debt.ID == debtID })
+	budgetIndex := slices.IndexFunc(c.budget.Debts, func(debt Debt) bool { return debt.ID == debtID })
 	return fmt.Sprintf("debts[%d].payoff_from", budgetIndex)
 }
 

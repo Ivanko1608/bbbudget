@@ -125,12 +125,12 @@ func (h *handlers) written(w WriteRef, v *app.View, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := w.Detail.check(); err != nil {
+	if err = w.Detail.check(); err != nil {
 		return nil, err
 	}
 	nothingSaved := v.Before == nil
 	if w.Detail == DetailFull || nothingSaved {
-		return h.sum(v, nil)
+		return h.summarized(v, nil)
 	}
 	outcome, err := h.changeOf(*v.Before, v.Budget, v.Report)
 	if err != nil {

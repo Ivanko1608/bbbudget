@@ -47,6 +47,8 @@ import (
 	"bbbudget/web"
 )
 
+const timeLayout = "2006-01-02 15:04"
+
 var version = "dev" // set with -ldflags "-X main.version=..."
 
 func main() {
@@ -70,390 +72,514 @@ commands:
   report   print a projection:  bbbudget report home [-scenario name]
   rates    fetch current exchange rates:  bbbudget rates home [-only USD,BTC] [-dry-run]
   settings show or change app settings:  bbbudget settings [-set auto_refresh=daily ...]
-  log      record money spent or received:  bbbudget log home 40 home [-date 2026-10-03] [-currency USD] [-note "Lidl"]
+  log      record money spent or received:  bbbudget log home 40 home [-date 2026-10-03] ` +
+	`[-currency USD] [-note "Lidl"]
   status   this month's plan versus actual:  bbbudget status home [-month 2026-10]
   history  list recent changes and who made them:  bbbudget history home [-limit 20]
   undo     undo a change:  bbbudget undo home [-revision REV] [-force]
   version  print the version
 
 Data lives in $BBBUDGET_DIR (default ~/.local/share/bbbudget); every command takes -dir.
-Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates); -templates overrides.
-App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); -settings overrides.
+Your templates live in $BBBUDGET_TEMPLATES (default ~/.config/bbbudget/templates); ` +
+	`-templates overrides.
+App settings live in $BBBUDGET_SETTINGS (default ~/.config/bbbudget/settings.json); ` +
+	`-settings overrides.
 `
 
 // fromCLI is the origin of every write made by a command.
 var fromCLI = store.Origin{Source: store.SourceCLI}
+
+type cli struct {
+	flags        *flag.FlagSet
+	stdout       io.Writer
+	logger       *slog.Logger
+	dir          *string
+	templateDir  *string
+	settingsFile *string
+}
+
+type command func(ctx context.Context, c *cli, args []string) error
+
+var commands = map[string]command{
+	"serve":     runServe,
+	"mcp":       runMCP,
+	"init":      runInit,
+	"templates": runTemplates,
+	"import":    runImport,
+	"list":      runList,
+	"report":    runReport,
+	"rates":     runRates,
+	"log":       runLog,
+	"status":    runStatus,
+	"history":   runHistory,
+	"undo":      runUndo,
+	"settings":  runSettings,
+	"version":   runVersion,
+	"help":      runHelp,
+	"-h":        runHelp,
+	"--help":    runHelp,
+}
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return errors.New("missing command")
 	}
-	cmd, args := args[0], args[1:]
-	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	dir := fs.String("dir", store.DefaultDir(), "data directory")
-	tplDir := fs.String("templates", templates.DefaultDir(), "directory of your own templates (*.yaml, *.json)")
-	settingsFile := fs.String("settings", settings.DefaultPath(), "app settings file")
-
-	openApp := func() (*app.App, error) {
-		st, err := store.NewFileStore(*dir)
-		if err != nil {
-			return nil, err
-		}
-		reg, err := templates.Load(*tplDir)
-		if err != nil {
-			return nil, err
-		}
-		a := app.New(st, reg)
-		a.SettingsPath = *settingsFile
-		if _, err := a.Settings(); err != nil {
-			return nil, err
-		}
-		return a, nil
+	name, args := args[0], args[1:]
+	runCommand, ok := commands[name]
+	if !ok {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("unknown command %q", name)
 	}
-	log := slog.New(slog.NewTextHandler(stderr, nil))
+	return runCommand(ctx, newCLI(name, stdout, stderr), args)
+}
 
-	switch cmd {
-	case "serve":
-		addr := fs.String("addr", "127.0.0.1:8080", "listen address")
-		withMCP := fs.Bool("mcp", true, "also serve MCP (streamable HTTP) at /mcp")
-		defaultBudget := fs.String("budget", "", "default budget for MCP tool calls that omit one")
-		hosts := fs.String("allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)")
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		paths := map[string]string{"data": *dir, "templates": *tplDir, "settings": *settingsFile}
-		opts := httpapi.Options{
-			Static:    web.FS(),
-			Log:       log,
-			Paths:     paths,
-			Assistant: assistant.New(a, assistant.ProviderFromSettings(a)),
-		}
-		go a.RunAutoRefresh(ctx, log)
-		if *hosts != "" {
-			opts.AllowedHosts = strings.Split(*hosts, ",")
-		}
-		if *withMCP {
-			srv := mcpserver.New(a, mcpserver.Options{DefaultBudget: *defaultBudget, Version: version})
-			opts.MCP = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
-		}
-		return serve(ctx, *addr, httpapi.New(a, opts), log, stdout)
+func newCLI(name string, stdout, stderr io.Writer) *cli {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	return &cli{
+		flags:  flags,
+		stdout: stdout,
+		logger: slog.New(slog.NewTextHandler(stderr, nil)),
+		dir:    flags.String("dir", store.DefaultDir(), "data directory"),
+		templateDir: flags.String(
+			"templates",
+			templates.DefaultDir(),
+			"directory of your own templates (*.yaml, *.json)",
+		),
+		settingsFile: flags.String("settings", settings.DefaultPath(), "app settings file"),
+	}
+}
 
-	case "mcp":
-		defaultBudget := fs.String("budget", os.Getenv("BBBUDGET_DEFAULT"), "default budget for tool calls that omit one")
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		log.Info("mcp server on stdio", "dir", *dir, "default_budget", *defaultBudget)
-		return mcpserver.New(a, mcpserver.Options{DefaultBudget: *defaultBudget, Version: version}).Run(ctx, &mcp.StdioTransport{})
+func (c *cli) openApp() (*app.App, error) {
+	return openApp(*c.dir, *c.templateDir, *c.settingsFile)
+}
 
-	case "init":
-		template := fs.String("template", "blank", "template name (see: bbbudget templates)")
-		name := fs.String("name", "", "display name (default: the id)")
-		id, err := parseFlagsAndID(fs, args, "init <id> [-template name] [-name display-name]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		v, err := a.Create(ctx, fromCLI, a.SettingsLocalizer(), id, *name, *template)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "created %q (%s) in %s\n", v.ID, v.Budget.Name, *dir)
-		return nil
+func openApp(dir, templateDir, settingsFile string) (*app.App, error) {
+	st, err := store.NewFileStore(dir)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := templates.Load(templateDir)
+	if err != nil {
+		return nil, err
+	}
+	a := app.New(st, registry)
+	a.SettingsPath = settingsFile
+	if _, err := a.Settings(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
 
-	case "templates":
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		reg, err := templates.Load(*tplDir)
-		if err != nil {
-			return err
-		}
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tSOURCE\tDESCRIPTION")
-		for _, t := range reg.List() {
-			fmt.Fprintf(tw, "%s\t%s\t%s\n", t.Name, t.Source, t.Description)
-		}
-		fmt.Fprintf(tw, "\nAdd your own as *.yaml or *.json in %s\n", *tplDir)
-		return tw.Flush()
-
-	case "import":
-		pos, err := parseArgs(fs, args, 2, "import <id> <file.yaml|file.json>")
-		if err != nil {
-			return err
-		}
-		id, file := pos[0], pos[1]
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		b, err := budget.ParseDocument(data, strings.TrimPrefix(filepath.Ext(file), "."))
-		if err != nil {
-			return fmt.Errorf("%s: %w", file, err)
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		if b.StartMonth == "" {
-			b.StartMonth = a.Now().Format("2006-01")
-		}
-		if b.Name == "" {
-			b.Name = id
-		}
-		v, err := a.Import(ctx, fromCLI, id, b)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "imported %q (%s)\n", v.ID, v.Budget.Name)
-		return nil
-
-	case "list":
-		if err := fs.Parse(args); err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		l, err := a.List(ctx)
-		if err != nil {
-			return err
-		}
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tREVISION\tUPDATED")
-		for _, m := range l {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", m.ID, m.Name, m.Revision, m.UpdatedAt.Local().Format("2006-01-02 15:04"))
-		}
-		return tw.Flush()
-
-	case "report":
-		scenario := fs.String("scenario", "", "show a saved scenario instead of the budget")
-		id, err := parseFlagsAndID(fs, args, "report <id> [-scenario name]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		var rep *budget.Report
-		if *scenario != "" {
-			rep, err = a.ScenarioReport(ctx, id, *scenario)
-		} else {
-			var v *app.View
-			if v, err = a.Get(ctx, id); err == nil {
-				rep = v.Report
-			}
-		}
-		if err != nil {
-			return err
-		}
-		reader := a.SettingsLocalizer()
-		rep.Localize(reader)
-		printReport(stdout, rep, reader)
-		return nil
-
-	case "rates":
-		only := fs.String("only", "", "comma-separated currencies to refresh (default: all whose source isn't manual)")
-		dry := fs.Bool("dry-run", false, "show current rates without saving")
-		id, err := parseFlagsAndID(fs, args, "rates <id> [-only USD,BTC] [-dry-run]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		var codes []string
-		if *only != "" {
-			codes = strings.Split(strings.ToUpper(strings.ReplaceAll(*only, " ", "")), ",")
-		}
-		var updates []app.RateUpdate
-		if *dry {
-			updates, err = a.PreviewRates(ctx, id, codes)
-		} else {
-			_, updates, err = a.RefreshRates(ctx, fromCLI, id, codes)
-		}
-		printRates(stdout, updates)
-		if err == nil && len(updates) == 0 {
-			fmt.Fprintln(stdout, "no currencies to refresh: every rate is manual (name some with -only to fetch them)")
-		}
+func runServe(ctx context.Context, c *cli, args []string) error {
+	addr := c.flags.String("addr", "127.0.0.1:8080", "listen address")
+	withMCP := c.flags.Bool("mcp", true, "also serve MCP (streamable HTTP) at /mcp")
+	defaultBudget := c.flags.String(
+		"budget", "", "default budget for MCP tool calls that omit one",
+	)
+	hosts := c.flags.String(
+		"allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)",
+	)
+	if err := c.flags.Parse(args); err != nil {
 		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	opts := httpapi.Options{
+		Static: web.FS(),
+		Log:    c.logger,
+		Paths: map[string]string{
+			"data":      *c.dir,
+			"templates": *c.templateDir,
+			"settings":  *c.settingsFile,
+		},
+		Assistant: assistant.New(a, assistant.ProviderFromSettings(a)),
+	}
+	go a.RunAutoRefresh(ctx, c.logger)
+	if *hosts != "" {
+		opts.AllowedHosts = strings.Split(*hosts, ",")
+	}
+	if *withMCP {
+		opts.MCP = newMCPHandler(mcpserver.New(a, mcpOptions(*defaultBudget)))
+	}
+	return serve(ctx, *addr, httpapi.New(a, opts), c.logger, c.stdout)
+}
 
-	case "log":
-		date := fs.String("date", "", "day it happened, YYYY-MM-DD (default today)")
-		currency := fs.String("currency", "", "currency (default the base currency)")
-		note := fs.String("note", "", "a note")
-		item := fs.String("item", "", "the planned item it pays (id or name)")
-		usage := "log <id> <amount> <category> [-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]"
-		pos, err := parseArgs(fs, args, 3, usage)
-		if err != nil {
-			return err
-		}
-		amount, err := money.ParseDecimal(pos[1])
-		if err != nil {
-			return fmt.Errorf("amount: %w", err)
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		if *date == "" {
-			*date = a.Now().Format(time.DateOnly)
-		}
-		in := budget.TransactionInput{
-			Date:     *date,
-			Amount:   amount,
-			Currency: *currency,
-			Category: pos[2],
-			Note:     *note,
-			Item:     *item,
-		}
-		return logTransaction(ctx, stdout, a, pos[0], in)
+func mcpOptions(defaultBudget string) mcpserver.Options {
+	return mcpserver.Options{DefaultBudget: defaultBudget, Version: version}
+}
 
-	case "status":
-		month := fs.String("month", "", "YYYY-MM (default this month)")
-		id, err := parseFlagsAndID(fs, args, "status <id> [-month YYYY-MM]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		status, err := a.MonthStatus(ctx, id, *month)
-		if err != nil {
-			return err
-		}
-		printStatus(stdout, status, a.SettingsLocalizer())
-		return nil
+func newMCPHandler(srv *mcp.Server) http.Handler {
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+}
 
-	case "history":
-		limit := fs.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
-		id, err := parseFlagsAndID(fs, args, "history <id> [-limit 20]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		h, err := a.History(ctx, id, *limit)
-		if err != nil {
-			return err
-		}
-		app.LocalizeHistory(h, a.SettingsLocalizer())
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "REV\tWHEN\tBY\tCHANGE")
-		for _, e := range h {
-			when := e.At.Local().Format("2006-01-02 15:04")
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
-		}
-		return tw.Flush()
+func runMCP(ctx context.Context, c *cli, args []string) error {
+	defaultBudget := c.flags.String(
+		"budget",
+		os.Getenv("BBBUDGET_DEFAULT"),
+		"default budget for tool calls that omit one",
+	)
+	if err := c.flags.Parse(args); err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	c.logger.Info("mcp server on stdio", "dir", *c.dir, "default_budget", *defaultBudget)
+	srv := mcpserver.New(a, mcpOptions(*defaultBudget))
+	return srv.Run(ctx, &mcp.StdioTransport{})
+}
 
-	case "undo":
-		revision := fs.Int64("revision", 0, "revision of the change to undo (default: the latest)")
-		force := fs.Bool("force", false, "also undo every change made after it")
-		id, err := parseFlagsAndID(fs, args, "undo <id> [-revision REV] [-force]")
-		if err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		v, err := a.Undo(ctx, fromCLI, id, app.UndoRequest{Revision: *revision, Force: *force})
-		if err != nil {
-			return err
-		}
-		h, err := a.History(ctx, id, 1)
-		if err != nil {
-			return err
-		}
-		app.LocalizeHistory(h, a.SettingsLocalizer())
-		fmt.Fprintf(stdout, "r%d: %s\n", v.Revision, h[0].Summary)
-		return nil
+func runInit(ctx context.Context, c *cli, args []string) error {
+	template := c.flags.String("template", "blank", "template name (see: bbbudget templates)")
+	name := c.flags.String("name", "", "display name (default: the id)")
+	id, err := parseFlagsAndID(c.flags, args, "init <id> [-template name] [-name display-name]")
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	v, err := a.Create(ctx, fromCLI, a.SettingsLocalizer(), id, *name, *template)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.stdout, "created %q (%s) in %s\n", v.ID, v.Budget.Name, *c.dir)
+	return nil
+}
 
-	case "settings":
-		var sets []string
-		setKeys := "fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale, " +
-			"assistant_provider, assistant_model, assistant_url, assistant_api_key"
-		fs.Func("set", "key=value to change (repeatable): "+setKeys, func(v string) error {
-			sets = append(sets, v)
-			return nil
-		})
-		if _, err := parseArgs(fs, args, 0, "settings [-set key=value ...]"); err != nil {
-			return err
-		}
-		a, err := openApp()
-		if err != nil {
-			return err
-		}
-		if len(sets) > 0 {
-			p, err := settingsPatch(sets)
-			if err != nil {
-				return err
-			}
-			if _, err := a.UpdateSettings(p); err != nil {
-				return err
-			}
-		}
-		s, err := a.Settings()
-		if err != nil {
-			return err
-		}
-		key := describeSecret(s.CoinGeckoAPIKey)
-		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		locale := s.Locale
-		if locale == "" {
-			locale = settings.LocaleAuto
-		}
-		fmt.Fprintf(tw, "fetch_rates\t%v\ndefault_rate_source\t%s\nauto_refresh\t%s\tused by bbbudget serve\ncoingecko_api_key\t%s\nlocale\t%s\tnow %s; available: %s\n",
-			s.FetchRates, s.DefaultRateSource, s.AutoRefresh, key, locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
-		printAssistantSettings(tw, s)
-		fmt.Fprintf(tw, "\nfile\t%s\n", *settingsFile)
-		return tw.Flush()
+func runTemplates(_ context.Context, c *cli, args []string) error {
+	if err := c.flags.Parse(args); err != nil {
+		return err
+	}
+	registry, err := templates.Load(*c.templateDir)
+	if err != nil {
+		return err
+	}
+	table := newTable(c.stdout)
+	fmt.Fprintln(table, "NAME\tSOURCE\tDESCRIPTION")
+	for _, t := range registry.List() {
+		fmt.Fprintf(table, "%s\t%s\t%s\n", t.Name, t.Source, t.Description)
+	}
+	fmt.Fprintf(table, "\nAdd your own as *.yaml or *.json in %s\n", *c.templateDir)
+	return table.Flush()
+}
 
-	case "version":
-		fmt.Fprintln(stdout, version)
-		return nil
+func newTable(w io.Writer) *tabwriter.Writer {
+	return tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+}
 
-	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
+func runImport(ctx context.Context, c *cli, args []string) error {
+	pos, err := parseArgs(c.flags, args, 2, "import <id> <file.yaml|file.json>")
+	if err != nil {
+		return err
+	}
+	id, file := pos[0], pos[1]
+	b, err := readBudgetFile(file)
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	if b.StartMonth == "" {
+		b.StartMonth = a.Now().Format("2006-01")
+	}
+	if b.Name == "" {
+		b.Name = id
+	}
+	v, err := a.Import(ctx, fromCLI, id, b)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.stdout, "imported %q (%s)\n", v.ID, v.Budget.Name)
+	return nil
+}
+
+func readBudgetFile(file string) (budget.Budget, error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return budget.Budget{}, err
+	}
+	b, err := budget.ParseDocument(data, strings.TrimPrefix(filepath.Ext(file), "."))
+	if err != nil {
+		return budget.Budget{}, fmt.Errorf("%s: %w", file, err)
+	}
+	return b, nil
+}
+
+func runList(ctx context.Context, c *cli, args []string) error {
+	if err := c.flags.Parse(args); err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	metas, err := a.List(ctx)
+	if err != nil {
+		return err
+	}
+	table := newTable(c.stdout)
+	fmt.Fprintln(table, "ID\tNAME\tREVISION\tUPDATED")
+	for _, m := range metas {
+		updated := m.UpdatedAt.Local().Format(timeLayout)
+		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", m.ID, m.Name, m.Revision, updated)
+	}
+	return table.Flush()
+}
+
+func runReport(ctx context.Context, c *cli, args []string) error {
+	scenario := c.flags.String("scenario", "", "show a saved scenario instead of the budget")
+	id, err := parseFlagsAndID(c.flags, args, "report <id> [-scenario name]")
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	report, err := getReport(ctx, a, id, *scenario)
+	if err != nil {
+		return err
+	}
+	reader := a.SettingsLocalizer()
+	report.Localize(reader)
+	printReport(c.stdout, report, reader)
+	return nil
+}
+
+func getReport(ctx context.Context, a *app.App, id, scenario string) (*budget.Report, error) {
+	if scenario != "" {
+		return a.ScenarioReport(ctx, id, scenario)
+	}
+	v, err := a.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return v.Report, nil
+}
+
+func runRates(ctx context.Context, c *cli, args []string) error {
+	only := c.flags.String(
+		"only",
+		"",
+		"comma-separated currencies to refresh (default: all whose source isn't manual)",
+	)
+	dryRun := c.flags.Bool("dry-run", false, "show current rates without saving")
+	id, err := parseFlagsAndID(c.flags, args, "rates <id> [-only USD,BTC] [-dry-run]")
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	var updates []app.RateUpdate
+	codes := parseCurrencyCodes(*only)
+	if *dryRun {
+		updates, err = a.PreviewRates(ctx, id, codes)
+	} else {
+		_, updates, err = a.RefreshRates(ctx, fromCLI, id, codes)
+	}
+	printRates(c.stdout, updates)
+	if err == nil && len(updates) == 0 {
+		fmt.Fprintln(c.stdout, "no currencies to refresh: every rate is manual "+
+			"(name some with -only to fetch them)")
+	}
+	return err
+}
+
+func parseCurrencyCodes(list string) []string {
+	if list == "" {
 		return nil
 	}
-	fmt.Fprint(stderr, usage)
-	return fmt.Errorf("unknown command %q", cmd)
+	return strings.Split(strings.ToUpper(strings.ReplaceAll(list, " ", "")), ",")
+}
+
+func runLog(ctx context.Context, c *cli, args []string) error {
+	date := c.flags.String("date", "", "day it happened, YYYY-MM-DD (default today)")
+	currency := c.flags.String("currency", "", "currency (default the base currency)")
+	note := c.flags.String("note", "", "a note")
+	item := c.flags.String("item", "", "the planned item it pays (id or name)")
+	usage := "log <id> <amount> <category> " +
+		"[-date YYYY-MM-DD] [-currency CODE] [-note text] [-item ref]"
+	pos, err := parseArgs(c.flags, args, 3, usage)
+	if err != nil {
+		return err
+	}
+	amount, err := money.ParseDecimal(pos[1])
+	if err != nil {
+		return fmt.Errorf("amount: %w", err)
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	if *date == "" {
+		*date = a.Now().Format(time.DateOnly)
+	}
+	in := budget.TransactionInput{
+		Date:     *date,
+		Amount:   amount,
+		Currency: *currency,
+		Category: pos[2],
+		Note:     *note,
+		Item:     *item,
+	}
+	return logTransaction(ctx, c.stdout, a, pos[0], in)
+}
+
+func runStatus(ctx context.Context, c *cli, args []string) error {
+	month := c.flags.String("month", "", "YYYY-MM (default this month)")
+	id, err := parseFlagsAndID(c.flags, args, "status <id> [-month YYYY-MM]")
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	status, err := a.MonthStatus(ctx, id, *month)
+	if err != nil {
+		return err
+	}
+	printStatus(c.stdout, status, a.SettingsLocalizer())
+	return nil
+}
+
+func runHistory(ctx context.Context, c *cli, args []string) error {
+	limit := c.flags.Int("limit", store.DefaultHistoryPage, "how many changes to show (0 for all)")
+	id, err := parseFlagsAndID(c.flags, args, "history <id> [-limit 20]")
+	if err != nil {
+		return err
+	}
+	if *limit < 0 {
+		return fmt.Errorf("-limit %d: must be a whole number", *limit)
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	entries, err := a.History(ctx, id, *limit)
+	if err != nil {
+		return err
+	}
+	app.LocalizeHistory(entries, a.SettingsLocalizer())
+	table := newTable(c.stdout)
+	fmt.Fprintln(table, "REV\tWHEN\tBY\tCHANGE")
+	for _, e := range entries {
+		when := e.At.Local().Format(timeLayout)
+		fmt.Fprintf(table, "%d\t%s\t%s\t%s\n", e.Revision, when, e.Source, e.Summary)
+	}
+	return table.Flush()
+}
+
+func runUndo(ctx context.Context, c *cli, args []string) error {
+	revision := c.flags.Int64("revision", 0, "revision of the change to undo (default: the latest)")
+	force := c.flags.Bool("force", false, "also undo every change made after it")
+	id, err := parseFlagsAndID(c.flags, args, "undo <id> [-revision REV] [-force]")
+	if err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	v, err := a.Undo(ctx, fromCLI, id, app.UndoRequest{Revision: *revision, Force: *force})
+	if err != nil {
+		return err
+	}
+	entries, err := a.History(ctx, id, 1)
+	if err != nil {
+		return err
+	}
+	app.LocalizeHistory(entries, a.SettingsLocalizer())
+	fmt.Fprintf(c.stdout, "r%d: %s\n", v.Revision, entries[0].Summary)
+	return nil
+}
+
+func runSettings(_ context.Context, c *cli, args []string) error {
+	var sets []string
+	setKeys := "fetch_rates, default_rate_source, auto_refresh, coingecko_api_key, locale, " +
+		"assistant_provider, assistant_model, assistant_url, assistant_api_key"
+	c.flags.Func("set", "key=value to change (repeatable): "+setKeys, func(v string) error {
+		sets = append(sets, v)
+		return nil
+	})
+	if _, err := parseArgs(c.flags, args, 0, "settings [-set key=value ...]"); err != nil {
+		return err
+	}
+	a, err := c.openApp()
+	if err != nil {
+		return err
+	}
+	if err := updateSettings(a, sets); err != nil {
+		return err
+	}
+	current, err := a.Settings()
+	if err != nil {
+		return err
+	}
+	return printSettings(c.stdout, a, current, *c.settingsFile)
+}
+
+func updateSettings(a *app.App, sets []string) error {
+	if len(sets) == 0 {
+		return nil
+	}
+	patch, err := settingsPatch(sets)
+	if err != nil {
+		return err
+	}
+	_, err = a.UpdateSettings(patch)
+	return err
+}
+
+func printSettings(w io.Writer, a *app.App, s settings.Settings, file string) error {
+	locale := cmp.Or(s.Locale, settings.LocaleAuto)
+	table := newTable(w)
+	fmt.Fprintf(table, "fetch_rates\t%v\n", s.FetchRates)
+	fmt.Fprintf(table, "default_rate_source\t%s\n", s.DefaultRateSource)
+	fmt.Fprintf(table, "auto_refresh\t%s\tused by bbbudget serve\n", s.AutoRefresh)
+	fmt.Fprintf(table, "coingecko_api_key\t%s\n", describeSecret(s.CoinGeckoAPIKey))
+	fmt.Fprintf(table, "locale\t%s\tnow %s; available: %s\n",
+		locale, a.ResolveLocale(""), strings.Join(i18n.Locales(), ", "))
+	printAssistantSettings(table, s)
+	fmt.Fprintf(table, "\nfile\t%s\n", file)
+	return table.Flush()
+}
+
+func runVersion(_ context.Context, c *cli, _ []string) error {
+	fmt.Fprintln(c.stdout, version)
+	return nil
+}
+
+func runHelp(_ context.Context, c *cli, _ []string) error {
+	fmt.Fprint(c.stdout, usage)
+	return nil
 }
 
 // parseArgs parses flags anywhere among the positional arguments
 // ("report home -dir x" and "report -dir x home" both work) and checks the
 // number of positionals.
-func parseArgs(fs *flag.FlagSet, args []string, want int, usage string) ([]string, error) {
+func parseArgs(flags *flag.FlagSet, args []string, want int, usage string) ([]string, error) {
 	var pos []string
 	for {
-		if err := fs.Parse(args); err != nil {
+		if err := flags.Parse(args); err != nil {
 			return nil, err
 		}
-		if fs.NArg() == 0 {
+		if flags.NArg() == 0 {
 			break
 		}
-		pos = append(pos, fs.Arg(0))
-		args = fs.Args()[1:]
+		pos = append(pos, flags.Arg(0))
+		args = flags.Args()[1:]
 	}
 	if len(pos) != want {
 		return nil, errors.New("usage: bbbudget " + usage)
@@ -463,31 +589,37 @@ func parseArgs(fs *flag.FlagSet, args []string, want int, usage string) ([]strin
 
 // parseFlagsAndID parses a command's flags and its one positional argument,
 // the budget id ("home" in `bbbudget report home`).
-func parseFlagsAndID(fs *flag.FlagSet, args []string, usage string) (string, error) {
-	pos, err := parseArgs(fs, args, 1, usage)
+func parseFlagsAndID(flags *flag.FlagSet, args []string, usage string) (string, error) {
+	pos, err := parseArgs(flags, args, 1, usage)
 	if err != nil {
 		return "", err
 	}
 	return pos[0], nil
 }
 
-func serve(ctx context.Context, addr string, h http.Handler, log *slog.Logger, stdout io.Writer) error {
+func serve(
+	ctx context.Context, addr string, h http.Handler, logger *slog.Logger, stdout io.Writer,
+) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	fmt.Fprintf(stdout, "bbbudget %s on http://%s  (MCP: http://%s/mcp)\n", version, ln.Addr(), ln.Addr())
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
+	fmt.Fprintf(
+		stdout,
+		"bbbudget %s on http://%s  (MCP: http://%s/mcp)\n",
+		version, ln.Addr(), ln.Addr(),
+	)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
 	select {
-	case err := <-errc:
+	case err := <-serveErr:
 		return err
 	case <-ctx.Done():
-		log.Info("shutting down")
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		logger.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(sctx)
+		return srv.Shutdown(shutdownCtx)
 	}
 }
 
@@ -507,7 +639,8 @@ func settingsPatch(sets []string) (settings.Patch, error) {
 			}
 			p.FetchRates = &b
 		case "default_rate_source":
-			p.DefaultRateSource = &v
+			rateSource := budget.RateSource(v)
+			p.DefaultRateSource = &rateSource
 		case "auto_refresh":
 			p.AutoRefresh = &v
 		case "locale":
@@ -551,34 +684,49 @@ func printRates(w io.Writer, updates []app.RateUpdate) {
 	if len(updates) == 0 {
 		return
 	}
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "CURRENCY\tOLD\tNEW\tFROM\tDATE")
+	table := newTable(w)
+	fmt.Fprintln(table, "CURRENCY\tOLD\tNEW\tFROM\tDATE")
 	for _, u := range updates {
 		if u.Error != "" {
-			fmt.Fprintf(tw, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, u.Error)
+			fmt.Fprintf(table, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, u.Error)
 			continue
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", u.Code, u.Old, u.New, u.From, u.Date)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", u.Code, u.Old, u.New, u.From, u.Date)
 	}
-	tw.Flush()
+	table.Flush()
 }
 
 func printReport(w io.Writer, r *budget.Report, l *i18n.Localizer) {
 	fmt.Fprintf(w, "%s (%s)\n\n", r.Name, r.BaseCurrency)
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.report.header"}))
-	f := l.MoneyExact
+	table := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
+	fmt.Fprintln(table, l.Render(i18n.Msg{Key: "cli.report.header"}))
+	format := l.MoneyExact
 	for _, m := range r.Months {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n", m.Label, f(m.Income), f(m.Expenses), f(m.DebtPayments), f(m.Left), f(m.Saved), f(m.Savings))
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t\n",
+			m.Label,
+			format(m.Income),
+			format(m.Expenses),
+			format(m.DebtPayments),
+			format(m.Left),
+			format(m.Saved),
+			format(m.Savings),
+		)
 	}
-	tw.Flush()
+	table.Flush()
 	fmt.Fprintln(w)
 	for _, in := range r.Insights {
-		mark := map[budget.Tone]string{budget.ToneWarn: "!", budget.ToneGood: "+"}[in.Tone]
-		if mark == "" {
-			mark = "-"
-		}
-		fmt.Fprintf(w, "%s %s\n", mark, strings.ReplaceAll(in.Text, "**", ""))
+		fmt.Fprintf(w, "%s %s\n", toneMark(in.Tone), i18n.StripMdBold(in.Text))
+	}
+}
+
+func toneMark(tone budget.Tone) string {
+	switch tone {
+	case budget.ToneWarn:
+		return "!"
+	case budget.ToneGood:
+		return "+"
+	default:
+		return "-"
 	}
 }
 
@@ -620,27 +768,24 @@ func printMonthFlags(ctx context.Context, w io.Writer, a *app.App, id, month str
 	}
 	localizer := a.SettingsLocalizer()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "! %s\n", stripMarkdown(localizer.Render(f.Msg)))
+		fmt.Fprintf(w, "! %s\n", i18n.StripMdBold(localizer.Render(f.Msg)))
 	}
 	return nil
 }
 
 func printStatus(w io.Writer, status *budget.MonthStatus, l *i18n.Localizer) {
 	fmt.Fprintf(w, "%s · %d/%d\n\n", l.Month(status.Month), status.DaysElapsed, status.DaysInMonth)
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, l.Render(i18n.Msg{Key: "cli.status.header"}))
+	table := tabwriter.NewWriter(w, 0, 4, 2, ' ', tabwriter.AlignRight)
+	fmt.Fprintln(table, l.Render(i18n.Msg{Key: "cli.status.header"}))
 	for _, c := range status.Categories {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t\n",
 			c.Label, l.MoneyExact(c.Planned), l.MoneyExact(c.Actual), l.MoneyExact(c.Remaining), c.State)
 	}
-	tw.Flush()
+	table.Flush()
 	for _, f := range status.Flags {
-		fmt.Fprintf(w, "\n! %s", stripMarkdown(l.Render(f.Msg)))
+		fmt.Fprintf(w, "\n! %s", i18n.StripMdBold(l.Render(f.Msg)))
 	}
 	if len(status.Flags) > 0 {
 		fmt.Fprintln(w)
 	}
 }
-
-// stripMarkdown drops the bold markers from insight text.
-func stripMarkdown(s string) string { return strings.ReplaceAll(s, "**", "") }

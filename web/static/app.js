@@ -299,8 +299,7 @@ function currencyOptions() {
   return [S.budget.base_currency, ...S.budget.currencies.map((c) => c.code)].map((c) => [c, c]);
 }
 
-const RATE_SOURCES = ["manual", "auto", "ecb", "currency-api", "coingecko"];
-const rateSourceOptions = () => RATE_SOURCES.map((s) => [s, t(`source_opt.${s}`)]);
+const rateSourceOptions = () => S.meta.rate_sources.map((s) => [s, t(`rate_source_opt.${s}`)]);
 const isManual = (c) => !c.source || c.source === "manual";
 
 const POT_KINDS = ["general", "sinking", "emergency"];
@@ -318,7 +317,7 @@ function renderFlow() {
   const debts = b.debts.filter((d) => parseFloat(d.balance) > 0);
   const targets = b.pots.filter((p) => p.target);
   const def = (r?.pots || []).find((x) => x.default)?.name || b.pots[0]?.name || t("flow.a_pot");
-  const strategies = (S.meta?.strategies || ["avalanche", "snowball", "listed"]).map((s) => [s, t(`strategy.${s}`)]);
+  const strategies = S.meta.strategies.map((s) => [s, t(`strategy.${s}`)]);
   const step = (what, detail, off = false) => `<li class="${off ? "off" : ""}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
   $("#flow").innerHTML = [
     step(esc(t("flow.repay")), esc(t(owes ? "flow.repay.owes" : "flow.repay.none")), !owes),
@@ -496,20 +495,9 @@ function renderItemNumbers() {
     const foreign = l.amount.currency !== base;
     el.textContent = once ? (foreign ? t("base.once_foreign", { amount: money(v) }) : t("base.once")) : foreign || l.schedule.every !== 1 ? t("base.per_month", { amount: money(v) }) : "";
   });
-  // Group totals, display only: recurring per month, one-offs separately.
-  const totals = {}, once = {};
-  for (const l of S.report.items) {
-    const cat = S.budget.categories.some((c) => c.id === l.category) ? l.category : "";
-    totals[cat] = (totals[cat] || 0) + parseFloat(l.monthly_equivalent_base.amount);
-    if (l.schedule.every === 0) once[cat] = (once[cat] || 0) + parseFloat(l.per_occurrence_base.amount);
-  }
-  const fmt = (v) => esc(money({ amount: v.toFixed(2), currency: base })); // display only
   document.querySelectorAll("[data-total]").forEach((el) => {
-    const k = el.dataset.total, m = totals[k] || 0, o = once[k] || 0;
-    const parts = [];
-    if (m || !o) parts.push(`${fmt(m)}<small>${esc(t("unit.per_month"))}</small>`);
-    if (o) parts.push(`${fmt(o)}<small>${esc(t("unit.once"))}</small>`);
-    el.innerHTML = parts.join(" + ");
+    const total = S.report.category_totals[el.dataset.total];
+    el.innerHTML = total ? categoryTotalHTML(total) : "";
   });
   // Schedule texts come from the report too; add where a routed item goes.
   document.querySelectorAll('#items .line[data-row^="items."]').forEach((row) => {
@@ -1069,6 +1057,23 @@ function renderInsights() {
     (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(S.allInsights ? t("ins.fewer") : t("ins.all", { count: items.length }))}</button>` : "");
 }
 
+function isZeroMoney(value) {
+  return parseFloat(value.amount) === 0;
+}
+
+function categoryTotalHTML(total) {
+  const hasRecurring = !isZeroMoney(total.recurring_per_month);
+  const hasOneOff = !isZeroMoney(total.one_off_total);
+  const recurring = esc(money(total.recurring_per_month));
+  const oneOff = esc(money(total.one_off_total));
+  const perMonth = esc(t("unit.per_month"));
+  const once = esc(t("unit.once"));
+  const parts = [];
+  if (hasRecurring || !hasOneOff) parts.push(`${recurring}<small>${perMonth}</small>`);
+  if (hasOneOff) parts.push(`${oneOff}<small>${once}</small>`);
+  return parts.join(" + ");
+}
+
 function renderOutputs() {
   const r = S.report;
   if (!r) return;
@@ -1085,9 +1090,9 @@ function renderOutputs() {
     .filter(([, v]) => parseFloat(v.amount) > 0)
     .map(([id, v]) => [cats[id]?.label || id, v, cats[id]?.color || "var(--accent)", ""]);
   if (num(m0.debt_payments) > 0) segs.push([t("split.debt"), m0.debt_payments, "var(--debt)", "hatch"]);
-  const left = { amount: (num(m0.to_savings) - num(m0.income_to_pots)).toFixed(2), currency: r.base_currency }; // display only
   if (num(m0.income_to_pots) > 0) segs.push([t("split.straight"), m0.income_to_pots, "var(--save)", "hatch-save"]);
-  if (num(left) > 0) segs.push([t("split.savings"), left, "var(--save)", ""]);
+  const leftoverToPots = m0.leftover_to_pots;
+  if (num(leftoverToPots) > 0) segs.push([t("split.savings"), leftoverToPots, "var(--save)", ""]);
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
   $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");

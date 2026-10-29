@@ -1,8 +1,9 @@
 package budget
 
 import (
+	"maps"
 	"math/big"
-	"sort"
+	"slices"
 	"strings"
 
 	"bbbudget/internal/i18n"
@@ -151,20 +152,11 @@ func foreignRecurring(p *Plan) map[string]money.Money {
 	return out
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	k := make([]string, 0, len(m))
-	for s := range m {
-		k = append(k, s)
-	}
-	sort.Strings(k)
-	return k
-}
-
 func ruleTransferLoss(pr *Projection) []Insight {
 	p := pr.Plan
 	var out []Insight
 	fr := foreignRecurring(p)
-	for _, code := range sortedKeys(fr) {
+	for _, code := range slices.Sorted(maps.Keys(fr)) {
 		amt := fr[code]
 		fee := p.FeePct(code)
 		if fee.Sign() == 0 || !amt.IsPositive() {
@@ -192,7 +184,7 @@ func ruleFXRisk(pr *Projection) []Insight {
 	p := pr.Plan
 	var out []Insight
 	fr := foreignRecurring(p)
-	for _, code := range sortedKeys(fr) {
+	for _, code := range slices.Sorted(maps.Keys(fr)) {
 		amt := fr[code]
 		if !amt.IsPositive() {
 			continue
@@ -241,7 +233,7 @@ func ruleCryptoIncome(pr *Projection) []Insight {
 	fi := foreignIncome(p)
 	total := money.Zero(p.Base)
 	var codes []string
-	for _, code := range sortedKeys(fi) {
+	for _, code := range slices.Sorted(maps.Keys(fi)) {
 		if c := fi[code].Currency(); c.Crypto && !c.Stable && fi[code].IsPositive() {
 			total = total.Add(p.IncomeValue(fi[code], roundReceive))
 			codes = append(codes, code)
@@ -272,7 +264,7 @@ func ruleCashOutLoss(pr *Projection) []Insight {
 	p := pr.Plan
 	var out []Insight
 	fi := foreignIncome(p)
-	for _, code := range sortedKeys(fi) {
+	for _, code := range slices.Sorted(maps.Keys(fi)) {
 		amt := fi[code]
 		if p.CashOutPct(code).Sign() == 0 || !amt.IsPositive() {
 			continue

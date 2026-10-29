@@ -34,20 +34,22 @@ const whatsNewDescription = `What happened to the budget since your own last cha
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	addReadTool(s, "whats_new", whatsNewDescription, func(ctx context.Context, in WhatsNewIn) (any, error) {
-		id, err := h.id(in.Budget)
-		if err != nil {
-			return nil, err
-		}
-		return h.whatsNew(ctx, id, in.FromRevision)
-	})
+	addReadTool(s, "whats_new", whatsNewDescription, h.getWhatsNew)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
 		URITemplate: "whats-new://{id}",
-		MIMEType:    "application/json",
+		MIMEType:    resourceMIMEType,
 		Description: "What changed in a budget since the assistant's last change, " +
 			"and this month's flags (the same as the whats_new tool).",
 	}, h.readWhatsNew)
+}
+
+func (h *handlers) getWhatsNew(ctx context.Context, in WhatsNewIn) (any, error) {
+	id, err := h.id(in.Budget)
+	if err != nil {
+		return nil, err
+	}
+	return h.getWhatsNewResult(ctx, id, in.FromRevision)
 }
 
 func (h *handlers) readWhatsNew(
@@ -55,7 +57,7 @@ func (h *handlers) readWhatsNew(
 ) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
 	id := strings.TrimPrefix(uri, "whats-new://")
-	result, err := h.whatsNew(ctx, id, app.FromOwnLastChange)
+	result, err := h.getWhatsNewResult(ctx, id, app.FromOwnLastChange)
 	if err != nil {
 		return nil, mcp.ResourceNotFoundError(uri)
 	}
@@ -63,11 +65,11 @@ func (h *handlers) readWhatsNew(
 	if err != nil {
 		return nil, err
 	}
-	contents := &mcp.ResourceContents{URI: uri, MIMEType: "application/json", Text: string(text)}
+	contents := &mcp.ResourceContents{URI: uri, MIMEType: resourceMIMEType, Text: string(text)}
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
 }
 
-func (h *handlers) whatsNew(
+func (h *handlers) getWhatsNewResult(
 	ctx context.Context, id string, fromRevision int64,
 ) (whatsNewResult, error) {
 	req := app.WhatsNewRequest{Asker: h.origin.Source, FromRevision: fromRevision}

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"bbbudget/internal/budget"
 )
 
 const ecbXML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +29,20 @@ const ecbXML = `<?xml version="1.0" encoding="UTF-8"?>
 // The real feed sends floats, sometimes with exponents; they must be read exactly.
 const currencyAPIJSON = `{"date": "2026-10-07", "eur": {"usd": 1.12049503, "btc": 1.3521158e-05, "usdt": 1.12122692, "bad": -1}}`
 
+func eq[T comparable](t *testing.T, what string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func eqRat(t *testing.T, what string, got, want *big.Rat) {
+	t.Helper()
+	if got.Cmp(want) != 0 {
+		t.Fatalf("%s = %s, want %s", what, got, want)
+	}
+}
+
 func serve(t *testing.T, body string, hits *atomic.Int32) *httptest.Server {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +53,7 @@ func serve(t *testing.T, body string, hits *atomic.Int32) *httptest.Server {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
-		w.Write([]byte(body))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(s.Close)
 	return s
@@ -54,24 +70,23 @@ func TestECB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(q) != 2 || q["USD"].PerBase.Cmp(rat("1.1186")) != 0 || q["USD"].Date != "2026-10-07" || q["USD"].From != ECB {
-		t.Fatalf("got %+v", q)
-	}
+	eq(t, "quote count", len(q), 2)
+	eqRat(t, "USD per EUR", q["USD"].PerBase, rat("1.1186"))
+	eq(t, "USD date", q["USD"].Date, "2026-10-07")
+	eq(t, "USD source", q["USD"].From, budget.RateSourceECB)
 	// Cross rate through the euro, exact: USD per GBP = 1.1186 / 0.84698.
 	q, err = p.Quotes(context.Background(), "GBP", []string{"USD", "EUR"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := new(big.Rat).Quo(rat("1.1186"), rat("0.84698")); q["USD"].PerBase.Cmp(want) != 0 {
-		t.Fatalf("USD per GBP = %s, want %s", q["USD"].PerBase, want)
-	}
-	if q["EUR"].PerBase.Cmp(new(big.Rat).Inv(rat("0.84698"))) != 0 {
-		t.Fatal("EUR per GBP")
-	}
+	eqRat(t, "USD per GBP", q["USD"].PerBase, new(big.Rat).Quo(rat("1.1186"), rat("0.84698")))
+	eqRat(t, "EUR per GBP", q["EUR"].PerBase, new(big.Rat).Inv(rat("0.84698")))
 	// A base the ECB doesn't publish yields nothing, not an error.
-	if q, err := p.Quotes(context.Background(), "KZT", []string{"USD"}); err != nil || len(q) != 0 {
-		t.Fatal(q, err)
+	q, err = p.Quotes(context.Background(), "KZT", []string{"USD"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "quote count for an unpublished base", len(q), 0)
 }
 
 func TestCurrencyAPIFallsBackToMirror(t *testing.T) {
@@ -85,16 +100,15 @@ func TestCurrencyAPIFallsBackToMirror(t *testing.T) {
 	if len(q) != 3 {
 		t.Fatalf("want USD, BTC, USDT; got %v", q)
 	}
-	if q["BTC"].PerBase.Cmp(rat("0.000013521158")) != 0 || q["BTC"].Date != "2026-10-07" {
-		t.Fatalf("BTC = %s", q["BTC"].PerBase)
-	}
+	eqRat(t, "BTC per EUR", q["BTC"].PerBase, rat("0.000013521158"))
+	eq(t, "BTC date", q["BTC"].Date, "2026-10-07")
 }
 
 func TestCoinGeckoInvertsPrice(t *testing.T) {
 	var gotQuery string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		w.Write([]byte(`{"bitcoin":{"eur":72565},"tether":{"eur":0.893}}`))
+		_, _ = w.Write([]byte(`{"bitcoin":{"eur":72565},"tether":{"eur":0.893}}`))
 	}))
 	defer s.Close()
 	p := &CoinGeckoProvider{URL: s.URL, Now: func() time.Time { return time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) }}
@@ -102,35 +116,39 @@ func TestCoinGeckoInvertsPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(gotQuery, "ids=bitcoin%2Ctether") || !strings.Contains(gotQuery, "vs_currencies=eur") {
-		t.Fatal(gotQuery)
+	if !strings.Contains(gotQuery, "ids=bitcoin%2Ctether") {
+		t.Fatalf("query %q does not ask for bitcoin and tether", gotQuery)
 	}
-	if len(q) != 2 || q["BTC"].PerBase.Cmp(big.NewRat(1, 72565)) != 0 || q["BTC"].Date != "2026-10-07" {
-		t.Fatalf("got %+v", q)
+	if !strings.Contains(gotQuery, "vs_currencies=eur") {
+		t.Fatalf("query %q does not ask for euro prices", gotQuery)
 	}
+	eq(t, "quote count", len(q), 2)
+	eqRat(t, "BTC per EUR", q["BTC"].PerBase, big.NewRat(1, 72565))
+	eq(t, "BTC date", q["BTC"].Date, "2026-10-07")
 }
 
 func TestChainFillsGapsAndFailsOnlyWhenAllFail(t *testing.T) {
 	ecb := &ECBProvider{URL: serve(t, ecbXML, nil).URL}
 	capi := &CurrencyAPIProvider{URLs: []string{serve(t, currencyAPIJSON, nil).URL + "/%s.json"}}
-	q, err := Chain{ID: Auto, Providers: []Provider{ecb, capi}}.Quotes(context.Background(), "EUR", []string{"USD", "BTC"})
+	q, err := Chain{ID: budget.RateSourceAuto, Providers: []Provider{ecb, capi}}.Quotes(context.Background(), "EUR", []string{"USD", "BTC"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q["USD"].From != ECB || q["BTC"].From != CurrencyAPI {
-		t.Fatalf("USD should come from the ECB and BTC from currency-api: %+v", q)
-	}
+	eq(t, "USD source", q["USD"].From, budget.RateSourceECB)
+	eq(t, "BTC source", q["BTC"].From, budget.RateSourceCurrencyAPI)
 
 	broken := &ECBProvider{URL: serve(t, "", nil).URL}
-	q, err = Chain{ID: Auto, Providers: []Provider{broken, capi}}.Quotes(context.Background(), "EUR", []string{"USD"})
-	if err != nil || q["USD"].From != CurrencyAPI {
-		t.Fatalf("fallback: %v %v", q, err)
+	q, err = Chain{ID: budget.RateSourceAuto, Providers: []Provider{broken, capi}}.Quotes(context.Background(), "EUR", []string{"USD"})
+	if err != nil {
+		t.Fatalf("fallback: %v", err)
 	}
-	_, err = Chain{ID: Auto, Providers: []Provider{broken}}.Quotes(context.Background(), "EUR", []string{"USD"})
+	eq(t, "fallback USD source", q["USD"].From, budget.RateSourceCurrencyAPI)
+	_, err = Chain{ID: budget.RateSourceAuto, Providers: []Provider{broken}}.Quotes(context.Background(), "EUR", []string{"USD"})
 	var fe *FetchError
-	if !errors.As(err, &fe) || fe.Provider != ECB {
+	if !errors.As(err, &fe) {
 		t.Fatalf("want a FetchError, got %v", err)
 	}
+	eq(t, "failing provider", fe.Provider, budget.RateSourceECB)
 }
 
 func TestCache(t *testing.T) {
@@ -147,7 +165,9 @@ func TestCache(t *testing.T) {
 		t.Fatalf("%d fetches, want 1", hits.Load())
 	}
 	now = now.Add(2 * time.Hour)
-	c.Quotes(context.Background(), "EUR", []string{"USD"})
+	if _, err := c.Quotes(context.Background(), "EUR", []string{"USD"}); err != nil {
+		t.Fatal(err)
+	}
 	if hits.Load() != 2 {
 		t.Fatal("expired entry not refetched")
 	}
@@ -190,25 +210,29 @@ func TestCoinGeckoKey(t *testing.T) {
 	var key string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key = r.Header.Get("x-cg-demo-api-key")
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer s.Close()
 	ctx := context.Background()
 
 	t.Setenv("COINGECKO_API_KEY", "from-env")
-	(&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"BTC"})
+	_, _ = (&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"BTC"})
 	if key != "from-env" {
 		t.Fatalf("env fallback: %q", key)
 	}
-	(&CoinGeckoProvider{URL: s.URL, Key: func() string { return "from-settings" }}).Quotes(ctx, "EUR", []string{"BTC"})
+	fromSettings := &CoinGeckoProvider{URL: s.URL, Key: func() string { return "from-settings" }}
+	_, _ = fromSettings.Quotes(ctx, "EUR", []string{"BTC"})
 	if key != "from-settings" {
 		t.Fatalf("Key func wins: %q", key)
 	}
 	// Only fiat asked for: no request at all.
 	key = "untouched"
-	if q, err := (&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"USD"}); err != nil || len(q) != 0 || key != "untouched" {
-		t.Fatal("CoinGecko was called for a fiat currency")
+	q, err := (&CoinGeckoProvider{URL: s.URL}).Quotes(ctx, "EUR", []string{"USD"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "quote count for fiat only", len(q), 0)
+	eq(t, "key after a fiat-only request", key, "untouched")
 }
 
 func TestFixed(t *testing.T) {
@@ -216,9 +240,9 @@ func TestFixed(t *testing.T) {
 	if q, _ := f.Quotes(context.Background(), "GBP", []string{"USD"}); len(q) != 0 {
 		t.Fatal("other base")
 	}
-	if q, _ := f.Quotes(context.Background(), "EUR", []string{"USD", "JPY"}); len(q) != 1 || q["USD"].From != "x" {
-		t.Fatal(q)
-	}
+	q, _ := f.Quotes(context.Background(), "EUR", []string{"USD", "JPY"})
+	eq(t, "quote count", len(q), 1)
+	eq(t, "USD source", q["USD"].From, "x")
 }
 
 func TestCoinGeckoRejectedKeyIsExplained(t *testing.T) {
@@ -228,13 +252,20 @@ func TestCoinGeckoRejectedKeyIsExplained(t *testing.T) {
 	defer s.Close()
 	_, err := (&CoinGeckoProvider{URL: s.URL, Key: func() string { return "bad" }}).Quotes(context.Background(), "EUR", []string{"BTC"})
 	var fe *FetchError
-	if !errors.As(err, &fe) || fe.Status != 401 || !strings.Contains(err.Error(), "API key was rejected") {
+	if !errors.As(err, &fe) {
+		t.Fatalf("want a FetchError, got %v", err)
+	}
+	eq(t, "status", fe.Status, 401)
+	if !strings.Contains(err.Error(), "API key was rejected") {
 		t.Fatalf("got %v", err)
 	}
 	// Without a key there is nothing to blame it on.
 	t.Setenv("COINGECKO_API_KEY", "")
 	_, err = (&CoinGeckoProvider{URL: s.URL}).Quotes(context.Background(), "EUR", []string{"BTC"})
-	if err == nil || strings.Contains(err.Error(), "API key") {
+	if err == nil {
+		t.Fatal("want an error without a key")
+	}
+	if strings.Contains(err.Error(), "API key") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -244,16 +275,17 @@ func TestCacheRemembersMisses(t *testing.T) {
 	c := NewCache(&ECBProvider{URL: serve(t, ecbXML, &hits).URL}, time.Hour)
 	for range 3 {
 		q, err := c.Quotes(context.Background(), "EUR", []string{"USD", "BTC"}) // the ECB has no BTC
-		if err != nil || len(q) != 1 {
-			t.Fatal(q, err)
+		if err != nil {
+			t.Fatal(err)
 		}
+		eq(t, "quote count", len(q), 1)
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("%d fetches: a code the provider lacks must not force a refetch", hits.Load())
 	}
 	// A failed request is not cached as "missing".
 	failing := NewCache(Fixed{ID: "x", Err: errors.New("down")}, time.Hour)
-	failing.Quotes(context.Background(), "EUR", []string{"USD"})
+	_, _ = failing.Quotes(context.Background(), "EUR", []string{"USD"})
 	if len(failing.entries) != 0 {
 		t.Fatal("cached a failure")
 	}
@@ -262,13 +294,15 @@ func TestCacheRemembersMisses(t *testing.T) {
 func TestChainReportsOutageForMissingCodes(t *testing.T) {
 	ecb := &ECBProvider{URL: serve(t, ecbXML, nil).URL}
 	down := &CurrencyAPIProvider{URLs: []string{serve(t, "", nil).URL + "/%s.json"}}
-	q, err := Chain{ID: Auto, Providers: []Provider{ecb, down}}.Quotes(context.Background(), "EUR", []string{"USD", "BTC"})
+	q, err := Chain{ID: budget.RateSourceAuto, Providers: []Provider{ecb, down}}.Quotes(context.Background(), "EUR", []string{"USD", "BTC"})
 	var pe *PartialError
-	if !errors.As(err, &pe) || q["USD"].From != ECB || len(q) != 1 {
-		t.Fatalf("want USD plus a PartialError, got %v %v", q, err)
+	if !errors.As(err, &pe) {
+		t.Fatalf("want a PartialError, got %v", err)
 	}
+	eq(t, "USD source", q["USD"].From, budget.RateSourceECB)
+	eq(t, "quote count", len(q), 1)
 	// Everything priced: an outage further down the chain doesn't matter.
-	if _, err := (Chain{ID: Auto, Providers: []Provider{ecb, down}}).Quotes(context.Background(), "EUR", []string{"USD"}); err != nil {
+	if _, err := (Chain{ID: budget.RateSourceAuto, Providers: []Provider{ecb, down}}).Quotes(context.Background(), "EUR", []string{"USD"}); err != nil {
 		t.Fatal(err)
 	}
 }

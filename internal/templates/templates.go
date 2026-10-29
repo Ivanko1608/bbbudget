@@ -10,16 +10,18 @@
 package templates
 
 import (
+	"cmp"
 	"embed"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,11 +31,15 @@ import (
 //go:embed builtin/*.yaml
 var builtinFS embed.FS
 
+// builtinDir is the embedded directory, and the start of a built-in
+// template's Source.
+const builtinDir = "builtin"
+
 // Template is a validated budget document plus where it came from.
 type Template struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// Source is "builtin" or the file path it was loaded from.
+	// Source is the file it was loaded from, under builtin/ for the embedded ones.
 	Source string        `json:"source"`
 	Doc    budget.Budget `json:"-"`
 }
@@ -46,7 +52,7 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // Builtin returns a registry with the embedded templates only.
 func Builtin() *Registry {
 	r := &Registry{byName: map[string]Template{}}
-	if err := r.loadFS(builtinFS, "builtin", "builtin"); err != nil {
+	if err := r.loadFS(builtinFS, builtinDir, builtinDir); err != nil {
 		panic(err) // embedded files are covered by tests
 	}
 	return r
@@ -66,7 +72,7 @@ func Load(dir string) (*Registry, error) {
 	return r, r.loadFS(os.DirFS(dir), ".", dir)
 }
 
-func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
+func (r *Registry) loadFS(fsys fs.FS, root, sourceDir string) error {
 	entries, err := fs.ReadDir(fsys, root)
 	if err != nil {
 		return err
@@ -78,11 +84,13 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), path.Ext(e.Name()))
-		source := "builtin"
-		if label != "builtin" {
-			source = filepath.Join(label, e.Name())
-		}
-		t, err := parse(fsys, path.Join(root, e.Name()), name, ext[1:], source)
+		source := filepath.Join(sourceDir, e.Name())
+		t, err := parse(fsys, templateFile{
+			path:   path.Join(root, e.Name()),
+			name:   name,
+			format: ext[1:],
+			source: source,
+		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("template %s: %w", source, err))
 			continue
@@ -92,11 +100,18 @@ func (r *Registry) loadFS(fsys fs.FS, root, label string) error {
 	return errors.Join(errs...)
 }
 
-func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
-	if !nameRe.MatchString(name) {
+type templateFile struct {
+	path   string
+	name   string
+	format string
+	source string
+}
+
+func parse(fsys fs.FS, file templateFile) (Template, error) {
+	if !nameRe.MatchString(file.name) {
 		return Template{}, fmt.Errorf("file name must be lowercase letters, digits, '-' or '_' (it becomes the template name)")
 	}
-	f, err := fsys.Open(file)
+	f, err := fsys.Open(file.path)
 	if err != nil {
 		return Template{}, err
 	}
@@ -105,7 +120,7 @@ func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
 	if err != nil {
 		return Template{}, err
 	}
-	doc, err := budget.ParseDocument(data, format) // rejects oversized input
+	doc, err := budget.ParseDocument(data, file.format) // rejects oversized input
 	if err != nil {
 		return Template{}, err
 	}
@@ -113,21 +128,18 @@ func parse(fsys fs.FS, file, name, format, source string) (Template, error) {
 	probe := doc
 	probe.StartMonth = "2000-01"
 	if probe.Name == "" {
-		probe.Name = name
+		probe.Name = file.name
 	}
 	if _, err := budget.Compile(probe); err != nil {
 		return Template{}, err
 	}
-	return Template{Name: name, Description: doc.Description, Source: source, Doc: doc}, nil
+	return Template{Name: file.name, Description: doc.Description, Source: file.source, Doc: doc}, nil
 }
 
 // List returns templates sorted by name.
 func (r *Registry) List() []Template {
-	out := make([]Template, 0, len(r.byName))
-	for _, t := range r.byName {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	out := slices.Collect(maps.Values(r.byName))
+	slices.SortFunc(out, func(a, b Template) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

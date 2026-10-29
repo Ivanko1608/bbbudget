@@ -8,13 +8,15 @@
 package i18n
 
 import (
+	"cmp"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,22 +164,12 @@ func Catalogs() map[string]*Catalog {
 
 // Locales lists the available locales, sorted.
 func Locales() []string {
-	var out []string
-	for l := range Catalogs() {
-		out = append(out, l)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(Catalogs()))
 }
 
 // Keys lists a catalog's message keys, sorted.
 func (c *Catalog) Keys() []string {
-	out := make([]string, 0, len(c.messages))
-	for k := range c.messages {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(c.messages))
 }
 
 // Has reports whether the catalog has a message for key.
@@ -266,7 +258,7 @@ func MatchAcceptLanguage(header string) string {
 			cands = append(cands, cand{tag, q})
 		}
 	}
-	sort.SliceStable(cands, func(i, j int) bool { return cands[i].q > cands[j].q })
+	slices.SortStableFunc(cands, func(a, b cand) int { return cmp.Compare(b.q, a.q) })
 	for _, c := range cands {
 		if m, ok := supported(c.tag); ok {
 			return m
@@ -510,3 +502,6 @@ func Pseudo() *Localizer {
 	}
 	return &Localizer{cat: c, fallback: c}
 }
+
+// StripMdBold removes the bold markers that catalog messages carry.
+func StripMdBold(s string) string { return strings.ReplaceAll(s, "**", "") }

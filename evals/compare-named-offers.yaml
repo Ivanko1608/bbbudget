@@ -1,0 +1,33 @@
+template: example
+turns:
+  - Alder Bank offers 3.1% a year on savings and Birch Bank offers 3.6%. I want to put away 10,000 for a year. Which is better?
+reference:
+  - []
+reference_reply: >-
+  On your numbers, Birch Bank is better. You could earn 360 in a year there against 310
+  at Alder Bank, so 50 more on 10,000. The rates leave out fees, whether each rate is
+  fixed or can change, and whether your deposit is protected, so compare those too.
+expect:
+  saved: false
+  reply_contains: [Birch, "310", "360"]
+  reply_omits:
+    - Barclays
+    - bunq
+    - Commerzbank
+    - Degiro
+    - Fidelity
+    - HSBC
+    - ING
+    - iShares
+    - Lloyds
+    - Monzo
+    - N26
+    - PostFinance
+    - Raiffeisen
+    - Revolut
+    - Santander
+    - Scalable Capital
+    - Schwab
+    - Trade Republic
+    - UBS
+    - Vanguard

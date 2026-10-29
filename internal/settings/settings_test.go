@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,15 +13,27 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+func eq[T comparable](t *testing.T, what string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", what, got, want)
+	}
+}
+
 func TestMissingFileGivesDefaults(t *testing.T) {
 	for _, path := range []string{"", filepath.Join(t.TempDir(), "nope", "settings.json")} {
 		s, err := Load(path)
-		if err != nil || s != Defaults() {
-			t.Fatalf("Load(%q) = %+v, %v", path, s, err)
+		if err != nil {
+			t.Fatalf("Load(%q): %v", path, err)
 		}
+		eq(t, "Load("+path+")", s, Defaults())
 	}
-	if d := Defaults(); d.FetchRates || d.DefaultRateSource != "auto" || d.AutoRefresh != RefreshOff || d.Validate() != nil {
-		t.Fatalf("defaults: %+v", d)
+	defaults := Defaults()
+	eq(t, "default FetchRates", defaults.FetchRates, false)
+	eq(t, "default DefaultRateSource", defaults.DefaultRateSource, "auto")
+	eq(t, "default AutoRefresh", defaults.AutoRefresh, RefreshOff)
+	if err := defaults.Validate(); err != nil {
+		t.Fatalf("defaults do not validate: %v", err)
 	}
 }
 
@@ -42,9 +53,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := Load(path)
-	if err != nil || got != want {
-		t.Fatalf("got %+v, %v", got, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "loaded settings", got, want)
 	if runtime.GOOS != "windows" {
 		fi, _ := os.Stat(path)
 		if fi.Mode().Perm() != 0o600 {
@@ -59,11 +71,16 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestPartialFileKeepsDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	os.WriteFile(path, []byte(`{"auto_refresh": "hourly"}`), 0o600)
-	s, err := Load(path)
-	if err != nil || s.FetchRates || s.DefaultRateSource != "auto" || s.AutoRefresh != RefreshHourly {
-		t.Fatalf("got %+v, %v", s, err)
+	if err := os.WriteFile(path, []byte(`{"auto_refresh": "hourly"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "FetchRates", s.FetchRates, false)
+	eq(t, "DefaultRateSource", s.DefaultRateSource, "auto")
+	eq(t, "AutoRefresh", s.AutoRefresh, RefreshHourly)
 }
 
 func TestBadFilesAreErrors(t *testing.T) {
@@ -74,9 +91,13 @@ func TestBadFilesAreErrors(t *testing.T) {
 		"not json":      `fetch_rates = true`,
 	} {
 		path := filepath.Join(t.TempDir(), "settings.json")
-		os.WriteFile(path, []byte(body), 0o600)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		s, err := Load(path)
-		if err == nil || !strings.Contains(err.Error(), path) {
+		if err == nil {
+			t.Errorf("%s: want an error", name)
+		} else if !strings.Contains(err.Error(), path) {
 			t.Errorf("%s: want an error naming the file, got %v", name, err)
 		}
 		if s != Defaults() {
@@ -86,14 +107,18 @@ func TestBadFilesAreErrors(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(" coingecko "), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
-	if err != nil || s.DefaultRateSource != "coingecko" || s.CoinGeckoAPIKey != "k1" || s.FetchRates || s.AutoRefresh != RefreshOff {
-		t.Fatalf("got %+v, %v", s, err)
+	s, err := Defaults().Apply(Patch{DefaultRateSource: ptr(budget.RateSource(" coingecko ")), CoinGeckoAPIKey: ptr("k1"), FetchRates: ptr(false)})
+	if err != nil {
+		t.Fatal(err)
 	}
+	eq(t, "DefaultRateSource", s.DefaultRateSource, "coingecko")
+	eq(t, "CoinGeckoAPIKey", s.CoinGeckoAPIKey, "k1")
+	eq(t, "FetchRates", s.FetchRates, false)
+	eq(t, "AutoRefresh", s.AutoRefresh, RefreshOff)
 	if s, _ = s.Apply(Patch{CoinGeckoAPIKey: ptr("")}); s.CoinGeckoAPIKey != "" {
 		t.Fatal("an empty key removes it")
 	}
-	for _, p := range []Patch{{DefaultRateSource: ptr("yahoo")}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
+	for _, p := range []Patch{{DefaultRateSource: ptr(budget.RateSource("yahoo"))}, {AutoRefresh: ptr("sometimes")}, {CoinGeckoAPIKey: ptr("two words")}} {
 		if _, err := Defaults().Apply(p); err == nil {
 			t.Errorf("accepted %+v", p)
 		}
@@ -108,14 +133,6 @@ func TestInterval(t *testing.T) {
 		if got := (Settings{AutoRefresh: v}).Interval(); got != want {
 			t.Errorf("%s: %v", v, got)
 		}
-	}
-}
-
-// The settings package can't import budget (it sits below it), so its copy of
-// the source names is checked here.
-func TestRateSourcesMatchBudget(t *testing.T) {
-	if !slices.Equal(slices.Sorted(slices.Values(RateSources)), slices.Sorted(slices.Values(budget.RateSources))) {
-		t.Fatalf("settings %v vs budget %v", RateSources, budget.RateSources)
 	}
 }
 

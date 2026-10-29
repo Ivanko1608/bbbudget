@@ -254,7 +254,7 @@ func (p *OpenAICompatible) post(ctx context.Context, request openAIRequest) ([]b
 		return nil, fmt.Errorf("can't reach the model server at %s (is it running?): %w",
 			p.config.BaseURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if err != nil {
 		return nil, err

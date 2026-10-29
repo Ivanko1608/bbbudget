@@ -9,10 +9,17 @@ body:
     validations:
       required: true
   - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Why this matters to its feature, in one or two sentences. The PR description copies it, so the reviewer never has to come back here.
+    validations:
+      required: true
+  - type: textarea
     id: context
     attributes:
       label: Context
-      description: Why it matters, and where to look (files, PRs, branches).
+      description: The facts, and where to look (files, PRs, branches).
   - type: textarea
     id: acceptance
     attributes:
@@ -28,3 +35,9 @@ body:
     attributes:
       label: Out of scope
       description: What not to touch, so the change stays one topic.
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions
+      description: "Filled in as the work goes, one line each: date, what was decided, why, and where (PR or commit)."
+      value: None yet.

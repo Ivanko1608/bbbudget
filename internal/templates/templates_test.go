@@ -40,6 +40,19 @@ func TestBuiltinsAreValid(t *testing.T) {
 	}
 }
 
+func TestBuiltinSourceIsItsEmbeddedFile(t *testing.T) {
+	r := Builtin()
+
+	sources := map[string]string{}
+	for _, tpl := range r.List() {
+		sources[tpl.Name] = tpl.Source
+	}
+
+	if got := sources["example"]; got != filepath.Join("builtin", "example.yaml") {
+		t.Errorf("example source: %q", got)
+	}
+}
+
 func TestUserDirectory(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {
@@ -73,7 +86,9 @@ func TestUserDirectory(t *testing.T) {
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "broken.yaml") {
 		t.Fatalf("broken template: %v", err)
 	}
-	os.Remove(filepath.Join(dir, "broken.yaml"))
+	if err := os.Remove(filepath.Join(dir, "broken.yaml")); err != nil {
+		t.Fatal(err)
+	}
 	write("Bad Name.yaml", "base_currency: EUR\ncategories: [{label: A}]\n")
 	if _, err := Load(dir); err == nil {
 		t.Fatal("bad file name accepted")

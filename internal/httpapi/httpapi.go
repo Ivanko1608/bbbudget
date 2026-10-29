@@ -3,8 +3,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -22,6 +24,14 @@ import (
 )
 
 const maxBody = 1 << 20
+
+const internalErrorMessage = "internal error"
+
+var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
+
+// The codes go on to the outside rate providers, so the cap bounds what one
+// request can ask of them. The UI asks for one code at a time.
+const maxCurrenciesPerRatesRequest = 50
 
 // uiCSP keeps the UI to its own origin: no third-party scripts, fonts, images
 // or requests. Inline styles stay allowed because the UI renders them.
@@ -82,6 +92,8 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/budgets/{id}/scenarios/{sid}/adopt", s.adoptScenario)
 	mux.HandleFunc("DELETE /api/budgets/{id}/scenarios/{sid}", s.deleteScenario)
 	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
+	mux.HandleFunc("GET /api/notes", s.listNotes)
+	mux.HandleFunc("DELETE /api/notes/{id}", s.deleteNote)
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
@@ -91,7 +103,7 @@ func New(a *app.App, opts Options) http.Handler {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
-				writeErr(w, http.StatusMethodNotAllowed, "method not allowed", nil)
+				s.writeErr(w, http.StatusMethodNotAllowed, "method not allowed", nil)
 				return
 			}
 			w.Header().Set("Content-Security-Policy", uiCSP)
@@ -108,16 +120,16 @@ func New(a *app.App, opts Options) http.Handler {
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.hostAllowed(r.Host) {
-			writeErr(w, http.StatusForbidden, "host not allowed", nil)
+			s.writeErr(w, http.StatusForbidden, "host not allowed", nil)
 			return
 		}
 		if r.URL.Path != "/mcp" && r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if ct := r.Header.Get("Content-Type"); r.Method != http.MethodDelete && !strings.HasPrefix(ct, "application/json") {
-				writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json", nil)
+				s.writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json", nil)
 				return
 			}
 			if r.Method == http.MethodDelete && r.Header.Get("X-Requested-With") == "" {
-				writeErr(w, http.StatusForbidden, "DELETE requires an X-Requested-With header", nil)
+				s.writeErr(w, http.StatusForbidden, "DELETE requires an X-Requested-With header", nil)
 				return
 			}
 		}
@@ -152,10 +164,33 @@ type errBody struct {
 	Issues []budget.Issue `json:"issues,omitempty"`
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// writeJSON sends v with status. The body is encoded before anything is
+// written, so an encoding failure becomes a logged 500 instead of a success
+// status with a broken body.
+func (s *server) writeJSON(w http.ResponseWriter, status int, v any) {
+	body, err := encodeJSON(v)
+	if err != nil {
+		s.opts.Log.Error("encoding response failed", "status", status, "err", err)
+		status = http.StatusInternalServerError
+		body = internalErrorBody
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+
+	if _, err = w.Write(body); err != nil {
+		s.opts.Log.Error("writing response failed", "status", status, "err", err)
+	}
+}
+
+// encodeJSON encodes v the way json.Encoder does, including the trailing newline.
+func encodeJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 // reader renders text in the language r asks for.
@@ -166,11 +201,11 @@ func (s *server) reader(r *http.Request) *i18n.Localizer {
 // writeView writes v with its text in the language r asks for.
 func (s *server) writeView(w http.ResponseWriter, r *http.Request, status int, v *app.View) {
 	v.Localize(s.reader(r))
-	writeJSON(w, status, v)
+	s.writeJSON(w, status, v)
 }
 
-func writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Issue) {
-	writeJSON(w, status, errBody{Error: msg, Issues: issues})
+func (s *server) writeErr(w http.ResponseWriter, status int, msg string, issues []budget.Issue) {
+	s.writeJSON(w, status, errBody{Error: msg, Issues: issues})
 }
 
 // fail maps domain errors to HTTP statuses. Anything unrecognised is a 500
@@ -187,38 +222,38 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	)
 	switch {
 	case errors.As(err, &badOp): // checked first: a bad target inside an op is the caller's mistake
-		writeErr(w, http.StatusBadRequest, err.Error(), nil)
+		s.writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	case errors.As(err, &invalid):
 		reader := s.reader(r)
 		issues := make([]budget.Issue, len(invalid.Issues))
 		for i, is := range invalid.Issues {
 			issues[i] = is.Localized(reader)
 		}
-		writeErr(w, http.StatusUnprocessableEntity, err.Error(), issues)
+		s.writeErr(w, http.StatusUnprocessableEntity, err.Error(), issues)
 	case errors.As(err, &undoLater):
 		app.LocalizeHistory(undoLater.Later, s.reader(r))
 		body := map[string]any{"error": err.Error(), "later": undoLater.Later}
-		writeJSON(w, http.StatusConflict, body)
+		s.writeJSON(w, http.StatusConflict, body)
 	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
-		writeErr(w, http.StatusConflict, err.Error(), nil)
+		s.writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.As(err, &conflict):
 		body := map[string]any{"error": err.Error(), "revision": conflict.Actual}
-		writeJSON(w, http.StatusConflict, body)
+		s.writeJSON(w, http.StatusConflict, body)
 	case errors.Is(err, store.ErrNotFound), errors.As(err, &noMatch):
-		writeErr(w, http.StatusNotFound, err.Error(), nil)
+		s.writeErr(w, http.StatusNotFound, err.Error(), nil)
 	case errors.Is(err, store.ErrExists):
-		writeErr(w, http.StatusConflict, err.Error(), nil)
+		s.writeErr(w, http.StatusConflict, err.Error(), nil)
 	case errors.Is(err, app.ErrRatesOff):
-		writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
+		s.writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
 	case errors.As(err, &rateFailed): // the rate provider failed, not us
-		writeErr(w, http.StatusBadGateway, err.Error(), nil)
+		s.writeErr(w, http.StatusBadGateway, err.Error(), nil)
 	case errors.As(err, &tooLarge):
-		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
+		s.writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
 	case isBadRequest(err):
-		writeErr(w, http.StatusBadRequest, err.Error(), nil)
+		s.writeErr(w, http.StatusBadRequest, err.Error(), nil)
 	default:
 		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-		writeErr(w, http.StatusInternalServerError, "internal error", nil)
+		s.writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
 	}
 }
 
@@ -278,10 +313,10 @@ func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	for _, c := range money.Codes() {
 		digits[c] = money.MustLookup(c).Digits
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	s.writeJSON(w, http.StatusOK, map[string]any{
 		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
 		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
-		"strategies": []string{budget.StrategyAvalanche, budget.StrategySnowball, budget.StrategyListed},
+		"strategies": budget.Strategies,
 		"locale":     s.reader(r).Locale(),
 		"locales":    locales(),
 	})
@@ -296,7 +331,7 @@ func (s *server) list(w http.ResponseWriter, r *http.Request) {
 	if l == nil {
 		l = []store.Meta{}
 	}
-	writeJSON(w, http.StatusOK, l)
+	s.writeJSON(w, http.StatusOK, l)
 }
 
 func (s *server) create(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +380,7 @@ func (s *server) replace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Revision == nil {
-		writeErr(w, http.StatusBadRequest, "revision is required (the revision you loaded)", nil)
+		s.writeErr(w, http.StatusBadRequest, "revision is required (the revision you loaded)", nil)
 		return
 	}
 	v, err := s.app.Replace(r.Context(), editorSave, r.PathValue("id"), *in.Revision, in.Budget)
@@ -369,7 +404,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("limit"); q != "" {
 		n, err := strconv.Atoi(q)
 		if err != nil || n < 0 {
-			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
+			s.writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
 			return
 		}
 		limit = n
@@ -383,7 +418,7 @@ func (s *server) history(w http.ResponseWriter, r *http.Request) {
 		h = []store.Entry{}
 	}
 	app.LocalizeHistory(h, s.reader(r))
-	writeJSON(w, http.StatusOK, h)
+	s.writeJSON(w, http.StatusOK, h)
 }
 
 func (s *server) listTransactions(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +433,7 @@ func (s *server) listTransactions(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
+			s.writeErr(w, http.StatusBadRequest, "limit must be a whole number", nil)
 			return
 		}
 		f.Limit = n
@@ -408,7 +443,7 @@ func (s *server) listTransactions(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, txs)
+	s.writeJSON(w, http.StatusOK, txs)
 }
 
 func (s *server) logTransactions(w http.ResponseWriter, r *http.Request) {
@@ -424,7 +459,7 @@ func (s *server) logTransactions(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, res)
+	s.writeJSON(w, http.StatusCreated, res)
 }
 
 func (s *server) updateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -438,7 +473,7 @@ func (s *server) updateTransaction(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	s.writeJSON(w, http.StatusOK, t)
 }
 
 func (s *server) deleteTransactions(w http.ResponseWriter, r *http.Request) {
@@ -448,7 +483,7 @@ func (s *server) deleteTransactions(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
+	s.writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
 }
 
 // deleteBatch removes everything one log call added (/transactions?batch=b3).
@@ -459,7 +494,7 @@ func (s *server) deleteBatch(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
+	s.writeJSON(w, http.StatusOK, deletedResult{Deleted: removed})
 }
 
 // deletedResult is what deleting transactions answers.
@@ -474,7 +509,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, st)
+	s.writeJSON(w, http.StatusOK, st)
 }
 
 func (s *server) undo(w http.ResponseWriter, r *http.Request) {
@@ -531,14 +566,14 @@ func (s *server) whatIf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, map[string]any{"budget": v.Budget, "report": v.Report})
+	s.writeJSON(w, http.StatusOK, map[string]any{"budget": v.Budget, "report": v.Report})
 }
 
 // settingsView is what the settings page sees. The API key itself never
 // leaves the server; only whether one is set.
 type settingsView struct {
 	FetchRates        bool                  `json:"fetch_rates"`
-	DefaultRateSource string                `json:"default_rate_source"`
+	DefaultRateSource budget.RateSource     `json:"default_rate_source"`
 	AutoRefresh       string                `json:"auto_refresh"`
 	CoinGeckoKeySet   bool                  `json:"coingecko_api_key_set"`
 	Locale            string                `json:"locale"`
@@ -583,7 +618,7 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.settingsView(st))
+	s.writeJSON(w, http.StatusOK, s.settingsView(st))
 }
 
 func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -597,23 +632,31 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.settingsView(st))
+	s.writeJSON(w, http.StatusOK, s.settingsView(st))
 }
 
 // quote returns current rates without saving: ?base=EUR&codes=USD,BTC[&source=ecb].
 func (s *server) quote(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	codes := strings.Split(q.Get("codes"), ",")
-	if q.Get("base") == "" || q.Get("codes") == "" || len(codes) > 50 {
-		writeErr(w, http.StatusBadRequest, "base and codes (comma-separated, at most 50) are required", nil)
+	missingInput := q.Get("base") == "" || q.Get("codes") == ""
+	if missingInput || len(codes) > maxCurrenciesPerRatesRequest {
+		msg := fmt.Sprintf(
+			"base and codes (comma-separated, at most %d) are required", maxCurrenciesPerRatesRequest)
+		s.writeErr(w, http.StatusBadRequest, msg, nil)
 		return
 	}
-	out, err := s.app.Quote(r.Context(), strings.ToUpper(q.Get("base")), q.Get("source"), codes)
+	out, err := s.app.Quote(
+		r.Context(),
+		strings.ToUpper(q.Get("base")),
+		budget.RateSource(q.Get("source")),
+		codes,
+	)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	s.writeJSON(w, http.StatusOK, out)
 }
 
 // refreshRates fetches and saves fresh rates: {codes?: [...]}; omitted means
@@ -630,14 +673,17 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "rate_updates": updates})
+			s.writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error":        err.Error(),
+				"rate_updates": updates,
+			})
 			return
 		}
 		s.fail(w, r, err)
 		return
 	}
 	v.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, struct {
+	s.writeJSON(w, http.StatusOK, struct {
 		*app.View
 		Updates []app.RateUpdate `json:"rate_updates"`
 	}{v, updates})
@@ -649,7 +695,7 @@ func (s *server) compare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	s.writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) saveScenario(w http.ResponseWriter, r *http.Request) {
@@ -669,7 +715,7 @@ func (s *server) saveScenario(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, sc)
+	s.writeJSON(w, http.StatusCreated, sc)
 }
 
 func (s *server) scenarioReport(w http.ResponseWriter, r *http.Request) {
@@ -679,7 +725,7 @@ func (s *server) scenarioReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rep.Localize(s.reader(r))
-	writeJSON(w, http.StatusOK, rep)
+	s.writeJSON(w, http.StatusOK, rep)
 }
 
 func (s *server) adoptScenario(w http.ResponseWriter, r *http.Request) {
