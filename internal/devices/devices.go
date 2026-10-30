@@ -64,8 +64,8 @@ type Pairing struct {
 	ExpiresAt time.Time
 }
 
-// Paired is the result of using a pairing code.
-type Paired struct {
+// PairingResult is what pairing a device with a code gives back.
+type PairingResult struct {
 	Device Device
 	// Token is shown to the device once and never stored.
 	Token string
@@ -96,8 +96,8 @@ func Open(path string) *Registry {
 	return &Registry{path: path, now: time.Now}
 }
 
-// NewPairing makes a pairing code that pairs one device within PairingTTL.
-func (r *Registry) NewPairing() (Pairing, error) {
+// CreatePairing makes a pairing code that pairs one device within PairingTTL.
+func (r *Registry) CreatePairing() (Pairing, error) {
 	code := rand.Text()[:codeLength]
 	expires := r.now().Add(PairingTTL)
 	err := r.update(func(s *state) error {
@@ -107,11 +107,11 @@ func (r *Registry) NewPairing() (Pairing, error) {
 	if err != nil {
 		return Pairing{}, err
 	}
-	return Pairing{Code: groupCode(code), ExpiresAt: expires}, nil
+	return Pairing{Code: formatCode(code), ExpiresAt: expires}, nil
 }
 
 // Pair uses up a pairing code and pairs a device called name.
-func (r *Registry) Pair(code, name string) (Paired, error) {
+func (r *Registry) Pair(code, name string) (PairingResult, error) {
 	token := tokenPrefix + rand.Text()
 	device := Device{
 		ID:        strings.ToLower(rand.Text()[:8]),
@@ -130,9 +130,9 @@ func (r *Registry) Pair(code, name string) (Paired, error) {
 		return nil
 	})
 	if err != nil {
-		return Paired{}, err
+		return PairingResult{}, err
 	}
-	return Paired{Device: device, Token: token}, nil
+	return PairingResult{Device: device, Token: token}, nil
 }
 
 // Authenticate returns the device a token belongs to.
@@ -204,7 +204,7 @@ func (r *Registry) update(edit func(*state) error) error {
 	if err != nil {
 		return err
 	}
-	s.Codes = slices.DeleteFunc(s.Codes, r.expired)
+	s.Codes = slices.DeleteFunc(s.Codes, r.isExpired)
 	if err = edit(&s); err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func (r *Registry) update(edit func(*state) error) error {
 	return r.save(s)
 }
 
-func (r *Registry) expired(c pendingCode) bool { return !r.now().Before(c.ExpiresAt) }
+func (r *Registry) isExpired(c pendingCode) bool { return !r.now().Before(c.ExpiresAt) }
 
 func (r *Registry) lock(exclusive bool) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o700); err != nil {
@@ -283,7 +283,7 @@ func hash(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func groupCode(code string) string {
+func formatCode(code string) string {
 	return code[:codeGroup] + "-" + code[codeGroup:]
 }
 
@@ -297,7 +297,7 @@ func normalizeCode(typed string) string {
 // cleanName drops control characters, because `bbbudget devices` prints the
 // name in a terminal, where they could pass as escape sequences.
 func cleanName(name string) string {
-	name = strings.TrimSpace(strings.Map(dropControl, name))
+	name = strings.TrimSpace(strings.Map(removeControlChar, name))
 	if name == "" {
 		return defaultName
 	}
@@ -308,7 +308,7 @@ func cleanName(name string) string {
 	return name
 }
 
-func dropControl(r rune) rune {
+func removeControlChar(r rune) rune {
 	if unicode.IsControl(r) {
 		return -1
 	}

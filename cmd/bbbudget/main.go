@@ -120,7 +120,7 @@ var commands = map[string]command{
 	"undo":      runUndo,
 	"settings":  runSettings,
 	"pair":      runPair,
-	"devices":   runDevices,
+	"devices":   runManageDevices,
 	"version":   runVersion,
 	"help":      runHelp,
 	"-h":        runHelp,

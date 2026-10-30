@@ -23,7 +23,7 @@ func runPair(_ context.Context, c *cli, args []string) error {
 	return printPairing(c.stdout, registry)
 }
 
-func runDevices(_ context.Context, c *cli, args []string) error {
+func runManageDevices(_ context.Context, c *cli, args []string) error {
 	revokeID := c.flags.String("revoke", "", "unpair the device with this id")
 	if _, err := parseArgs(c.flags, args, 0, "devices [-revoke ID]"); err != nil {
 		return err
@@ -55,7 +55,7 @@ func openDevices(settingsFile string) (*devices.Registry, error) {
 }
 
 func printPairing(w io.Writer, registry *devices.Registry) error {
-	pairing, err := registry.NewPairing()
+	pairing, err := registry.CreatePairing()
 	if err != nil {
 		return err
 	}

@@ -11,8 +11,8 @@ import (
 
 var start = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 
-// testRegistry returns a registry whose clock the test moves with advance.
-func testRegistry(t *testing.T) (r *Registry, advance func(time.Duration)) {
+// createTestRegistry returns a registry whose clock the test moves with advance.
+func createTestRegistry(t *testing.T) (r *Registry, advance func(time.Duration)) {
 	t.Helper()
 	r = Open(filepath.Join(t.TempDir(), "devices.json"))
 	now := start
@@ -20,18 +20,18 @@ func testRegistry(t *testing.T) (r *Registry, advance func(time.Duration)) {
 	return r, func(d time.Duration) { now = now.Add(d) }
 }
 
-func newPairing(t *testing.T, r *Registry) Pairing {
+func createPairing(t *testing.T, r *Registry) Pairing {
 	t.Helper()
-	p, err := r.NewPairing()
+	p, err := r.CreatePairing()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-func pair(t *testing.T, r *Registry, name string) Paired {
+func pairDevice(t *testing.T, r *Registry, name string) PairingResult {
 	t.Helper()
-	paired, err := r.Pair(newPairing(t, r).Code, name)
+	paired, err := r.Pair(createPairing(t, r).Code, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,9 +39,9 @@ func pair(t *testing.T, r *Registry, name string) Paired {
 }
 
 func TestPairedTokenAuthenticatesItsDevice(t *testing.T) {
-	r, _ := testRegistry(t)
+	r, _ := createTestRegistry(t)
 
-	paired := pair(t, r, "Pixel")
+	paired := pairDevice(t, r, "Pixel")
 
 	d, err := r.Authenticate(paired.Token)
 	if err != nil {
@@ -56,8 +56,8 @@ func TestPairedTokenAuthenticatesItsDevice(t *testing.T) {
 }
 
 func TestCodeIsAcceptedHoweverItIsTyped(t *testing.T) {
-	r, _ := testRegistry(t)
-	code := newPairing(t, r).Code
+	r, _ := createTestRegistry(t)
+	code := createPairing(t, r).Code
 	typed := strings.ToLower(strings.ReplaceAll(code, "-", " "))
 
 	_, err := r.Pair(typed, "Pixel")
@@ -68,8 +68,8 @@ func TestCodeIsAcceptedHoweverItIsTyped(t *testing.T) {
 }
 
 func TestCodeWorksOnlyOnce(t *testing.T) {
-	r, _ := testRegistry(t)
-	code := newPairing(t, r).Code
+	r, _ := createTestRegistry(t)
+	code := createPairing(t, r).Code
 	if _, err := r.Pair(code, "first"); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +82,8 @@ func TestCodeWorksOnlyOnce(t *testing.T) {
 }
 
 func TestCodeExpires(t *testing.T) {
-	r, advance := testRegistry(t)
-	code := newPairing(t, r).Code
+	r, advance := createTestRegistry(t)
+	code := createPairing(t, r).Code
 
 	advance(PairingTTL)
 	_, err := r.Pair(code, "late")
@@ -94,8 +94,8 @@ func TestCodeExpires(t *testing.T) {
 }
 
 func TestWrongCodeIsRejected(t *testing.T) {
-	r, _ := testRegistry(t)
-	newPairing(t, r)
+	r, _ := createTestRegistry(t)
+	createPairing(t, r)
 
 	_, err := r.Pair("AAAAA-AAAAA", "guess")
 
@@ -105,8 +105,8 @@ func TestWrongCodeIsRejected(t *testing.T) {
 }
 
 func TestRevokedTokenStopsWorking(t *testing.T) {
-	r, _ := testRegistry(t)
-	kept, revoked := pair(t, r, "laptop"), pair(t, r, "lost phone")
+	r, _ := createTestRegistry(t)
+	kept, revoked := pairDevice(t, r, "laptop"), pairDevice(t, r, "lost phone")
 
 	if err := r.Revoke(revoked.Device.ID); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestRevokedTokenStopsWorking(t *testing.T) {
 }
 
 func TestRevokeUnknownDevice(t *testing.T) {
-	r, _ := testRegistry(t)
+	r, _ := createTestRegistry(t)
 
 	err := r.Revoke("nope")
 
@@ -131,8 +131,8 @@ func TestRevokeUnknownDevice(t *testing.T) {
 }
 
 func TestUnknownTokenIsRejected(t *testing.T) {
-	r, _ := testRegistry(t)
-	pair(t, r, "Pixel")
+	r, _ := createTestRegistry(t)
+	pairDevice(t, r, "Pixel")
 
 	_, err := r.Authenticate("bbd_NOTATOKEN")
 
@@ -142,9 +142,9 @@ func TestUnknownTokenIsRejected(t *testing.T) {
 }
 
 func TestFileHoldsNoSecrets(t *testing.T) {
-	r, _ := testRegistry(t)
-	code := newPairing(t, r).Code
-	paired := pair(t, r, "Pixel")
+	r, _ := createTestRegistry(t)
+	code := createPairing(t, r).Code
+	paired := pairDevice(t, r, "Pixel")
 
 	raw, err := os.ReadFile(r.path)
 	if err != nil {
@@ -160,8 +160,8 @@ func TestFileHoldsNoSecrets(t *testing.T) {
 }
 
 func TestFileIsPrivate(t *testing.T) {
-	r, _ := testRegistry(t)
-	pair(t, r, "Pixel")
+	r, _ := createTestRegistry(t)
+	pairDevice(t, r, "Pixel")
 
 	info, err := os.Stat(r.path)
 	if err != nil {
@@ -174,9 +174,9 @@ func TestFileIsPrivate(t *testing.T) {
 }
 
 func TestRevocationReachesOtherProcesses(t *testing.T) {
-	server, _ := testRegistry(t)
+	server, _ := createTestRegistry(t)
 	cli := Open(server.path)
-	paired := pair(t, server, "Pixel")
+	paired := pairDevice(t, server, "Pixel")
 
 	if err := cli.Revoke(paired.Device.ID); err != nil {
 		t.Fatal(err)

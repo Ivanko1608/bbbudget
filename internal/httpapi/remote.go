@@ -24,18 +24,18 @@ func (s *server) requireDevice(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		token, ok := bearerToken(r)
+		token, ok := parseBearerToken(r)
 		if !ok {
-			s.unauthorized(w, missingTokenMessage)
+			s.writeUnauthorized(w, missingTokenMessage)
 			return
 		}
 		_, err := s.opts.Devices.Authenticate(token)
 		if errors.Is(err, devices.ErrBadToken) {
-			s.unauthorized(w, badTokenMessage)
+			s.writeUnauthorized(w, badTokenMessage)
 			return
 		}
 		if err != nil {
-			s.failDevices(w, r, err)
+			s.writeDeviceError(w, r, err)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -50,20 +50,20 @@ func needsDevice(r *http.Request) bool {
 	return strings.HasPrefix(path, "/api/") || path == "/mcp"
 }
 
-func bearerToken(r *http.Request) (string, bool) {
+func parseBearerToken(r *http.Request) (string, bool) {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	return token, ok && token != ""
 }
 
-func (s *server) unauthorized(w http.ResponseWriter, msg string) {
+func (s *server) writeUnauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	s.writeErr(w, http.StatusUnauthorized, msg, nil)
 }
 
-// failDevices answers a registry error. Only the sentinels' own text reaches
+// writeDeviceError answers a registry error. Only the sentinels' own text reaches
 // the client: any other error comes from reading or writing devices.json, and
 // its text can carry the file's path or contents.
-func (s *server) failDevices(w http.ResponseWriter, r *http.Request, err error) {
+func (s *server) writeDeviceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, devices.ErrBadCode):
 		s.writeErr(w, http.StatusForbidden, badPairingCodeMessage, nil)
@@ -83,7 +83,7 @@ type deviceView struct {
 	PairedAt time.Time `json:"paired_at"`
 }
 
-func viewDevice(d devices.Device) deviceView {
+func toDeviceView(d devices.Device) deviceView {
 	return deviceView{ID: d.ID, Name: d.Name, PairedAt: d.PairedAt}
 }
 
@@ -106,12 +106,12 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	paired, err := s.opts.Devices.Pair(req.Code, req.Name)
 	if err != nil {
-		s.failDevices(w, r, err)
+		s.writeDeviceError(w, r, err)
 		return
 	}
 	s.opts.Log.Info("device paired", "id", paired.Device.ID, "name", paired.Device.Name)
 	s.writeJSON(w, http.StatusCreated, pairResponse{
-		Device: viewDevice(paired.Device),
+		Device: toDeviceView(paired.Device),
 		Token:  paired.Token,
 	})
 }
@@ -119,19 +119,19 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	list, err := s.opts.Devices.List()
 	if err != nil {
-		s.failDevices(w, r, err)
+		s.writeDeviceError(w, r, err)
 		return
 	}
 	views := make([]deviceView, len(list))
 	for i, device := range list {
-		views[i] = viewDevice(device)
+		views[i] = toDeviceView(device)
 	}
 	s.writeJSON(w, http.StatusOK, views)
 }
 
 func (s *server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	if err := s.opts.Devices.Revoke(r.PathValue("id")); err != nil {
-		s.failDevices(w, r, err)
+		s.writeDeviceError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
