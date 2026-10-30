@@ -48,6 +48,14 @@ These are what keep the numbers trustworthy, so PRs that break them won't be mer
 - **Nothing phones home.** No telemetry, analytics or CDNs, and no third-party requests from the UI (its CSP enforces this; don't loosen it). The only outbound requests are the rate providers in `internal/rates`, which are off until the user turns on `fetch_rates`, then run only when they ask or have turned on auto-refresh, and carry currency codes, never budget data. Keep it opt-in.
 - **Tests come with behaviour changes.** Projection changes need a hand-checked golden or an invariant, not just "the output looks right".
 - **Built-in templates are generic and fictional.**
+- **Never leak internal errors** (stack traces, file paths, storage errors) to API clients. Log them server-side and return a generic message.
+- **Validate all external input at the boundary:** query params, path values, JSON bodies. Reject bad input with 400, and enforce the same limits as the schema before it reaches storage.
+- **Cap request body size** (`http.MaxBytesReader`) with a limit derived from the payload, and document how it was derived.
+- **Use `json.Decoder.DisallowUnknownFields()`** for write endpoints.
+- **Parameterized queries only.** Never build SQL by concatenating input.
+- **NULLable DB columns map to nullable Go types** (`sql.Null*`, pointers).
+- **Write a response only after it is fully built:** marshal first, then set headers and status, then write.
+- **Graceful shutdown uses a fresh timeout context,** not the already-cancelled signal context.
 
 The README's [Extending](README.md#extending) section shows where currencies, insights, edit types and storage backends plug in.
 
