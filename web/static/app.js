@@ -16,6 +16,7 @@ import { initAssistant } from "./assistant.js";
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+const textIf = (condition, text) => (condition ? text : "");
 const DEC_RE = /^[+-]?\d+(\.\d+)?$/;
 const SAVE_DELAY = 600;
 const POLL_MS = 3000;
@@ -281,18 +282,29 @@ function setPath(obj, path, value) {
   else target[last] = value;
 }
 
+function inputTypeAttrs(type) {
+  if (type === "decimal") return 'inputmode="decimal" autocomplete="off"';
+  if (type === "int") return 'type="number" step="1"';
+  return `type="${type}"`;
+}
 const field = (label, path, { type = "text", attrs = "", cls = "", value, opt = false } = {}) => {
   const v = value ?? getPath(S.budget, path);
   const shown = type === "decimal" ? toInput(v) : v;
-  return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type === "decimal" ? "decimal" : type}" ${opt ? "data-optional" : ""} ${
-    type === "decimal" ? 'inputmode="decimal" autocomplete="off"' : type === "int" ? 'type="number" step="1"' : `type="${type}"`
-  } value="${esc(shown ?? "")}" ${attrs}></label>`;
+  const optionalAttr = textIf(opt, "data-optional");
+  const typeAttrs = inputTypeAttrs(type);
+  return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type}" ${optionalAttr} ${typeAttrs} value="${esc(shown ?? "")}" ${attrs}></label>`;
 };
-const opts = (options, v) => options.map(([val, text]) => `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(text)}</option>`).join("");
-const select = (label, path, options, { structural = false, cls = "" } = {}) => {
+const opts = (options, v) => options.map(([val, text]) => {
+  const selectedAttr = textIf(String(val) === String(v), "selected");
+  return `<option value="${esc(val)}" ${selectedAttr}>${esc(text)}</option>`;
+}).join("");
+const selectInput = (path, options, { structural = false } = {}) => {
   const v = getPath(S.budget, path);
-  return `<label class="f ${cls}">${esc(label)}<select data-path="${esc(path)}" data-kind="text" ${structural ? "data-structural" : ""}>${opts(options, v)}</select></label>`;
+  const structuralAttr = textIf(structural, "data-structural");
+  return `<select data-path="${esc(path)}" data-kind="text" ${structuralAttr}>${opts(options, v)}</select>`;
 };
+const select = (label, path, options, { structural = false, cls = "" } = {}) =>
+  `<label class="f ${cls}">${esc(label)}${selectInput(path, options, { structural })}</label>`;
 const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="${esc(t("remove", { what }))}">✕</button>`;
 
 function currencyOptions() {
@@ -318,13 +330,17 @@ function renderFlow() {
   const targets = b.pots.filter((p) => p.target);
   const def = (r?.pots || []).find((x) => x.default)?.name || b.pots[0]?.name || t("flow.a_pot");
   const strategies = S.meta.strategies.map((s) => [s, t(`strategy.${s}`)]);
-  const step = (what, detail, off = false) => `<li class="${off ? "off" : ""}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
+  const step = (what, detail, off = false) => {
+    const offClass = textIf(off, "off");
+    return `<li class="${offClass}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
+  };
+  const debtOrder = textIf(debts.length > 1, `<label class="inline">${esc(t("flow.order"))}${selectInput("debt_strategy", strategies)}</label>`);
   $("#flow").innerHTML = [
     step(esc(t("flow.repay")), esc(t(owes ? "flow.repay.owes" : "flow.repay.none")), !owes),
     step(esc(t("flow.fixed")), fixed.length ? fixed.map((p) => fmtItem(p.name, p.monthly)).join(" · ") : esc(t("flow.fixed.none")), !fixed.length),
     step(esc(t("flow.extra")), esc(t(debts.length ? "flow.extra.some" : "flow.extra.none")) + `<br>
       <label class="inline">${esc(t("flow.share"))}<input data-path="extra_to_debt_pct" data-kind="decimal" inputmode="decimal" value="${esc(toInput(b.extra_to_debt_pct))}" aria-label="${esc(t("flow.share_aria"))}">%</label>
-      ${debts.length > 1 ? `<label class="inline">${esc(t("flow.order"))}${select("", "debt_strategy", strategies).replace(/^<label class="f ">|<\/label>$/g, "")}</label>` : ""}`, !debts.length || !parseFloat(b.extra_to_debt_pct)),
+      ${debtOrder}`, !debts.length || !parseFloat(b.extra_to_debt_pct)),
     step(esc(t("flow.targets")), targets.length
       ? esc(t("flow.targets.list", { list: targets.map((p) => t("flow.targets.item", { name: p.name, amount: money({ amount: p.target, currency: b.base_currency }) })).join(" · ") }))
       : esc(t("flow.targets.none")), !targets.length),
@@ -387,6 +403,35 @@ const itemRow = ({ kind, i, name, meta = "", metaAttrs = "", value = "", color =
     <span class="line-main"><span class="name">${esc(name)}</span><span class="meta" ${metaAttrs}>${meta}</span></span>
     <span class="val">${value}</span>${CHEVRON}</button>`;
 
+function debtStatusText(rep, debt) {
+  if (!rep) return "";
+  if (rep.paid_off_label) return t("debt.paid_off", { month: rep.paid_off_label });
+  if (parseFloat(debt.balance) > 0) return t("debt.not_paid");
+  return "";
+}
+
+function potTargetText(goal, target) {
+  if (!goal) return t("pot.target", { amount: target });
+  if (goal.already_met) return t("pot.target_met");
+  if (goal.reached_label) return t("pot.target_by", { amount: target, month: goal.reached_label });
+  return t("pot.target_missed", { amount: target });
+}
+
+function rateOriginText(currency, provider) {
+  if (isManual(currency)) return t("rate.typed");
+  if (currency.rate_date) return t("rate.of", { source: provider, date: date(currency.rate_date) });
+  return t("rate.not_fetched");
+}
+
+function itemBaseText(l, baseCurrency) {
+  const once = l.schedule.every === 0;
+  const foreign = l.amount.currency !== baseCurrency;
+  if (once && foreign) return t("base.once_foreign", { amount: money(l.per_occurrence_base) });
+  if (once) return t("base.once");
+  if (foreign || l.schedule.every !== 1) return t("base.per_month", { amount: money(l.monthly_equivalent_base) });
+  return "";
+}
+
 // renderItems draws debts, pots, withdrawals, currencies and categories as lists. Their
 // texts come partly from the report, so this also runs after every save.
 function renderItems() {
@@ -396,7 +441,7 @@ function renderItems() {
 
   $("#debts").innerHTML = b.debts.map((d, i) => {
     const rep = debtRep[d.id];
-    const when = rep ? (rep.paid_off_label ? t("debt.paid_off", { month: rep.paid_off_label }) : parseFloat(d.balance) > 0 ? t("debt.not_paid") : "") : "";
+    const when = debtStatusText(rep, d);
     const payoff = d.payoff_month == null ? "" : t("debt.payoff", {
       month: r?.months?.[d.payoff_month]?.label || monthKey(d.payoff_month),
       from: b.pots.find((p) => p.id === d.payoff_from)?.name || t("debt.month_money"),
@@ -416,8 +461,7 @@ function renderItems() {
     if (rep) parts.push(t("pot.after", { amount: money(rep.end), count: S.report.months.length }));
     if (pt.target) {
       const target = base(pt.target);
-      parts.push(!g ? t("pot.target", { amount: target }) : g.already_met ? t("pot.target_met")
-        : g.reached_label ? t("pot.target_by", { amount: target, month: g.reached_label }) : t("pot.target_missed", { amount: target }));
+      parts.push(potTargetText(g, target));
     }
     if (pt.monthly) parts.push(t("pot.monthly", { amount: base(pt.monthly) }));
     if (rep?.default) parts.push(t("pot.default"));
@@ -441,8 +485,9 @@ function renderItems() {
 
   $("#categories").innerHTML = b.categories.map((c, i) => {
     const n = b.items.filter((l) => l.category === c.id).length;
+    const kindLabel = c.kind === "income" ? t("kind.income") : t("kind.expense");
     return itemRow({ kind: "categories", i, name: c.label, color: c.color || "var(--line)",
-      meta: esc(`${t(c.kind === "income" ? "kind.income" : "kind.expense")} · ${t("cat.items", { count: n })}`) });
+      meta: esc(`${kindLabel} · ${t("cat.items", { count: n })}`) });
   }).join("");
 }
 
@@ -490,10 +535,7 @@ function renderItemNumbers() {
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
     if (!l) { el.textContent = ""; return; }
-    const once = l.schedule.every === 0;
-    const v = once ? l.per_occurrence_base : l.monthly_equivalent_base;
-    const foreign = l.amount.currency !== base;
-    el.textContent = once ? (foreign ? t("base.once_foreign", { amount: money(v) }) : t("base.once")) : foreign || l.schedule.every !== 1 ? t("base.per_month", { amount: money(v) }) : "";
+    el.textContent = itemBaseText(l, base);
   });
   document.querySelectorAll("[data-total]").forEach((el) => {
     const total = S.report.category_totals[el.dataset.total];
@@ -532,8 +574,10 @@ function categorySelect(path) {
 function potRouteSelect(l, i) {
   const income = S.budget.categories.find((c) => c.id === l.category)?.kind === "income";
   const opts2 = [["", t("route.month_budget")], ...S.budget.pots.map((p) => [p.id, p.name])];
-  return `<label class="f wide">${esc(t(income ? "route.into" : "route.from"))}<select data-path="items.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
-    <p class="base">${esc(t(income ? "route.income_help" : "route.cost_help"))}</p>`;
+  const label = income ? t("route.into") : t("route.from");
+  const help = income ? t("route.income_help") : t("route.cost_help");
+  return `<label class="f wide">${esc(label)}<select data-path="items.${i}.pot" data-kind="text" data-structural>${opts(opts2, l.pot || "")}</select></label>
+    <p class="base">${esc(help)}</p>`;
 }
 
 // SHEETS describes the editor for each kind of item: its title, fields and
@@ -558,14 +602,20 @@ const SHEETS = {
     noun: "noun.debt", title: (d) => d.name,
     body(d, i) {
       const from = [["", t("debt.month_money_option")], ...S.budget.pots.map((p) => [p.id, p.name])];
+      const hasPayoff = d.payoff_month != null;
+      const payoffValue = hasPayoff ? monthKey(d.payoff_month) : "";
+      let payoffFrom = "";
+      if (hasPayoff) {
+        payoffFrom = `<label class="f">${esc(t("field.paid_from"))}<select data-path="debts.${i}.payoff_from" data-kind="text" data-structural>${opts(from, d.payoff_from || "")}</select></label>`;
+      }
       return `${field(t("field.name"), `debts.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
         ${field(t("field.balance"), `debts.${i}.balance`, { type: "decimal" })}
         ${select(t("field.currency"), `debts.${i}.currency`, currencyOptions(), { structural: true })}
         ${field(t("field.apr"), `debts.${i}.apr_pct`, { type: "decimal" })}
         ${field(t("field.min_payment"), `debts.${i}.min_payment`, { type: "decimal" })}
         <p class="base">${esc(t("debt.help_interest"))}</p>
-        <label class="f">${esc(t("field.payoff"))}<input type="month" data-path="debts.${i}.payoff_month" data-kind="monthidx-opt" data-structural value="${d.payoff_month == null ? "" : monthKey(d.payoff_month)}"></label>
-        ${d.payoff_month == null ? "" : `<label class="f">${esc(t("field.paid_from"))}<select data-path="debts.${i}.payoff_from" data-kind="text" data-structural>${opts(from, d.payoff_from || "")}</select></label>`}
+        <label class="f">${esc(t("field.payoff"))}<input type="month" data-path="debts.${i}.payoff_month" data-kind="monthidx-opt" data-structural value="${payoffValue}"></label>
+        ${payoffFrom}
         <p class="base">${esc(t("debt.help_payoff"))}</p>`;
     },
   },
@@ -575,14 +625,16 @@ const SHEETS = {
       const currency = S.budget.base_currency;
       const none = `placeholder="${esc(t("field.none"))}"`;
       const kindHelp = POT_KINDS.includes(p.kind) ? t(`pot.help.${p.kind}`) : "";
+      const moveUpDisabled = textIf(i === 0, "disabled");
+      const moveDownDisabled = textIf(i === S.budget.pots.length - 1, "disabled");
       return `${field(t("field.name"), `pots.${i}.name`, { cls: "wide", attrs: 'autocomplete="off"' })}
         ${select(t("field.kind"), `pots.${i}.kind`, POT_KINDS.map((k) => [k, potKind(k)]), { structural: true })}
         ${field(t("field.holds_now", { currency }), `pots.${i}.balance`, { type: "decimal" })}
         ${field(t("field.target_optional", { currency }), `pots.${i}.target`, { type: "decimal", opt: true, attrs: none })}
         ${field(t("field.monthly_optional", { currency }), `pots.${i}.monthly`, { type: "decimal", opt: true, attrs: none })}
         <div class="wide row-actions" style="margin-top:0">
-          <button type="button" data-action="move-pot" data-i="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""}>${esc(t("pot.move_up"))}</button>
-          <button type="button" data-action="move-pot" data-i="${i}" data-dir="1" ${i === S.budget.pots.length - 1 ? "disabled" : ""}>${esc(t("pot.move_down"))}</button>
+          <button type="button" data-action="move-pot" data-i="${i}" data-dir="-1" ${moveUpDisabled}>${esc(t("pot.move_up"))}</button>
+          <button type="button" data-action="move-pot" data-i="${i}" data-dir="1" ${moveDownDisabled}>${esc(t("pot.move_down"))}</button>
         </div>
         <p class="base">${esc([t("pot.help.order"), kindHelp, t("pot.help.target")].filter(Boolean).join(" "))}</p>`;
     },
@@ -626,9 +678,11 @@ const SHEETS = {
 // scheduleFields are the month inputs under "Repeats": the month of a
 // one-off, or the first and (optional) last month of a repeating one.
 function scheduleFields(list, i, sch) {
-  const start = `<label class="f">${esc(t(sch.every === 0 ? "field.in" : "field.from"))}<input type="month" data-path="${list}.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>`;
+  const startLabel = sch.every === 0 ? t("field.in") : t("field.from");
+  const endValue = sch.end == null ? "" : monthKey(sch.end);
+  const start = `<label class="f">${esc(startLabel)}<input type="month" data-path="${list}.${i}.schedule.start" data-kind="monthidx" value="${monthKey(sch.start)}"></label>`;
   if (sch.every === 0) return start + "<span></span>";
-  return start + `<label class="f">${esc(t("field.until_optional"))}<input type="month" data-path="${list}.${i}.schedule.end" data-kind="monthidx-opt" value="${sch.end == null ? "" : monthKey(sch.end)}"></label>`;
+  return start + `<label class="f">${esc(t("field.until_optional"))}<input type="month" data-path="${list}.${i}.schedule.end" data-kind="monthidx-opt" value="${endValue}"></label>`;
 }
 
 function renderSheet() {
@@ -810,7 +864,7 @@ function renderRateNotes() {
     if (!c) return;
     const worth = u ? t("rate.worth", { units: number(u.units), code: c.code, value: money(u.base_value, { exact: true }) }) : "";
     const provider = ({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from;
-    const from = isManual(c) ? t("rate.typed") : c.rate_date ? t("rate.of", { source: provider, date: date(c.rate_date) }) : t("rate.not_fetched");
+    const from = rateOriginText(c, provider);
     el.textContent = [worth, from].filter(Boolean).join(" · ");
   });
 }
@@ -973,6 +1027,52 @@ function summaryParts(r) {
   return { m0, last, goal, debts, debtFree, warn, n: r.months.length };
 }
 
+function goalSummaryText(goal, notIn) {
+  if (goal.already_met) return t("summary.already_met");
+  return goal.reached_label || notIn;
+}
+
+function debtFreeSummaryText(debtFree, months, notIn) {
+  if (debtFree === null) return "";
+  if (debtFree < 0) return notIn;
+  return months[debtFree].label;
+}
+
+function summarySubtitle(m0, { short, from }) {
+  const fromSavings = money(m0.from_savings);
+  if (!short && from) return t("summary.after_planned", { amount: fromSavings });
+  if (!short) return t("summary.of_income", { income: money(m0.income), saved: money(m0.to_savings) });
+  if (from) return t("summary.after_savings", { amount: fromSavings }) + " · " + t("summary.nothing_else");
+  return t("summary.nothing_else");
+}
+
+function summaryDetailRows(p, r, notIn) {
+  const rows = [];
+  if (p.goal) {
+    const goalTxt = goalSummaryText(p.goal, notIn);
+    rows.push(`<dt>${esc(p.goal.name)}</dt><dd>${esc(goalTxt)}</dd>`);
+  }
+  if (p.debtFree !== null) {
+    const debtTxt = debtFreeSummaryText(p.debtFree, r.months, notIn);
+    rows.push(`<dt>${esc(t("summary.debt_free"))}</dt><dd>${esc(debtTxt)}</dd>`);
+  }
+  if (p.debts.length) {
+    rows.push(`<dt>${esc(t("summary.interest", { count: p.n }))}</dt><dd>${esc(money(r.totals.total_interest_base))}</dd>`);
+  }
+  if (parseFloat(p.last.overdraft.amount) > 0) {
+    rows.push(`<dt>${esc(t("summary.still_owed", { count: p.n }))}</dt><dd class="neg">${esc(money(p.last.overdraft))}</dd>`);
+  }
+  return rows.join("\n      ");
+}
+
+function summaryCallout(warn) {
+  if (warn?.id === "shortfall") {
+    return `<div class="callout">${esc(t("summary.pots_callout"))} <button type="button" class="linkbtn" data-view-link="overview">${esc(t("summary.see_options"))}</button></div>`;
+  }
+  if (warn) return `<div class="callout">${bold(warn.text)}</div>`;
+  return "";
+}
+
 function renderSummary() {
   const r = S.report;
   const p = summaryParts(r);
@@ -984,27 +1084,19 @@ function renderSummary() {
   const month = monthName(p.m0.month);
   const state = t(neg ? "summary.short_in" : "summary.left_in", { month });
   const notIn = t("summary.not_in", { count: p.n });
-  const goalTxt = p.goal ? (p.goal.already_met ? t("summary.already_met") : p.goal.reached_label || notIn) : "";
-  const debtTxt = p.debtFree === null ? "" : p.debtFree < 0 ? notIn : r.months[p.debtFree].label;
-  const fromSavings = money(p.m0.from_savings);
-  const sub = short
-    ? (from ? t("summary.after_savings", { amount: fromSavings }) + " · " : "") + t("summary.nothing_else")
-    : from ? t("summary.after_planned", { amount: fromSavings })
-    : t("summary.of_income", { income: money(p.m0.income), saved: money(p.m0.to_savings) });
+  const sub = summarySubtitle(p.m0, { short, from });
   const savingsIn = t("summary.savings_in", { count: p.n });
+  const negClass = textIf(neg, "neg");
+  const detailRows = summaryDetailRows(p, r, notIn);
+  const callout = summaryCallout(p.warn);
   const html = `<h2>${esc(state)}</h2>
-    <div class="big ${neg ? "neg" : ""}">${esc(head)}</div>
+    <div class="big ${negClass}">${esc(head)}</div>
     <div class="sub">${esc(sub)}</div>
     <dl>
       <dt>${esc(savingsIn)}</dt><dd>${esc(money(p.last.savings))}</dd>
-      ${p.goal ? `<dt>${esc(p.goal.name)}</dt><dd>${esc(goalTxt)}</dd>` : ""}
-      ${p.debtFree !== null ? `<dt>${esc(t("summary.debt_free"))}</dt><dd>${esc(debtTxt)}</dd>` : ""}
-      ${p.debts.length ? `<dt>${esc(t("summary.interest", { count: p.n }))}</dt><dd>${esc(money(r.totals.total_interest_base))}</dd>` : ""}
-      ${parseFloat(p.last.overdraft.amount) > 0 ? `<dt>${esc(t("summary.still_owed", { count: p.n }))}</dt><dd class="neg">${esc(money(p.last.overdraft))}</dd>` : ""}
+      ${detailRows}
     </dl>
-    ${p.warn?.id === "shortfall"
-      ? `<div class="callout">${esc(t("summary.pots_callout"))} <button type="button" class="linkbtn" data-view-link="overview">${esc(t("summary.see_options"))}</button></div>`
-      : p.warn ? `<div class="callout">${bold(p.warn.text)}</div>` : ""}`;
+    ${callout}`;
   // Flash the summary when an edit changed it, so the effect is noticed.
   const changed = S.lastSummary && S.lastSummary !== html;
   S.lastSummary = html;
@@ -1014,7 +1106,7 @@ function renderSummary() {
     if (changed) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
   }
   const mb = $("#minibar");
-  mb.innerHTML = `<span>${esc(state)} <b class="${neg ? "neg" : ""}">${esc(head)}</b></span>
+  mb.innerHTML = `<span>${esc(state)} <b class="${negClass}">${esc(head)}</b></span>
     <span>${esc(t("summary.in_months", { count: p.n }))} <b>${esc(money(p.last.savings))}</b></span>`;
   mb.hidden = S.view === "overview";
 }
@@ -1053,8 +1145,12 @@ function renderInsights() {
     ? `<details class="ins ${esc(x.tone)}"><summary data-show="${esc(t("ins.show"))}" data-hide="${esc(t("ins.hide"))}"><span><b>${esc(t("ins.fx_title"))}</b> · ${esc(t("ins.fx_count", { count: x.group.length }))}</span></summary>
         <div class="ins-group">${x.group.map((g) => `<p>${bold(g.text)}</p>`).join("")}</div></details>`
     : `<div class="ins ${esc(x.tone)}">${bold(x.text)}</div>`;
-  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">${esc(t("insights.empty"))}</p>`) +
-    (items.length > 3 ? `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(S.allInsights ? t("ins.fewer") : t("ins.all", { count: items.length }))}</button>` : "");
+  const toggleLabel = S.allInsights ? t("ins.fewer") : t("ins.all", { count: items.length });
+  let toggle = "";
+  if (items.length > 3) {
+    toggle = `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(toggleLabel)}</button>`;
+  }
+  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">${esc(t("insights.empty"))}</p>`) + toggle;
 }
 
 function isZeroMoney(value) {
@@ -1096,7 +1192,11 @@ function renderOutputs() {
   const tot = segs.reduce((a, s) => a + num(s[1]), 0) || 1;
   const inc = parseFloat(m0.income.amount) || 0;
   $("#bar").innerHTML = segs.map((s) => `<div class="${s[3]}" style="flex-basis:${(num(s[1]) / tot) * 100}%;background:${esc(s[2])}" title="${esc(s[0])}: ${esc(money(s[1]))}"></div>`).join("");
-  $("#legend").innerHTML = segs.map((s) => `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(money(s[1]))}${inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : ""}</b></div>`).join("");
+  const legendShare = (s) => (inc > 0 ? `<small>${Math.round((num(s[1]) / inc) * 100)}%</small>` : "");
+  $("#legend").innerHTML = segs.map((s) => {
+    const share = legendShare(s);
+    return `<div><span class="sw ${s[3]}" style="background:${esc(s[2])}"></span>${esc(s[0])}<b>${esc(money(s[1]))}${share}</b></div>`;
+  }).join("");
 
   renderInsights();
   renderShortfall();
@@ -1115,7 +1215,10 @@ function renderOutputs() {
   for (const m of r.months) {
     const neg = (x) => (parseFloat(x.amount) < 0 ? "neg" : "");
     const owed = parseFloat(m.overdraft.amount) > 0;
-    h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td>${hasFrom ? `<td>${esc(money(m.from_savings))}</td>` : ""}${hasOwed ? `<td class="${owed ? "neg" : ""}">${esc(money(m.overdraft))}</td>` : ""}<td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td>${esc(money(m.savings))}</td>${hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : ""}</tr>`;
+    const fromSavingsCell = hasFrom ? `<td>${esc(money(m.from_savings))}</td>` : "";
+    const owedCell = hasOwed ? `<td class="${textIf(owed, "neg")}">${esc(money(m.overdraft))}</td>` : "";
+    const debtCell = hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : "";
+    h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td>${fromSavingsCell}${owedCell}<td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td>${esc(money(m.savings))}</td>${debtCell}</tr>`;
   }
   $("#table").innerHTML = h + "</tbody>";
   renderItemNumbers();
@@ -1133,14 +1236,23 @@ function renderShortfall() {
   const more = sfs.length - 1;
   const note = (o) => ["sinking", "emergency"].includes(o.kind) ? t(`short.note.${o.kind}`)
     : o.covers.amount === sf.amount.amount ? t("short.covers_all") : t("short.covers_part", { amount: money(o.covers) });
-  card.innerHTML = `<h2 id="h-short">${esc(t("short.title", { month: sf.label, amount: money(sf.amount) }))}</h2>
-    <p class="muted">${esc(t("short.untouched"))}${more ? " " + esc(t("short.more", { count: more })) : ""}</p>
-    ${sf.options.length ? `<p style="margin-top:10px">${esc(t("short.cover_from"))}</p>
-    <div class="opts">${sf.options.map((o) => `<button type="button" class="opt ${o.kind === "emergency" ? "last" : ""}" data-action="cover"
+  const moreNote = more ? " " + esc(t("short.more", { count: more })) : "";
+  const coverButton = (o) => {
+    const lastClass = textIf(o.kind === "emergency", "last");
+    return `<button type="button" class="opt ${lastClass}" data-action="cover"
         data-pot="${esc(o.pot)}" data-month="${sf.month}" data-amount="${esc(o.covers.amount)}">
         <span>${esc(o.name)} <small>· ${esc(t("short.there", { amount: money(o.available) }))}</small></span>
         <small>${esc(note(o))}</small>
-        <b>${esc(t("short.use", { amount: money(o.covers) }))}</b></button>`).join("")}</div>` : `<p style="margin-top:10px">${esc(t("short.no_pots"))}</p>`}
+        <b>${esc(t("short.use", { amount: money(o.covers) }))}</b></button>`;
+  };
+  let coverOptions = `<p style="margin-top:10px">${esc(t("short.no_pots"))}</p>`;
+  if (sf.options.length) {
+    coverOptions = `<p style="margin-top:10px">${esc(t("short.cover_from"))}</p>
+    <div class="opts">${sf.options.map(coverButton).join("")}</div>`;
+  }
+  card.innerHTML = `<h2 id="h-short">${esc(t("short.title", { month: sf.label, amount: money(sf.amount) }))}</h2>
+    <p class="muted">${esc(t("short.untouched"))}${moreNote}</p>
+    ${coverOptions}
     <p class="muted foot">${esc(t("short.owed_note"))}</p>`;
 }
 
@@ -1187,8 +1299,9 @@ function drawChart() {
   if (lo < 0) g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 3"/>`;
   const step = Math.ceil(r.months.length / (compact ? 4 : 8));
   r.months.forEach((m, i) => { if (i % step === 0) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(m.label.replace(/ (\d\d)(\d\d)$/, " $2"))}</text>`; });
+  const dotRadius = compact ? 2.5 : 3;
   const line = (arr, c) => `<polyline fill="none" stroke="${c}" stroke-width="2.5" stroke-linejoin="round" points="${arr.map((v, i) => x(i) + "," + y(v)).join(" ")}"/>` +
-    arr.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="${compact ? 2.5 : 3}" fill="${c}"/>`).join("");
+    arr.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="${dotRadius}" fill="${c}"/>`).join("");
   g += line(sav, "var(--save)");
   if (hasDebt) g += line(debt, "var(--debt)");
   g += `<line id="guide" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="2 3" visibility="hidden"/>`;
@@ -1204,7 +1317,9 @@ function drawChart() {
     const m = r.months[i];
     guide.setAttribute("x1", x(i)); guide.setAttribute("x2", x(i)); guide.setAttribute("visibility", "visible");
     const row = (key, v) => `<span>${esc(t(key))} <strong>${esc(money(v))}</strong></span>`;
-    tip.innerHTML = `<b>${esc(m.label)}</b>${row("table.savings", m.savings)}${parseFloat(m.debt_balance_base.amount) > 0 ? row("table.debt", m.debt_balance_base) : ""}${parseFloat(m.overdraft.amount) > 0 ? row("table.owed", m.overdraft) : ""}${row("table.left", m.left)}`;
+    const debtRow = parseFloat(m.debt_balance_base.amount) > 0 ? row("table.debt", m.debt_balance_base) : "";
+    const owedRow = parseFloat(m.overdraft.amount) > 0 ? row("table.owed", m.overdraft) : "";
+    tip.innerHTML = `<b>${esc(m.label)}</b>${row("table.savings", m.savings)}${debtRow}${owedRow}${row("table.left", m.left)}`;
     tip.hidden = false;
     const px = (x(i) / W) * box.width;
     tip.style.left = `${Math.min(Math.max(px - tip.offsetWidth / 2, 0), box.width - tip.offsetWidth)}px`;
@@ -1223,11 +1338,24 @@ function renderWhatIf() {
   const b = S.budget;
   const itemOpts = b.items.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
   const curOpts = b.currencies.map((c) => `<option value="${esc(c.code)}">${esc(t("scenarios.now", { code: c.code, rate: number(c.per_base) }))}</option>`).join("");
-  const kinds = (o) => WI_KINDS.map((k) => `<option value="${k}" ${k === o.kind ? "selected" : ""}>${esc(t(`scenarios.kind.${k}`))}</option>`).join("");
+  const kinds = (o) => WI_KINDS.map((k) => {
+    const selectedAttr = textIf(k === o.kind, "selected");
+    return `<option value="${k}" ${selectedAttr}>${esc(t(`scenarios.kind.${k}`))}</option>`;
+  }).join("");
+  const targetField = (o, i) => {
+    if (o.kind === "extra") return "<span></span>";
+    const label = o.kind === "rate" ? t("field.currency") : t("noun.item_title");
+    const targetOpts = o.kind === "rate" ? curOpts : itemOpts;
+    return `<label class="f">${esc(label)}<select data-wi="${i}" data-k="target">${targetOpts}</select></label>`;
+  };
+  const valueField = (o, i) => {
+    if (o.kind === "remove") return "<span></span>";
+    return `<label class="f">${esc(t("scenarios.new_value"))}<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`;
+  };
   $("#wiOps").innerHTML = S.wi.map((o, i) => `<div class="row row-wi">
       <label class="f">${esc(t("scenarios.change"))}<select data-wi="${i}" data-k="kind">${kinds(o)}</select></label>
-      ${o.kind === "extra" ? "<span></span>" : `<label class="f">${esc(t(o.kind === "rate" ? "field.currency" : "noun.item_title"))}<select data-wi="${i}" data-k="target">${o.kind === "rate" ? curOpts : itemOpts}</select></label>`}
-      ${o.kind === "remove" ? "<span></span>" : `<label class="f">${esc(t("scenarios.new_value"))}<input data-wi="${i}" data-k="value" inputmode="decimal" value="${esc(o.value)}"></label>`}
+      ${targetField(o, i)}
+      ${valueField(o, i)}
       ${del("del-wi", i, t("scenarios.a_change"))}
     </div>`).join("") || `<p class="muted">${esc(t("scenarios.empty"))}</p>`;
   $("#previewBtn").disabled = !S.wi.length;
@@ -1255,12 +1383,15 @@ async function previewWhatIf() {
     const res = await api("POST", `/api/budgets/${encodeURIComponent(S.id)}/what-if`, { ops });
     const before = S.report, after = res.report;
     const endB = parseFloat(before.totals.end_savings.amount), endA = parseFloat(after.totals.end_savings.amount);
-    const goalTxt = after.goals.map((g) => `${g.name}: ${g.already_met ? t("scenarios.goal_met") : g.reached_label || t("scenarios.goal_not")}`).join(" · ");
+    const goalStatus = (g) => (g.already_met ? t("scenarios.goal_met") : g.reached_label || t("scenarios.goal_not"));
+    const goalTxt = after.goals.map((g) => `${g.name}: ${goalStatus(g)}`).join(" · ");
+    const goalLine = goalTxt ? "<br>" + esc(goalTxt) : "";
+    const verdictClass = endA >= endB ? "good" : "warn";
     const result = tHTML("scenarios.result", {
       count: after.months.length, after: money(after.totals.end_savings), before: money(before.totals.end_savings), saved: money(after.months[0].saved),
     });
     const name = esc(t("scenarios.name"));
-    out.innerHTML = `<div class="ins ${endA >= endB ? "good" : "warn"}" style="margin-top:12px">${result}${goalTxt ? "<br>" + esc(goalTxt) : ""}</div>
+    out.innerHTML = `<div class="ins ${verdictClass}" style="margin-top:12px">${result}${goalLine}</div>
       <div class="row-actions"><input id="wiName" placeholder="${name}" aria-label="${name}" style="flex:1;min-width:160px"><button type="button" data-action="save-wi">${esc(t("scenarios.save"))}</button></div>`;
   } catch (e) {
     out.innerHTML = `<div class="ins warn" style="margin-top:12px">${esc(e.message)}</div>`;
@@ -1425,8 +1556,15 @@ async function loadCompare() {
     for (const o of rows) {
       if (o.error) { h += `<tr><th scope="row">${esc(o.name)}</th><td colspan="5" class="neg">${esc(o.error)}</td><td>${scenarioButtons(o)}</td></tr>`; continue; }
       const d = o.delta_end_savings;
+      let deltaClass = "";
+      let deltaText = "";
+      if (d) {
+        deltaClass = parseFloat(d.amount) < 0 ? "neg" : "pos";
+        deltaText = esc(money(d));
+      }
+      const adoptButtons = o.id === "baseline" ? "" : scenarioButtons(o);
       const goals = (o.goals || []).map((g) => g.already_met ? t("compare.met") : g.reached_label || "—").join(", ");
-      h += `<tr><th scope="row">${esc(o.name)}</th><td>${esc(money(o.first_month_saved))}</td><td>${esc(money(o.end_savings))}</td><td class="${d ? (parseFloat(d.amount) < 0 ? "neg" : "pos") : ""}">${d ? esc(money(d)) : ""}</td><td>${esc(money(o.total_interest_base))}</td><td>${esc(goals)}</td><td>${o.id === "baseline" ? "" : scenarioButtons(o)}</td></tr>`;
+      h += `<tr><th scope="row">${esc(o.name)}</th><td>${esc(money(o.first_month_saved))}</td><td>${esc(money(o.end_savings))}</td><td class="${deltaClass}">${deltaText}</td><td>${esc(money(o.total_interest_base))}</td><td>${esc(goals)}</td><td>${adoptButtons}</td></tr>`;
     }
     table.innerHTML = h + "</tbody>";
   } catch { table.innerHTML = ""; }
@@ -1439,7 +1577,11 @@ function openNewDialog() {
   $("details.menu")?.removeAttribute("open");
   const sel = $("#templateSel");
   const list = S.meta?.templates || [{ name: "blank" }];
-  sel.innerHTML = list.map((t) => `<option value="${esc(t.name)}" ${t.name === "blank" ? "selected" : ""}>${esc(t.name)}${t.description ? " — " + esc(t.description) : ""}</option>`).join("");
+  sel.innerHTML = list.map((template) => {
+    const selectedAttr = textIf(template.name === "blank", "selected");
+    const description = template.description ? " — " + esc(template.description) : "";
+    return `<option value="${esc(template.name)}" ${selectedAttr}>${esc(template.name)}${description}</option>`;
+  }).join("");
   $("#newForm").reset();
   $("#newDialog").showModal();
 }
