@@ -282,7 +282,7 @@ function setPath(obj, path, value) {
   else target[last] = value;
 }
 
-function inputTypeAttrs(type) {
+function formatInputTypeAttrs(type) {
   if (type === "decimal") return 'inputmode="decimal" autocomplete="off"';
   if (type === "int") return 'type="number" step="1"';
   return `type="${type}"`;
@@ -291,20 +291,20 @@ const field = (label, path, { type = "text", attrs = "", cls = "", value, opt = 
   const v = value ?? getPath(S.budget, path);
   const shown = type === "decimal" ? toInput(v) : v;
   const optionalAttr = textIf(opt, "data-optional");
-  const typeAttrs = inputTypeAttrs(type);
+  const typeAttrs = formatInputTypeAttrs(type);
   return `<label class="f ${cls}">${esc(label)}<input data-path="${esc(path)}" data-kind="${type}" ${optionalAttr} ${typeAttrs} value="${esc(shown ?? "")}" ${attrs}></label>`;
 };
 const opts = (options, v) => options.map(([val, text]) => {
   const selectedAttr = textIf(String(val) === String(v), "selected");
   return `<option value="${esc(val)}" ${selectedAttr}>${esc(text)}</option>`;
 }).join("");
-const selectInput = (path, options, { structural = false } = {}) => {
+const renderSelect = (path, options, { structural = false } = {}) => {
   const v = getPath(S.budget, path);
   const structuralAttr = textIf(structural, "data-structural");
   return `<select data-path="${esc(path)}" data-kind="text" ${structuralAttr}>${opts(options, v)}</select>`;
 };
 const select = (label, path, options, { structural = false, cls = "" } = {}) =>
-  `<label class="f ${cls}">${esc(label)}${selectInput(path, options, { structural })}</label>`;
+  `<label class="f ${cls}">${esc(label)}${renderSelect(path, options, { structural })}</label>`;
 const del = (action, i, what) => `<button type="button" class="del" data-action="${action}" data-i="${i}" aria-label="${esc(t("remove", { what }))}">✕</button>`;
 
 function currencyOptions() {
@@ -334,7 +334,11 @@ function renderFlow() {
     const offClass = textIf(off, "off");
     return `<li class="${offClass}"><span class="what">${what}</span><span class="detail">${detail}</span></li>`;
   };
-  const debtOrder = textIf(debts.length > 1, `<label class="inline">${esc(t("flow.order"))}${selectInput("debt_strategy", strategies)}</label>`);
+  let debtOrder = "";
+  if (debts.length > 1) {
+    const strategySelect = renderSelect("debt_strategy", strategies);
+    debtOrder = `<label class="inline">${esc(t("flow.order"))}${strategySelect}</label>`;
+  }
   $("#flow").innerHTML = [
     step(esc(t("flow.repay")), esc(t(owes ? "flow.repay.owes" : "flow.repay.none")), !owes),
     step(esc(t("flow.fixed")), fixed.length ? fixed.map((p) => fmtItem(p.name, p.monthly)).join(" · ") : esc(t("flow.fixed.none")), !fixed.length),
@@ -403,32 +407,35 @@ const itemRow = ({ kind, i, name, meta = "", metaAttrs = "", value = "", color =
     <span class="line-main"><span class="name">${esc(name)}</span><span class="meta" ${metaAttrs}>${meta}</span></span>
     <span class="val">${value}</span>${CHEVRON}</button>`;
 
-function debtStatusText(rep, debt) {
+function formatDebtStatus(rep, debt) {
   if (!rep) return "";
   if (rep.paid_off_label) return t("debt.paid_off", { month: rep.paid_off_label });
   if (parseFloat(debt.balance) > 0) return t("debt.not_paid");
   return "";
 }
 
-function potTargetText(goal, target) {
+function formatPotTarget(goal, target) {
   if (!goal) return t("pot.target", { amount: target });
   if (goal.already_met) return t("pot.target_met");
   if (goal.reached_label) return t("pot.target_by", { amount: target, month: goal.reached_label });
   return t("pot.target_missed", { amount: target });
 }
 
-function rateOriginText(currency, provider) {
+function formatRateOrigin(currency, provider) {
   if (isManual(currency)) return t("rate.typed");
   if (currency.rate_date) return t("rate.of", { source: provider, date: date(currency.rate_date) });
   return t("rate.not_fetched");
 }
 
-function itemBaseText(l, baseCurrency) {
-  const once = l.schedule.every === 0;
-  const foreign = l.amount.currency !== baseCurrency;
-  if (once && foreign) return t("base.once_foreign", { amount: money(l.per_occurrence_base) });
+function formatItemBase(item, baseCurrency) {
+  const once = item.schedule.every === 0;
+  const foreign = item.amount.currency !== baseCurrency;
+  const perOccurrence = money(item.per_occurrence_base);
+  const perMonth = money(item.monthly_equivalent_base);
+
+  if (once && foreign) return t("base.once_foreign", { amount: perOccurrence });
   if (once) return t("base.once");
-  if (foreign || l.schedule.every !== 1) return t("base.per_month", { amount: money(l.monthly_equivalent_base) });
+  if (foreign || item.schedule.every !== 1) return t("base.per_month", { amount: perMonth });
   return "";
 }
 
@@ -441,7 +448,7 @@ function renderItems() {
 
   $("#debts").innerHTML = b.debts.map((d, i) => {
     const rep = debtRep[d.id];
-    const when = debtStatusText(rep, d);
+    const when = formatDebtStatus(rep, d);
     const payoff = d.payoff_month == null ? "" : t("debt.payoff", {
       month: r?.months?.[d.payoff_month]?.label || monthKey(d.payoff_month),
       from: b.pots.find((p) => p.id === d.payoff_from)?.name || t("debt.month_money"),
@@ -461,7 +468,7 @@ function renderItems() {
     if (rep) parts.push(t("pot.after", { amount: money(rep.end), count: S.report.months.length }));
     if (pt.target) {
       const target = base(pt.target);
-      parts.push(potTargetText(g, target));
+      parts.push(formatPotTarget(g, target));
     }
     if (pt.monthly) parts.push(t("pot.monthly", { amount: base(pt.monthly) }));
     if (rep?.default) parts.push(t("pot.default"));
@@ -535,7 +542,7 @@ function renderItemNumbers() {
   document.querySelectorAll("[data-base]").forEach((el) => {
     const l = byId[el.dataset.base];
     if (!l) { el.textContent = ""; return; }
-    el.textContent = itemBaseText(l, base);
+    el.textContent = formatItemBase(l, base);
   });
   document.querySelectorAll("[data-total]").forEach((el) => {
     const total = S.report.category_totals[el.dataset.total];
@@ -864,7 +871,7 @@ function renderRateNotes() {
     if (!c) return;
     const worth = u ? t("rate.worth", { units: number(u.units), code: c.code, value: money(u.base_value, { exact: true }) }) : "";
     const provider = ({ ecb: "ECB", coingecko: "CoinGecko" })[c.rate_from] || c.rate_from;
-    const from = rateOriginText(c, provider);
+    const from = formatRateOrigin(c, provider);
     el.textContent = [worth, from].filter(Boolean).join(" · ");
   });
 }
@@ -1027,45 +1034,55 @@ function summaryParts(r) {
   return { m0, last, goal, debts, debtFree, warn, n: r.months.length };
 }
 
-function goalSummaryText(goal, notIn) {
+function formatGoalSummary(goal, notIn) {
   if (goal.already_met) return t("summary.already_met");
   return goal.reached_label || notIn;
 }
 
-function debtFreeSummaryText(debtFree, months, notIn) {
-  if (debtFree === null) return "";
+function formatDebtFreeSummary(debtFree, months, notIn) {
   if (debtFree < 0) return notIn;
   return months[debtFree].label;
 }
 
-function summarySubtitle(m0, { short, from }) {
+function formatSummarySubtitle(m0, { short, from }) {
   const fromSavings = money(m0.from_savings);
+  const income = money(m0.income);
+  const saved = money(m0.to_savings);
+
   if (!short && from) return t("summary.after_planned", { amount: fromSavings });
-  if (!short) return t("summary.of_income", { income: money(m0.income), saved: money(m0.to_savings) });
-  if (from) return t("summary.after_savings", { amount: fromSavings }) + " · " + t("summary.nothing_else");
+  if (!short) return t("summary.of_income", { income, saved });
+  if (from) {
+    return t("summary.after_savings", { amount: fromSavings }) + " · " + t("summary.nothing_else");
+  }
   return t("summary.nothing_else");
 }
 
-function summaryDetailRows(p, r, notIn) {
+function renderSummaryDetailRows(parts, r, notIn) {
+  const overdrawn = parseFloat(parts.last.overdraft.amount) > 0;
+  const interest = money(r.totals.total_interest_base);
   const rows = [];
-  if (p.goal) {
-    const goalTxt = goalSummaryText(p.goal, notIn);
-    rows.push(`<dt>${esc(p.goal.name)}</dt><dd>${esc(goalTxt)}</dd>`);
+
+  if (parts.goal) {
+    const goalTxt = formatGoalSummary(parts.goal, notIn);
+    rows.push(`<dt>${esc(parts.goal.name)}</dt><dd>${esc(goalTxt)}</dd>`);
   }
-  if (p.debtFree !== null) {
-    const debtTxt = debtFreeSummaryText(p.debtFree, r.months, notIn);
+  if (parts.debtFree !== null) {
+    const debtTxt = formatDebtFreeSummary(parts.debtFree, r.months, notIn);
     rows.push(`<dt>${esc(t("summary.debt_free"))}</dt><dd>${esc(debtTxt)}</dd>`);
   }
-  if (p.debts.length) {
-    rows.push(`<dt>${esc(t("summary.interest", { count: p.n }))}</dt><dd>${esc(money(r.totals.total_interest_base))}</dd>`);
+  if (parts.debts.length) {
+    const label = t("summary.interest", { count: parts.n });
+    rows.push(`<dt>${esc(label)}</dt><dd>${esc(interest)}</dd>`);
   }
-  if (parseFloat(p.last.overdraft.amount) > 0) {
-    rows.push(`<dt>${esc(t("summary.still_owed", { count: p.n }))}</dt><dd class="neg">${esc(money(p.last.overdraft))}</dd>`);
+  if (overdrawn) {
+    const label = t("summary.still_owed", { count: parts.n });
+    rows.push(`<dt>${esc(label)}</dt><dd class="neg">${esc(money(parts.last.overdraft))}</dd>`);
   }
+
   return rows.join("\n      ");
 }
 
-function summaryCallout(warn) {
+function renderSummaryCallout(warn) {
   if (warn?.id === "shortfall") {
     return `<div class="callout">${esc(t("summary.pots_callout"))} <button type="button" class="linkbtn" data-view-link="overview">${esc(t("summary.see_options"))}</button></div>`;
   }
@@ -1084,11 +1101,11 @@ function renderSummary() {
   const month = monthName(p.m0.month);
   const state = t(neg ? "summary.short_in" : "summary.left_in", { month });
   const notIn = t("summary.not_in", { count: p.n });
-  const sub = summarySubtitle(p.m0, { short, from });
+  const sub = formatSummarySubtitle(p.m0, { short, from });
   const savingsIn = t("summary.savings_in", { count: p.n });
   const negClass = textIf(neg, "neg");
-  const detailRows = summaryDetailRows(p, r, notIn);
-  const callout = summaryCallout(p.warn);
+  const detailRows = renderSummaryDetailRows(p, r, notIn);
+  const callout = renderSummaryCallout(p.warn);
   const html = `<h2>${esc(state)}</h2>
     <div class="big ${negClass}">${esc(head)}</div>
     <div class="sub">${esc(sub)}</div>
@@ -1150,7 +1167,8 @@ function renderInsights() {
   if (items.length > 3) {
     toggle = `<button type="button" class="linkbtn" data-action="all-insights" aria-expanded="${S.allInsights}">${esc(toggleLabel)}</button>`;
   }
-  $("#insights").innerHTML = (shown.map(card).join("") || `<p class="muted">${esc(t("insights.empty"))}</p>`) + toggle;
+  const empty = `<p class="muted">${esc(t("insights.empty"))}</p>`;
+  $("#insights").innerHTML = (shown.map(card).join("") || empty) + toggle;
 }
 
 function isZeroMoney(value) {
@@ -1216,7 +1234,8 @@ function renderOutputs() {
     const neg = (x) => (parseFloat(x.amount) < 0 ? "neg" : "");
     const owed = parseFloat(m.overdraft.amount) > 0;
     const fromSavingsCell = hasFrom ? `<td>${esc(money(m.from_savings))}</td>` : "";
-    const owedCell = hasOwed ? `<td class="${textIf(owed, "neg")}">${esc(money(m.overdraft))}</td>` : "";
+    const owedClass = textIf(owed, "neg");
+    const owedCell = hasOwed ? `<td class="${owedClass}">${esc(money(m.overdraft))}</td>` : "";
     const debtCell = hasDebt ? `<td>${esc(money(m.debt_balance_base))}</td>` : "";
     h += `<tr><th scope="row">${esc(m.label)}</th><td>${esc(money(m.income))}</td><td>${esc(money(m.expenses))}</td><td>${esc(money(m.debt_payments))}</td><td class="${neg(m.left)}">${esc(money(m.left))}</td>${fromSavingsCell}${owedCell}<td class="${neg(m.saved)}">${esc(money(m.saved))}</td><td>${esc(money(m.savings))}</td>${debtCell}</tr>`;
   }
@@ -1317,8 +1336,10 @@ function drawChart() {
     const m = r.months[i];
     guide.setAttribute("x1", x(i)); guide.setAttribute("x2", x(i)); guide.setAttribute("visibility", "visible");
     const row = (key, v) => `<span>${esc(t(key))} <strong>${esc(money(v))}</strong></span>`;
-    const debtRow = parseFloat(m.debt_balance_base.amount) > 0 ? row("table.debt", m.debt_balance_base) : "";
-    const owedRow = parseFloat(m.overdraft.amount) > 0 ? row("table.owed", m.overdraft) : "";
+    const hasDebtBalance = parseFloat(m.debt_balance_base.amount) > 0;
+    const hasOverdraft = parseFloat(m.overdraft.amount) > 0;
+    const debtRow = hasDebtBalance ? row("table.debt", m.debt_balance_base) : "";
+    const owedRow = hasOverdraft ? row("table.owed", m.overdraft) : "";
     tip.innerHTML = `<b>${esc(m.label)}</b>${row("table.savings", m.savings)}${debtRow}${owedRow}${row("table.left", m.left)}`;
     tip.hidden = false;
     const px = (x(i) / W) * box.width;
@@ -1383,7 +1404,10 @@ async function previewWhatIf() {
     const res = await api("POST", `/api/budgets/${encodeURIComponent(S.id)}/what-if`, { ops });
     const before = S.report, after = res.report;
     const endB = parseFloat(before.totals.end_savings.amount), endA = parseFloat(after.totals.end_savings.amount);
-    const goalStatus = (g) => (g.already_met ? t("scenarios.goal_met") : g.reached_label || t("scenarios.goal_not"));
+    const goalStatus = (g) => {
+      if (g.already_met) return t("scenarios.goal_met");
+      return g.reached_label || t("scenarios.goal_not");
+    };
     const goalTxt = after.goals.map((g) => `${g.name}: ${goalStatus(g)}`).join(" · ");
     const goalLine = goalTxt ? "<br>" + esc(goalTxt) : "";
     const verdictClass = endA >= endB ? "good" : "warn";
