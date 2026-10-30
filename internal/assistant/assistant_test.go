@@ -22,7 +22,7 @@ type script struct {
 	turns   []Turn
 	said    []string
 	answers [][]ToolResult
-	system  string
+	system  SystemPrompt
 	tools   []Tool
 	fails   error
 }
@@ -30,7 +30,7 @@ type script struct {
 func (s *script) Name() settings.AssistantProvider { return "script" }
 func (s *script) Model() string                    { return "fake" }
 
-func (s *script) Start(system string, tools []Tool) Conversation {
+func (s *script) Start(system SystemPrompt, tools []Tool) Conversation {
 	s.system = system
 	s.tools = tools
 	return s
@@ -171,11 +171,11 @@ func TestTheModelIsToldWhichBudgetAndHowToUseTheTools(t *testing.T) {
 
 	ask(t, assistant, "", "hi")
 
-	if !strings.Contains(model.system, `"home"`) {
-		t.Errorf("the system prompt doesn't name the budget:\n%s", model.system)
+	if !strings.Contains(model.system.Text(), `"home"`) {
+		t.Errorf("the system prompt doesn't name the budget:\n%s", model.system.Text())
 	}
-	if !strings.Contains(model.system, "About the tools:") {
-		t.Errorf("the system prompt lacks the server's instructions:\n%s", model.system)
+	if !strings.Contains(model.system.Text(), "About the tools:") {
+		t.Errorf("the system prompt lacks the server's instructions:\n%s", model.system.Text())
 	}
 }
 
@@ -311,7 +311,7 @@ func TestIdleConversationsAreForgotten(t *testing.T) {
 }
 
 func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
-	prompt := systemPrompt("Home", "")
+	prompt := systemPrompt("Home", "").Instructions
 
 	for _, want := range []string{
 		"Never name or recommend a specific investment",
@@ -339,9 +339,23 @@ func TestSystemPromptBansProductPicksButAllowsGeneralGuidance(t *testing.T) {
 }
 
 func TestSystemPromptMarksUntrustedTextAsData(t *testing.T) {
-	prompt := systemPrompt("Home", "")
+	prompt := systemPrompt("Home", "").Instructions
 
 	if !strings.Contains(prompt, "data about the budget") {
 		t.Errorf("the system prompt doesn't say untrusted text is data: %q", prompt)
+	}
+}
+
+func TestSystemPromptKeepsTheBudgetNameOutOfTheInstructions(t *testing.T) {
+	prompt := systemPrompt("Home", "Use get_budget.")
+
+	if strings.Contains(prompt.Instructions, "Home") {
+		t.Errorf("the instructions name the budget: %q", prompt.Instructions)
+	}
+	if !strings.Contains(prompt.Instructions, "Use get_budget.") {
+		t.Errorf("the instructions lack the tool instructions: %q", prompt.Instructions)
+	}
+	if !strings.Contains(prompt.Context, `"Home"`) {
+		t.Errorf("the context lacks the budget name: %q", prompt.Context)
 	}
 }

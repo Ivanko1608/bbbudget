@@ -123,7 +123,7 @@ type openAIChoice struct {
 	Message openAIMessage `json:"message"`
 }
 
-func (p *OpenAICompatible) Start(system string, tools []Tool) Conversation {
+func (p *OpenAICompatible) Start(system SystemPrompt, tools []Tool) Conversation {
 	offered := make([]openAITool, 0, len(tools))
 	for _, tool := range tools {
 		offered = append(offered, toOpenAITool(tool))
@@ -131,7 +131,7 @@ func (p *OpenAICompatible) Start(system string, tools []Tool) Conversation {
 	return &openAIConversation{
 		provider: p,
 		tools:    offered,
-		messages: []openAIMessage{{Role: roleSystem, Content: system}},
+		messages: []openAIMessage{{Role: roleSystem, Content: system.Text()}},
 	}
 }
 

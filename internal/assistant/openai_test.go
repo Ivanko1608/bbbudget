@@ -57,7 +57,7 @@ func startOpenAI(t *testing.T, replies ...string) (Conversation, *modelServer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return provider.Start("be brief", []Tool{getBudget}), server
+	return provider.Start(SystemPrompt{Instructions: "be brief", Context: "about Home"}, []Tool{getBudget}), server
 }
 
 func TestOpenAICompatibleSendsTheModelAndTheTools(t *testing.T) {
