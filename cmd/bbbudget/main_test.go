@@ -12,7 +12,39 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"bbbudget/internal/assistant"
+	"bbbudget/internal/devices"
 )
+
+func TestPairListAndRevokeDevices(t *testing.T) {
+	settingsFile := filepath.Join(t.TempDir(), "settings.json")
+	t.Setenv("BBBUDGET_SETTINGS", settingsFile)
+	out, err := runCLI(t, "pair")
+	if err != nil {
+		t.Fatalf("pair: %v %s", err, out)
+	}
+	firstLine, _, _ := strings.Cut(out, "\n")
+	code, ok := strings.CutPrefix(firstLine, "pairing code: ")
+	if !ok {
+		t.Fatalf("pair printed no code: %s", out)
+	}
+	registry := devices.Open(filepath.Join(filepath.Dir(settingsFile), "devices.json"))
+	paired, err := registry.Pair(code, "Pixel")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := runCLI(t, "devices")
+	if err != nil {
+		t.Fatalf("devices: %v %s", err, listed)
+	}
+	requireContains(t, "devices", listed, "Pixel")
+
+	afterRevoke, err := runCLI(t, "devices", "-revoke", paired.Device.ID)
+	if err != nil {
+		t.Fatalf("devices -revoke: %v %s", err, afterRevoke)
+	}
+	requireContains(t, "devices -revoke", afterRevoke, "no paired devices")
+}
 
 // runCLI runs a command in-process. Tests never read the user's own settings.
 func runCLI(t *testing.T, args ...string) (string, error) {

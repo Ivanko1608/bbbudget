@@ -17,6 +17,7 @@ import (
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/devices"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
@@ -28,6 +29,15 @@ const maxBody = 1 << 20
 const internalErrorMessage = "internal error"
 
 var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
+
+// Fixed texts for the device errors. Responses never carry an error's own
+// text, so these are the only words a client gets.
+const (
+	badPairingCodeMessage = "pairing code is wrong or expired"
+	badTokenMessage       = "device token is unknown or revoked"
+	deviceNotFoundMessage = "no paired device has this id"
+	missingTokenMessage   = "send a paired device's token as Authorization: Bearer <token>"
+)
 
 // The codes go on to the outside rate providers, so the cap bounds what one
 // request can ask of them. The UI asks for one code at a time.
@@ -52,6 +62,9 @@ type Options struct {
 	Paths map[string]string
 	// Assistant, if set, answers chat messages.
 	Assistant *assistant.Assistant
+	// Devices, if set, turns on remote mode: the API and MCP answer only
+	// paired devices, and any Host is accepted. Nil keeps the server local.
+	Devices *devices.Registry
 }
 
 type server struct {
@@ -94,6 +107,11 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
 	mux.HandleFunc("GET /api/notes", s.listNotes)
 	mux.HandleFunc("DELETE /api/notes/{id}", s.deleteNote)
+	if opts.Devices != nil {
+		mux.HandleFunc("POST "+pairPath, s.pair)
+		mux.HandleFunc("GET /api/devices", s.listDevices)
+		mux.HandleFunc("DELETE /api/devices/{id}", s.revokeDevice)
+	}
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
@@ -111,15 +129,19 @@ func New(a *app.App, opts Options) http.Handler {
 			files.ServeHTTP(w, r)
 		})
 	}
+	if opts.Devices != nil {
+		return s.guard(s.requireDevice(mux))
+	}
 	return s.guard(mux)
 }
 
 // guard blocks DNS-rebinding (unknown Host) and cross-site form posts
 // (mutations must be JSON, which browsers cannot send cross-origin without a
-// CORS preflight this server never approves).
+// CORS preflight this server never approves). In remote mode any Host is
+// fine: a rebound page has no device token to send.
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.hostAllowed(r.Host) {
+		if s.opts.Devices == nil && !s.hostAllowed(r.Host) {
 			s.writeErr(w, http.StatusForbidden, "host not allowed", nil)
 			return
 		}
