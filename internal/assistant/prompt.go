@@ -60,9 +60,11 @@ const budgetContextFormat = "The budget you are working on is %q."
 
 func systemPrompt(budget, toolInstructions string) SystemPrompt {
 	instructions := baseSystemPrompt
+
 	if toolInstructions != "" {
 		instructions += "\n\nAbout the tools:\n" + toolInstructions
 	}
+
 	return SystemPrompt{
 		Instructions: instructions,
 		Context:      fmt.Sprintf(budgetContextFormat, budget),

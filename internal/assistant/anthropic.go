@@ -97,6 +97,7 @@ func toSystemBlocks(system SystemPrompt) []anthropic.BetaTextBlockParam {
 		Text:         system.Instructions,
 		CacheControl: anthropic.NewBetaCacheControlEphemeralParam(),
 	}
+
 	return []anthropic.BetaTextBlockParam{instructions, {Text: system.Context}}
 }
 
