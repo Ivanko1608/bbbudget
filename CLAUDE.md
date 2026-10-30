@@ -31,6 +31,19 @@ This file is about one thing: **code that a stranger understands on the first re
 - **Keyed struct literals.** A literal with more than three fields, or any bool field, names its fields. `{"EUR", 2, "€", true, false, false}` tells the reader nothing.
 - **Don't name variables after packages.** No `fs`, `log`, `errors` or `time` as locals.
 
+## Go
+
+- **Accept interfaces, return structs.** Define interfaces in the consumer package, small (1–3 methods), describing only what the consumer uses.
+- **Pass `context.Context` first** through every layer that does I/O.
+- **Sentinel errors are specific to one case** (`ErrProductNotFound`, not `ErrNotFound`). Storage code translates driver errors into them so upper layers never import the driver. Check with `errors.Is`.
+- **Wrap errors with context:** `fmt.Errorf("loading product %q: %w", code, err)`.
+- **Never ignore errors.** If one truly can't be handled, log it and say why.
+- **Library code returns errors;** only `main` calls `log.Fatal` or `os.Exit`.
+- **Zero values should be useful.** Return `(T{}, err)` or `(nil, err)`, and never use the value when `err != nil`.
+- **Keep the HTTP layer thin:** parse, call the store, map, respond. Response DTOs live in the handler package; models don't carry JSON concerns.
+- **Use Go 1.22+ `ServeMux` patterns** like `GET /items/{code}` with `r.PathValue`.
+- **No premature abstraction.** Simple and explicit beats clever.
+
 ## Names
 
 - **Functions start with a verb, in standard vocabulary:** `get`, `create`, `remove`, `parse`, `run`, `handle`, `write`, `toX`, `xFromY` (`getOrCreateChat`, `parseChange`, `toAnthropicTool`, `turnFromOpenAI`). No nouns as function names (`bearerToken`, `unauthorized`), no preposition names (`chatFor`, `detailOf`), no metaphors (`forgetIdle`) and no cryptic abbreviations (`def`).
