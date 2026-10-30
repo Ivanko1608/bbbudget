@@ -81,10 +81,15 @@ func printDevices(w io.Writer, registry *devices.Registry) error {
 	}
 
 	table := newTable(w)
-	fmt.Fprintln(table, "ID\tNAME\tPAIRED")
+	if _, err = fmt.Fprintln(table, "ID\tNAME\tPAIRED"); err != nil {
+		return err
+	}
 	for _, device := range paired {
 		pairedAt := device.PairedAt.Local().Format(timeLayout)
-		fmt.Fprintf(table, "%s\t%s\t%s\n", device.ID, device.Name, pairedAt)
+		_, err = fmt.Fprintf(table, "%s\t%s\t%s\n", device.ID, device.Name, pairedAt)
+		if err != nil {
+			return err
+		}
 	}
 
 	return table.Flush()

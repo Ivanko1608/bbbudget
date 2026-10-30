@@ -87,7 +87,7 @@ type state struct {
 type Registry struct {
 	path string
 	now  func() time.Time
-	mu   sync.Mutex // serialises this process; the file lock serialises processes
+	mu   sync.Mutex
 }
 
 // Open returns the registry stored at path. The file is created on the
@@ -180,45 +180,51 @@ func hasID(id string) func(Device) bool {
 }
 
 func (r *Registry) read() (state, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	unlock, err := r.lock(false)
-	if err != nil {
-		return state{}, err
-	}
-	defer unlock()
-	return r.load()
+	var current state
+	err := r.withLock(false, func() error {
+		var err error
+		current, err = r.load()
+		return err
+	})
+
+	return current, err
 }
 
 // update runs edit on the current state and saves the result, dropping
 // expired pairing codes on the way. Nothing is saved when edit fails.
 func (r *Registry) update(edit func(*state) error) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	unlock, err := r.lock(true)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	s, err := r.load()
-	if err != nil {
-		return err
-	}
-	s.Codes = slices.DeleteFunc(s.Codes, r.isExpired)
-	if err = edit(&s); err != nil {
-		return err
-	}
+	return r.withLock(true, func() error {
+		current, err := r.load()
+		if err != nil {
+			return err
+		}
+		current.Codes = slices.DeleteFunc(current.Codes, r.isExpired)
+		if err = edit(&current); err != nil {
+			return err
+		}
 
-	return r.save(s)
+		return r.save(current)
+	})
 }
 
 func (r *Registry) isExpired(c pendingCode) bool { return !r.now().Before(c.ExpiresAt) }
 
-func (r *Registry) lock(exclusive bool) (func(), error) {
+// withLock holds the in-process mutex and the cross-process file lock while
+// it runs fn. The mutex is not redundant: the file lock does nothing on some platforms.
+func (r *Registry) withLock(exclusive bool, fn func() error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o700); err != nil {
-		return nil, err
+		return err
 	}
-	return filelock.Lock(r.path+".lock", exclusive)
+	unlock, err := filelock.Lock(r.path+".lock", exclusive)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	return fn()
 }
 
 func (r *Registry) load() (state, error) {
