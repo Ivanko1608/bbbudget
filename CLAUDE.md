@@ -10,7 +10,7 @@ This file is about one thing: **code that a stranger understands on the first re
 - **Blank lines separate the steps inside a function:** setup, guard clauses, the main work, the return. Never pack a function into one dense block.
 - **One job, one level of detail.** Don't mix "decide what to do" with byte-level work in the same function. Roughly 40 lines is the point to ask what should come out.
 - **Shape data the way it's read.** If readers have to work out what `xs[i+1]` or `xs[:i]` means, give the pieces names, or store the data in the order it's used.
-- **Explicit inputs.** Pass what a function needs as parameters. Use `context` for cancellation and deadlines, not for business data that changes the result.
+- **Explicit inputs.** Pass what a function needs as parameters. Pass `context.Context` first through every layer that does I/O. Use it for cancellation and deadlines, not for business data that changes the result.
 
 ## Expressions
 
@@ -34,25 +34,24 @@ This file is about one thing: **code that a stranger understands on the first re
 ## Go
 
 - **Accept interfaces, return structs.** Define interfaces in the consumer package, small (1–3 methods), describing only what the consumer uses.
-- **Pass `context.Context` first** through every layer that does I/O.
-- **Sentinel errors are specific to one case** (`ErrProductNotFound`, not `ErrNotFound`). Storage code translates driver errors into them so upper layers never import the driver. Check with `errors.Is`.
-- **Wrap errors with context:** `fmt.Errorf("loading product %q: %w", code, err)`.
+- **Sentinel errors are specific to one case** (`ErrNothingToUndo`, not `ErrNotFound`). The store translates filesystem errors into them so upper layers never import `os`. Check with `errors.Is`.
+- **Wrap errors with context:** `fmt.Errorf("loading budget %q: %w", id, err)`.
 - **Never ignore errors.** If one truly can't be handled, log it and say why.
 - **Library code returns errors;** only `main` calls `log.Fatal` or `os.Exit`.
-- **Zero values should be useful.** Return `(T{}, err)` or `(nil, err)`, and never use the value when `err != nil`.
-- **Keep the HTTP layer thin:** parse, call the store, map, respond. Response DTOs live in the handler package; models don't carry JSON concerns.
-- **Use Go 1.22+ `ServeMux` patterns** like `GET /items/{code}` with `r.PathValue`.
-- **No premature abstraction.** Simple and explicit beats clever.
+- **Return a zero value with the error.** Return `(T{}, err)` or `(nil, err)`, and never use the value when `err != nil`.
+- **Keep the HTTP layer thin:** parse, call `app.App`, map, respond. Response DTOs live in the handler package.
+- **Use `ServeMux` patterns** like `GET /api/rates` with `r.PathValue`.
+- **No premature abstraction.** Wait for the second use before extracting a helper or an interface.
 
 ## Names
 
-- **Functions start with a verb, in standard vocabulary:** `get`, `create`, `remove`, `parse`, `run`, `handle`, `write`, `toX`, `xFromY` (`getOrCreateChat`, `parseChange`, `toAnthropicTool`, `turnFromOpenAI`). No nouns as function names (`bearerToken`, `unauthorized`), no preposition names (`chatFor`, `detailOf`), no metaphors (`forgetIdle`) and no cryptic abbreviations (`def`).
+- **Functions start with a verb, in standard vocabulary:** `get`, `create`, `remove`, `parse`, `run`, `handle`, `write`, `toX`, `xFromY` (`getOrCreateChat`, `parseChange`, `toAnthropicTool`, `turnFromOpenAI`). No nouns as function names (`bearerToken`, `unauthorized`), no preposition names (`chatFor`, `detailOf`) and no cryptic abbreviations (`def`).
 - **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`. Conventional short names (`ctx`, `err`, `req`, `res`, `w`, `r`, `ok`) are fine at any scope.
-- **Use domain words, consistently.** Don't invent metaphors ("doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
+- **Use domain words, consistently.** Don't invent metaphors (`forgetIdle`, or "doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
 - **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals. Every other layer consumes them, JS included: a literal `"set_item"` outside `internal/budget` is a bug.
 - **Fields name the concrete thing and reuse existing domain types** (`Source store.Source`, not a new word like `Author`).
 - **Unnamed results of the same type** (`func(T) (string, string)`) need names or a small struct.
-- **Ask whether a stranger would guess what it does from the name alone.** If not, rename it.
+- **Ask whether a stranger would guess what a function or variable does from its name alone.** If not, rename it.
 
 ## Comments
 
@@ -68,7 +67,8 @@ Few and short.
 
 - **A test reads like a spec.** Arrange, act and assert, with blank lines between them. Helpers say what they do in domain terms (`setRent("1200")`).
 - **One assertion per fact.** Don't put five checks in a single `if a || b || c` with one message. When it fails, nobody can tell which check broke.
-- **Table-driven tests** with `t.Run` when cases share a shape. Use `httptest` for handlers and hand-written fakes for the interfaces a package consumes. No mocking frameworks unless the project already uses one.
+- **Table-driven tests** with `t.Run` when cases share a shape. Use `httptest` for handlers.
+- **Fakes, not mocks.** Write fakes by hand for the interfaces a package consumes.
 - **Every error in setup code is checked.**
 
 ## JavaScript (`web/static`)
@@ -96,6 +96,6 @@ Few and short.
 
 Reread your diff as someone who has never seen it.
 
-- Don't silently keep bad code from the existing codebase. Flag it, and if it stays, say why in the PR.
+- Don't silently keep bad code from the existing codebase. Flag it, and if it stays, say why in the PR description.
 - For each comment, ask whether the code could make it unnecessary.
 - For each long line or long condition, ask what name it's missing.
