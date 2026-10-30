@@ -49,6 +49,11 @@ const (
 	defaultName   = "device"
 )
 
+const (
+	sharedLock    = false
+	exclusiveLock = true
+)
+
 // Device is a paired phone or computer.
 type Device struct {
 	ID        string    `json:"id"`
@@ -181,10 +186,10 @@ func hasID(id string) func(Device) bool {
 
 func (r *Registry) read() (state, error) {
 	var current state
-	err := r.withLock(false, func() error {
-		var err error
-		current, err = r.load()
-		return err
+	err := r.withLock(sharedLock, func() error {
+		var loadErr error
+		current, loadErr = r.load()
+		return loadErr
 	})
 
 	return current, err
@@ -193,7 +198,7 @@ func (r *Registry) read() (state, error) {
 // update runs edit on the current state and saves the result, dropping
 // expired pairing codes on the way. Nothing is saved when edit fails.
 func (r *Registry) update(edit func(*state) error) error {
-	return r.withLock(true, func() error {
+	return r.withLock(exclusiveLock, func() error {
 		current, err := r.load()
 		if err != nil {
 			return err
@@ -300,7 +305,7 @@ func normalizeCode(typed string) string {
 	return strings.NewReplacer("-", "", " ", "").Replace(code)
 }
 
-// cleanName drops control characters, because `bbbudget devices` prints the
+// cleanName removes control characters, because `bbbudget devices` prints the
 // name in a terminal, where they could pass as escape sequences.
 func cleanName(name string) string {
 	name = strings.TrimSpace(strings.Map(removeControlChar, name))

@@ -60,13 +60,13 @@ func (s remoteServer) pairDevice(name string) string {
 	return res.Token
 }
 
-func setBearerToken(token string) func(*http.Request) {
+func createBearerSetter(token string) func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
 }
 
-func (s remoteServer) getStatus(method, path, body string, mut func(*http.Request)) int {
+func (s remoteServer) getStatus(method, path, body string, mutate func(*http.Request)) int {
 	s.t.Helper()
-	return s.req(method, path, body, mut).Code
+	return s.req(method, path, body, mutate).Code
 }
 
 func TestRemoteAPINeedsADeviceToken(t *testing.T) {
@@ -97,9 +97,9 @@ func TestPairedDeviceCanUseTheAPI(t *testing.T) {
 	token := s.pairDevice("Pixel")
 
 	createBody := `{"id":"home","template":"example"}`
-	created := s.getStatus("POST", "/api/budgets", createBody, setBearerToken(token))
-	listed := s.getStatus("GET", "/api/budgets", "", setBearerToken(token))
-	mcp := s.getStatus("POST", "/mcp", `{}`, setBearerToken(token))
+	created := s.getStatus("POST", "/api/budgets", createBody, createBearerSetter(token))
+	listed := s.getStatus("GET", "/api/budgets", "", createBearerSetter(token))
+	mcp := s.getStatus("POST", "/mcp", `{}`, createBearerSetter(token))
 
 	if created != http.StatusCreated {
 		t.Errorf("create budget: %d, want 201", created)
@@ -116,7 +116,7 @@ func TestRemoteRejectsUnknownToken(t *testing.T) {
 	s := setupRemote(t)
 	s.pairDevice("Pixel")
 
-	got := s.getStatus("GET", "/api/budgets", "", setBearerToken("bbd_GUESSED"))
+	got := s.getStatus("GET", "/api/budgets", "", createBearerSetter("bbd_GUESSED"))
 
 	if got != http.StatusUnauthorized {
 		t.Errorf("unknown token: %d, want 401", got)
@@ -132,8 +132,8 @@ func TestRevokedDeviceIsLockedOut(t *testing.T) {
 	}
 	revokePath := "/api/devices/" + list[0].ID
 
-	revoked := s.getStatus("DELETE", revokePath, "", setBearerToken(token))
-	after := s.getStatus("GET", "/api/budgets", "", setBearerToken(token))
+	revoked := s.getStatus("DELETE", revokePath, "", createBearerSetter(token))
+	after := s.getStatus("GET", "/api/budgets", "", createBearerSetter(token))
 
 	if revoked != http.StatusNoContent {
 		t.Errorf("revoke: %d, want 204", revoked)
@@ -147,7 +147,7 @@ func TestDeviceListHidesTokenHashes(t *testing.T) {
 	s := setupRemote(t)
 	token := s.pairDevice("Pixel")
 
-	w := s.req("GET", "/api/devices", "", setBearerToken(token))
+	w := s.req("GET", "/api/devices", "", createBearerSetter(token))
 
 	var list []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
@@ -208,7 +208,7 @@ func TestPairingErrors(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := s.getStatus(c.method, c.path, c.body, setBearerToken(token))
+			got := s.getStatus(c.method, c.path, c.body, createBearerSetter(token))
 
 			if got != c.want {
 				t.Errorf("status %d, want %d", got, c.want)
@@ -231,7 +231,7 @@ func TestRemoteAcceptsAnyHost(t *testing.T) {
 	s := setupRemote(t)
 	token := s.pairDevice("Pixel")
 	onTailnet := func(r *http.Request) {
-		setBearerToken(token)(r)
+		createBearerSetter(token)(r)
 		r.Host = "budget.example.ts.net"
 	}
 
@@ -289,7 +289,7 @@ func TestCorruptDevicesFileIsAnInternalErrorWithoutItsPath(t *testing.T) {
 			name:   "bearer request",
 			method: "GET",
 			path:   "/api/budgets",
-			mutate: setBearerToken("bogus"),
+			mutate: createBearerSetter("bogus"),
 		},
 	}
 	for _, c := range cases {

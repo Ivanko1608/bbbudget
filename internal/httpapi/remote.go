@@ -104,15 +104,15 @@ func (s *server) pair(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	paired, err := s.opts.Devices.Pair(req.Code, req.Name)
+	result, err := s.opts.Devices.Pair(req.Code, req.Name)
 	if err != nil {
 		s.writeDeviceError(w, r, err)
 		return
 	}
-	s.opts.Log.Info("device paired", "id", paired.Device.ID, "name", paired.Device.Name)
+	s.opts.Log.Info("device paired", "id", result.Device.ID, "name", result.Device.Name)
 	s.writeJSON(w, http.StatusCreated, pairResponse{
-		Device: toDeviceView(paired.Device),
-		Token:  paired.Token,
+		Device: toDeviceView(result.Device),
+		Token:  result.Token,
 	})
 }
 

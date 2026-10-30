@@ -31,24 +31,24 @@ func createPairing(t *testing.T, r *Registry) Pairing {
 
 func pairDevice(t *testing.T, r *Registry, name string) PairingResult {
 	t.Helper()
-	paired, err := r.Pair(createPairing(t, r).Code, name)
+	result, err := r.Pair(createPairing(t, r).Code, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return paired
+	return result
 }
 
 func TestPairedTokenAuthenticatesItsDevice(t *testing.T) {
 	r, _ := createTestRegistry(t)
 
-	paired := pairDevice(t, r, "Pixel")
+	result := pairDevice(t, r, "Pixel")
 
-	d, err := r.Authenticate(paired.Token)
+	d, err := r.Authenticate(result.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.ID != paired.Device.ID {
-		t.Errorf("token belongs to %q, want %q", d.ID, paired.Device.ID)
+	if d.ID != result.Device.ID {
+		t.Errorf("token belongs to %q, want %q", d.ID, result.Device.ID)
 	}
 	if d.Name != "Pixel" {
 		t.Errorf("name = %q, want Pixel", d.Name)
@@ -144,14 +144,14 @@ func TestUnknownTokenIsRejected(t *testing.T) {
 func TestFileHoldsNoSecrets(t *testing.T) {
 	r, _ := createTestRegistry(t)
 	code := createPairing(t, r).Code
-	paired := pairDevice(t, r, "Pixel")
+	result := pairDevice(t, r, "Pixel")
 
 	raw, err := os.ReadFile(r.path)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if strings.Contains(string(raw), paired.Token) {
+	if strings.Contains(string(raw), result.Token) {
 		t.Error("devices file holds a token")
 	}
 	if strings.Contains(string(raw), normalizeCode(code)) {
@@ -176,13 +176,13 @@ func TestFileIsPrivate(t *testing.T) {
 func TestRevocationReachesOtherProcesses(t *testing.T) {
 	server, _ := createTestRegistry(t)
 	cli := Open(server.path)
-	paired := pairDevice(t, server, "Pixel")
+	result := pairDevice(t, server, "Pixel")
 
-	if err := cli.Revoke(paired.Device.ID); err != nil {
+	if err := cli.Revoke(result.Device.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := server.Authenticate(paired.Token); !errors.Is(err, ErrBadToken) {
+	if _, err := server.Authenticate(result.Token); !errors.Is(err, ErrBadToken) {
 		t.Errorf("token revoked elsewhere: %v, want ErrBadToken", err)
 	}
 }
