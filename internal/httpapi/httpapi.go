@@ -313,7 +313,7 @@ func locales() []localeInfo {
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	type meta struct {
-		APIVersion  int16                    `json:"apiVersion"`
+		APIVersion  int16                    `json:"api_version"`
 		Currencies  []string                 `json:"currencies"`
 		Crypto      []string                 `json:"crypto"`
 		RateSources []budget.RateSource      `json:"rate_sources"`
