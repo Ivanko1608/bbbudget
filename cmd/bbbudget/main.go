@@ -119,8 +119,8 @@ var commands = map[string]command{
 	"history":   runHistory,
 	"undo":      runUndo,
 	"settings":  runSettings,
-	"pair":      runPair,
-	"devices":   runManageDevices,
+	"pair":      runPairDevice,
+	"devices":   runDevicesCommand,
 	"version":   runVersion,
 	"help":      runHelp,
 	"-h":        runHelp,
@@ -187,11 +187,11 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 	)
 	hosts := c.flags.String(
 		"allow-host", "",
-		"extra names this server answers to, comma-separated (when behind a proxy)",
+		"extra host names to accept, comma-separated (when behind a proxy)",
 	)
 	remote := c.flags.Bool(
 		"remote", false,
-		"let paired phones connect from other machines; put HTTPS in front of it (see bbbudget pair)",
+		"let paired devices connect from other machines; put HTTPS in front (see bbbudget pair)",
 	)
 	if err := c.flags.Parse(args); err != nil {
 		return err
