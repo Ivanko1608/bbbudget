@@ -49,7 +49,7 @@ These are what keep the numbers trustworthy, so PRs that break them won't be mer
 - **Tests come with behaviour changes.** Projection changes need a hand-checked golden or an invariant, not just "the output looks right".
 - **Built-in templates are generic and fictional.**
 - **Never leak internal errors** (stack traces, file paths, storage errors) to API clients. Log them server-side and return a generic message.
-- **Validate all external input at the boundary:** query params, path values, JSON bodies. Reject bad input with 400, and enforce the documented limits (such as name lengths) before it reaches storage.
+- **Validate all external input at the boundary:** query params, path values, JSON bodies. Reject bad input with 400, and enforce the limits before it reaches storage: the budget id pattern and the 1 MB body cap (see [SECURITY.md](SECURITY.md)).
 - **Cap request body size** (`http.MaxBytesReader`) with a limit derived from the payload, and document how it was derived in a comment next to the constant.
 - **Use `json.Decoder.DisallowUnknownFields()`** for write endpoints.
 - **Parameterized queries only.** Never build SQL by concatenating input.
