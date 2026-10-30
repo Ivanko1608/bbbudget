@@ -87,7 +87,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 
 3. **Build, on Sonnet.** Spawn one `general-purpose` agent with `model: "sonnet"` and `isolation: "worktree"`. Its prompt holds the full issue text, the feature's title, number and Why, and these rules:
    - Branch `issue-<n>-<short-slug>` from `origin/main`, unless the issue names another base branch.
-   - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
+   - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Read the "Names" section of `CLAUDE.md` before naming anything. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
    - Aim for under about 1000 added lines. If the work needs more, make one commit per step, each passing `make check`, and list the steps in the PR body.
    - A rule change goes in its own commit (see "Rule changes").
    - Never change the git identity. No Claude trailers or mentions in commits or the PR. No personal data anywhere.

@@ -32,6 +32,7 @@ This file is about one thing: **code that a stranger understands on the first re
 
 ## Names
 
+- **Functions start with a verb, in standard vocabulary:** `get`, `create`, `remove`, `parse`, `run`, `handle`, `write`, `toX`, `xFromY` (`getOrCreateChat`, `parseChange`, `toAnthropicTool`, `turnFromOpenAI`). No nouns as function names (`bearerToken`, `unauthorized`), no preposition names (`chatFor`, `detailOf`), no metaphors (`forgetIdle`) and no cryptic abbreviations (`def`).
 - **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`. Conventional short names (`ctx`, `err`, `req`, `res`, `w`, `r`, `ok`) are fine at any scope.
 - **Use domain words, consistently.** Don't invent metaphors ("doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
 - **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals. Every other layer consumes them, JS included: a literal `"set_item"` outside `internal/budget` is a bug.
