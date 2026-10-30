@@ -7,6 +7,7 @@ This file is about one thing: **code that a stranger understands on the first re
 ## Structure
 
 - **A function reads as a list of steps.** The top-level function says *what* happens, and named helpers say *how*. If you want to put a comment above a block to say what it does, extract the block into a function named after that comment.
+- **Blank lines separate the steps inside a function:** setup, guard clauses, the main work, the return. Never pack a function into one dense block.
 - **One job, one level of detail.** Don't mix "decide what to do" with byte-level work in the same function. Roughly 40 lines is the point to ask what should come out.
 - **Shape data the way it's read.** If readers have to work out what `xs[i+1]` or `xs[:i]` means, give the pieces names, or store the data in the order it's used.
 - **Explicit inputs.** Pass what a function needs as parameters. Use `context` for cancellation and deadlines, not for business data that changes the result.
@@ -36,7 +37,9 @@ This file is about one thing: **code that a stranger understands on the first re
 - **Length follows scope.** One letter is fine for a loop index or a three-line closure. Anything that lives longer gets a word: `newBudget`, not `nb`; `entries`, not `h`. Conventional short names (`ctx`, `err`, `req`, `res`, `w`, `r`, `ok`) are fine at any scope.
 - **Use domain words, consistently.** Don't invent metaphors ("doors" for transports). One concept gets one name everywhere: Go, JSON, UI and docs.
 - **Fixed sets of strings are typed constants**, defined once in the lowest package that owns them, never repeated as literals. Every other layer consumes them, JS included: a literal `"set_item"` outside `internal/budget` is a bug.
+- **Fields name the concrete thing and reuse existing domain types** (`Source store.Source`, not a new word like `Author`).
 - **Unnamed results of the same type** (`func(T) (string, string)`) need names or a small struct.
+- **Ask whether a stranger would guess what it does from the name alone.** If not, rename it.
 
 ## Comments
 
@@ -46,12 +49,13 @@ Few and short.
 - Inside a function, comment only a *why* the code can't show: a non-obvious ordering, a lock, a deliberate trade-off.
 - Never: restate the code, label blocks, justify why a function exists, or refer to branches, PRs or history. That belongs in the commit message.
 - Leave existing comments alone unless your change makes them wrong.
+- Field comments go on the line above the field, not trailing.
 
 ## Tests
 
 - **A test reads like a spec.** Arrange, act and assert, with blank lines between them. Helpers say what they do in domain terms (`setRent("1200")`).
 - **One assertion per fact.** Don't put five checks in a single `if a || b || c` with one message. When it fails, nobody can tell which check broke.
-- **Table-driven tests** when cases share a shape.
+- **Table-driven tests** with `t.Run` when cases share a shape. Use `httptest` for handlers and hand-written fakes for the interfaces a package consumes. No mocking frameworks unless the project already uses one.
 - **Every error in setup code is checked.**
 
 ## JavaScript (`web/static`)
@@ -71,6 +75,7 @@ Few and short.
 
 - **Aim for under about 1000 added lines.** It's a target, not a limit. When a PR is bigger, its description says why.
 - **A big PR is reviewed commit by commit.** Each commit is one step that passes `make check` on its own, and the description lists the steps in order.
+- **Separate concerns into separate commits.** Feature work, unrelated fixes and refactors never share a commit.
 - **Mechanical changes don't count** toward the size: renames, moved files, goldens, fixtures and generated files.
 - **Stack PRs only when part of the work should land first**, not to stay under a line count.
 
@@ -78,5 +83,6 @@ Few and short.
 
 Reread your diff as someone who has never seen it.
 
+- Don't silently keep bad code from the existing codebase. Flag it, and if it stays, say why in the PR.
 - For each comment, ask whether the code could make it unnecessary.
 - For each long line or long condition, ask what name it's missing.
