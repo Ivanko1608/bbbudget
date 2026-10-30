@@ -20,7 +20,7 @@ GitHub issues are the backlog. Labels say who can act:
 
 ## Cost
 
-This skill spawns several agents: one to build and one to review, and a review again after every fix. Each round costs a full review, and up to four rounds can run. Anyone who runs it spends their own tokens.
+This skill spawns several agents: one to build and one to review, and a review again after every fix. Each fix round costs a full review, and up to four fix rounds can run. Anyone who runs it spends their own tokens.
 
 ## Why this skill writes so much down
 
@@ -107,7 +107,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
      - Functions are verb-first, in standard vocabulary (get, create, remove, parse, run, handle, `toX`, `xFromY`), with no preposition names (`chatFor`, `detailOf`), metaphors or cryptic abbreviations.
      - Blank lines separate the logical steps inside a function: setup, guard clauses, the main work, the return.
      - Comments explain a non-obvious why, never what. Field comments go on the line above the field.
-   - Report each violation with `file:line` and the rule it breaks. A violation in new or changed code is a blocking finding. A case you're unsure about, and any note that is worth fixing but not blocking, goes in a separate list for the user.
+   - Report each violation with `file:line` and the rule it breaks. A violation in new or changed code is a blocking finding. A case you're unsure about, and any should-fix note that is not blocking, goes in a separate list for the user.
    - Check that every surprising change is listed under **Where to look** in the PR description. A missing one is a blocking finding.
    - Check that the PR description's feature, Why and decisions match the issue. A mismatch is a blocking finding.
    - Check that no rule change is mixed into other work. A mixed one is a blocking finding.
@@ -124,7 +124,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - A check fails: send the failure to the Sonnet agent. This counts as a fix round toward the four, and the same stop rules apply.
    - A check never started (no steps, failed within seconds, or an annotation about billing or runners): the verdict is `waiting on CI`. Tell the user why, quoting the annotation.
 
-8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing: the should-fix notes, the doubtful findings, and any blocking findings left when the loop stopped. For the tokens, add up the total tokens shown in each finished agent's task notification, per agent, and round them (for example "build about 120k, review about 90k per round"). Give `gh pr merge <pr> --squash` only when every check passed.
+8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing: the should-fix notes, the doubtful findings, and any blocking findings left when the loop stopped. For the tokens, add up the total tokens shown in each finished agent's task notification, per agent, and round them (for example "build about 60k, review about 140k"). Give `gh pr merge <pr> --squash` only when every check passed.
 
 When the user gives direction in the session at any point, record it as a decision before acting on it.
 
