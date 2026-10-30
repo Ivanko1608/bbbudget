@@ -186,11 +186,12 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 		"budget", "", "default budget for MCP tool calls that omit one",
 	)
 	hosts := c.flags.String(
-		"allow-host", "", "extra Host names to accept, comma-separated (e.g. when proxied)",
+		"allow-host", "",
+		"extra names this server answers to, comma-separated (when behind a proxy)",
 	)
 	remote := c.flags.Bool(
 		"remote", false,
-		"answer paired devices, accepting any Host header; put HTTPS in front (see bbbudget pair)",
+		"let paired phones connect from other machines; put HTTPS in front of it (see bbbudget pair)",
 	)
 	if err := c.flags.Parse(args); err != nil {
 		return err

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"bbbudget/internal/devices"
 )
@@ -77,25 +76,16 @@ func printDevices(w io.Writer, registry *devices.Registry) error {
 		return err
 	}
 	if len(paired) == 0 {
-		_, err = io.WriteString(w, "no paired devices\n")
+		_, err = fmt.Fprintln(w, "no paired devices")
 		return err
 	}
 
-	var text strings.Builder
-	table := newTable(&text)
-	rows := "ID\tNAME\tPAIRED\n"
+	table := newTable(w)
+	fmt.Fprintln(table, "ID\tNAME\tPAIRED")
 	for _, device := range paired {
 		pairedAt := device.PairedAt.Local().Format(timeLayout)
-		rows += fmt.Sprintf("%s\t%s\t%s\n", device.ID, device.Name, pairedAt)
-	}
-	if _, err = io.WriteString(table, rows); err != nil {
-		return err
-	}
-	if err = table.Flush(); err != nil {
-		return err
+		fmt.Fprintf(table, "%s\t%s\t%s\n", device.ID, device.Name, pairedAt)
 	}
 
-	_, err = io.WriteString(w, text.String())
-
-	return err
+	return table.Flush()
 }
