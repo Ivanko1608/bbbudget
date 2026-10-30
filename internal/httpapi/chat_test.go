@@ -18,7 +18,9 @@ type greeter struct{}
 func (greeter) Name() settings.AssistantProvider { return "greeter" }
 func (greeter) Model() string                    { return "test" }
 
-func (greeter) Start(string, []assistant.Tool) assistant.Conversation { return greeting{} }
+func (greeter) Start(assistant.SystemPrompt, []assistant.Tool) assistant.Conversation {
+	return greeting{}
+}
 
 type greeting struct{}
 

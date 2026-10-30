@@ -59,7 +59,7 @@ type Conversation interface {
 type Provider interface {
 	Name() settings.AssistantProvider
 	Model() string
-	Start(system string, tools []Tool) Conversation
+	Start(system SystemPrompt, tools []Tool) Conversation
 }
 
 // EventType says what an Event is about.
