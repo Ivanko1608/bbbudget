@@ -87,7 +87,7 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 
 3. **Build, on Sonnet.** Spawn one `general-purpose` agent with `model: "sonnet"` and `isolation: "worktree"`. Its prompt holds the full issue text, the feature's title, number and Why, and these rules:
    - Branch `issue-<n>-<short-slug>` from `origin/main`, unless the issue names another base branch.
-   - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
+   - Follow `CLAUDE.md` and `CONTRIBUTING.md`. Read the "Names" section of `CLAUDE.md` before naming anything. Run `make check`, and `CHROME=/usr/bin/chromium make e2e` for UI changes.
    - Aim for under about 1000 added lines. If the work needs more, make one commit per step, each passing `make check`, and list the steps in the PR body.
    - A rule change goes in its own commit (see "Rule changes").
    - Never change the git identity. No Claude trailers or mentions in commits or the PR. No personal data anywhere.
@@ -100,22 +100,22 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
 4. **List the surprises.** Put the build agent's list of surprising changes in the PR description's **Where to look** section (see "Surprising changes"). Record its decisions on the issue, and update the PR description to match.
 
 5. **Review, on Opus.** The user asked for Opus here, so this overrides the Sonnet default. Spawn a `general-purpose` agent with `model: "opus"`. Its prompt holds the PR number, the issue's Why, acceptance criteria and Decisions, the feature's Why, and these instructions:
+   - Persona, in the prompt's first lines: "You are a demanding staff engineer. Anything short of excellent code annoys you. You read every hunk, and you assume nothing is fine until you have checked it."
    - Read the diff with `gh pr diff <pr>`. Check out the branch in a fresh worktree and run `make check`.
    - Check each acceptance criterion: met, partly met or not met, with evidence.
    - Check correctness and the rules in `CONTRIBUTING.md`.
-   - Do a separate style pass. Go through every section of `CLAUDE.md` (Structure, Expressions, Names, Comments, Tests, JavaScript) against each added or changed hunk, and also check these rules:
-     - Functions are verb-first, in standard vocabulary (get, create, remove, parse, run, handle, `toX`, `xFromY`), with no preposition names (`chatFor`, `detailOf`), metaphors or cryptic abbreviations.
-     - Blank lines separate the logical steps inside a function: setup, guard clauses, the main work, the return.
-     - Comments explain a non-obvious why, never what. Field comments go on the line above the field.
-   - Report each violation with `file:line` and the rule it breaks. A violation in new or changed code is a blocking finding. A case you're unsure about, and any should-fix note that is not blocking, goes in a separate list for the user.
+   - Do a separate style pass. Read `CLAUDE.md` and go through every section (Structure, Expressions, Go, Names, Comments, Tests, JavaScript) against each added or changed hunk.
+   - Report findings in two tiers, each with `file:line` and the rule it breaks:
+     - Blocking: a violation in new or changed code.
+     - Should-fix notes, for the user: a case you're unsure about, and any note that is not blocking. A naming or wording point that breaks no written rule goes here if it matters, and is dropped otherwise.
    - Check that every surprising change is listed under **Where to look** in the PR description. A missing one is a blocking finding.
    - Check that the PR description's feature, Why and decisions match the issue. A mismatch is a blocking finding.
    - Check that no rule change is mixed into other work. A mixed one is a blocking finding.
    - Run `gh pr checks <pr>`. A failing check is a blocking finding.
    - Write the review to a uniquely named file inside your own worktree, and never post it or any other comment on the PR. Only humans comment on pull requests.
-   - Reply with a verdict, `merge` or `changes needed`, the blocking findings, the list for the user and the path of the review file.
+   - Reply with a verdict, `merge` or `changes needed`. The verdict is `changes needed` only when there is at least one blocking finding. Then list the blocking findings, the should-fix notes and the path of the review file.
 
-6. **Fix, at most four times.** On `changes needed`, send only the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Should-fix notes, and findings the reviewer or you doubt, are not sent. They go to the user in the hand-back. Each fix round that changes the approach adds a decision line, and every new surprising change is added to **Where to look**, as in step 4. Stop and hand the rest to the user when either holds:
+6. **Fix, at most four times.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Should-fix notes, and findings the reviewer or you doubt, are not sent. They go to the user in the hand-back. Each fix round that changes the approach adds a decision line, and every new surprising change is added to **Where to look**, as in step 4. Stop and hand the rest to the user when either holds:
    - Four fix rounds have run.
    - A review reports the same blocking findings as the one before. Two findings are the same when they name the same file and the same problem. Hand those findings to the user.
 
@@ -124,7 +124,12 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - A check fails: send the failure to the Sonnet agent. This counts as a fix round toward the four, and the same stop rules apply.
    - A check never started (no steps, failed within seconds, or an annotation about billing or runners): the verdict is `waiting on CI`. Tell the user why, quoting the annotation.
 
-8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing: the should-fix notes, the doubtful findings, and any blocking findings left when the loop stopped. For the tokens, take each agent's total from its latest task notification, since the total is cumulative and earlier notifications are already included, then round it and add the agents up (for example "build about 60k, review about 140k, about 200k in all"). Give `gh pr merge <pr> --squash` only when every check passed.
+8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing:
+   - the should-fix notes;
+   - the doubtful findings;
+   - any blocking findings left when the loop stopped.
+
+   For the tokens, take each agent's total from its latest task notification, since the total is cumulative and earlier notifications are already included, then round it and add the agents up (for example "build about 60k, review about 140k, about 200k in all"). Give `gh pr merge <pr> --squash` only when every check passed.
 
 When the user gives direction in the session at any point, record it as a decision before acting on it.
 
@@ -164,6 +169,14 @@ A change is surprising when a reader who has only read the issue would stop at i
 The build agent returns each one as the path, the line in the new file, and the reason in one or two sentences. A change made in a review round says which round and what was asked. Mechanical changes, such as moved code, renames and formatting, aren't listed. A note on every hunk would bury the ones that matter.
 
 List them under **Where to look** in the PR description, one line each: `` `<path>:<line>`: <reason> ``. The lines read as plain explanations from the author and never mention an agent or a tool. Never post them as PR comments: only humans comment on pull requests.
+
+## Follow-up work
+
+While a pull request is open, follow-up work on it goes into that pull request as new commits: leftovers from a review, wording fixes, and anything the user asks for in the session. Don't open a new issue or pull request for it.
+
+File a new issue only when the work belongs to a different feature, or when part of it must land first. A rule change is its own commit, not its own issue. When unsure, ask the user instead of filing.
+
+New commits after a `merge` verdict get one review of just those commits (`git diff <last reviewed commit>..HEAD`) with step 5's instructions, then a fresh CI run before the hand-back. On `changes needed`, step 6 applies.
 
 ## Writing a new ticket
 
