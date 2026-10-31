@@ -79,9 +79,9 @@ func (tools *mcpTools) runCalls(
 	results := make([]ToolResult, 0, len(calls))
 	changed := false
 	for _, call := range calls {
-		result := tools.callTool(ctx, call)
+		result, event := tools.callTool(ctx, call)
 		results = append(results, result)
-		emit(newToolEvent(call, result))
+		emit(event)
 		changed = changed || tools.changedBudget(call, result)
 	}
 	if changed {
@@ -94,21 +94,27 @@ func (tools *mcpTools) changedBudget(call ToolCall, result ToolResult) bool {
 	return !result.IsError && !tools.readOnly[call.Name]
 }
 
-func (tools *mcpTools) callTool(ctx context.Context, call ToolCall) ToolResult {
+// callTool makes one call and returns its result for the model and the event
+// for the chat.
+func (tools *mcpTools) callTool(ctx context.Context, call ToolCall) (ToolResult, Event) {
 	arguments := map[string]any{}
 	if len(call.Input) > 0 {
 		if err := json.Unmarshal(call.Input, &arguments); err != nil {
 			tools.logger.Info("assistant tool input rejected", "tool", call.Name, "err", err)
-			return errorResult(call, toolInputInvalidMessage)
+			return newFailedCall(call, toolInputInvalidMessage)
 		}
 	}
+
 	params := &mcp.CallToolParams{Name: call.Name, Arguments: arguments}
-	result, err := tools.session.CallTool(ctx, params)
+	reply, err := tools.session.CallTool(ctx, params)
 	if err != nil {
 		tools.logger.Error("assistant tool call failed", "tool", call.Name, "err", err)
-		return errorResult(call, toolCallFailedMessage)
+		return newFailedCall(call, toolCallFailedMessage)
 	}
-	return ToolResult{CallID: call.ID, Content: joinText(result), IsError: result.IsError}
+
+	result := ToolResult{CallID: call.ID, Content: joinText(reply), IsError: reply.IsError}
+
+	return result, newToolEvent(call, result)
 }
 
 const (
@@ -116,18 +122,16 @@ const (
 	toolCallFailedMessage   = "the tool call failed; see the server log"
 )
 
-// errorResult is a failed tool call whose content has the shape of the
-// failures the MCP server reports: {"error": message}.
-func errorResult(call ToolCall, message string) ToolResult {
-	return ToolResult{CallID: call.ID, Content: newErrorContent(message), IsError: true}
-}
+// newFailedCall reports a call that failed before the MCP server answered. The
+// model gets the same {"error": message} content the server gives, and the
+// chat gets the message itself. The messages are plain text that needs no
+// JSON escaping.
+func newFailedCall(call ToolCall, message string) (ToolResult, Event) {
+	content := `{"error":"` + message + `"}`
+	result := ToolResult{CallID: call.ID, Content: content, IsError: true}
+	event := Event{Type: EventTool, Tool: call.Name, Error: message}
 
-func newErrorContent(message string) string {
-	encoded, err := json.Marshal(map[string]string{"error": message})
-	if err != nil {
-		return message
-	}
-	return string(encoded)
+	return result, event
 }
 
 // parseErrorMessage returns the message of a failed tool result. The MCP
