@@ -15,6 +15,8 @@ import (
 
 const wrapperPath = "/wrapper/path"
 
+const opName = string(budget.OpSetItem)
+
 func getEnglish() *i18n.Localizer { return i18n.For("en") }
 
 func TestGetClientFailureIgnoresTheTextAroundARecognisedError(t *testing.T) {
@@ -25,36 +27,50 @@ func TestGetClientFailureIgnoresTheTextAroundARecognisedError(t *testing.T) {
 		want   string
 	}{
 		{
-			"op error",
-			&budget.OpError{Index: 2, Op: "set_item", Err: errors.New("x")},
-			http.StatusBadRequest,
-			"op 2 (set_item) was rejected",
+			name:   "op error",
+			err:    &budget.OpError{Index: 2, Op: budget.OpSetItem, Err: errors.New("x")},
+			status: http.StatusBadRequest,
+			want:   "op 2 (" + opName + ") was rejected",
 		},
 		{
-			"op error about a missing target",
-			&budget.OpError{Index: 1, Op: "set_item", Err: &budget.NoMatchError{Kind: "item", Ref: "r"}},
-			http.StatusBadRequest,
-			`op 1 (set_item): no item matches "r"`,
-		},
-		{"budget not found", store.ErrNotFound, http.StatusNotFound, "budget not found"},
-		{"rates off", ErrRatesOff, http.StatusConflict, RatesOffMessage},
-		{
-			"rate provider",
-			&RateError{Err: errors.New("lookup " + wrapperPath)},
-			http.StatusBadGateway,
-			RateFetchFailedMessage,
+			name: "op error about a missing target",
+			err: &budget.OpError{
+				Index: 1,
+				Op:    budget.OpSetItem,
+				Err:   &budget.NoMatchError{Kind: "item", Ref: "r"},
+			},
+			status: http.StatusBadRequest,
+			want:   "op 1 (" + opName + `): no item matches "r"`,
 		},
 		{
-			"amount out of range",
-			&money.ArithmeticError{Msg: "overflow " + wrapperPath},
-			http.StatusBadRequest,
-			"an amount is out of range",
+			name:   "budget not found",
+			err:    store.ErrNotFound,
+			status: http.StatusNotFound,
+			want:   "budget not found",
 		},
 		{
-			"client written text",
-			NewClientError(ErrBadInput, "unknown source %q", "x"),
-			http.StatusBadRequest,
-			`unknown source "x"`,
+			name:   "rates off",
+			err:    ErrRatesOff,
+			status: http.StatusConflict,
+			want:   RatesOffMessage,
+		},
+		{
+			name:   "rate provider",
+			err:    &RateError{Err: errors.New("lookup " + wrapperPath)},
+			status: http.StatusBadGateway,
+			want:   RateFetchFailedMessage,
+		},
+		{
+			name:   "amount out of range",
+			err:    &money.ArithmeticError{Msg: "overflow " + wrapperPath},
+			status: http.StatusBadRequest,
+			want:   "an amount is out of range",
+		},
+		{
+			name:   "client written text",
+			err:    NewClientError(ErrBadInput, "unknown source %q", "x"),
+			status: http.StatusBadRequest,
+			want:   `unknown source "x"`,
 		},
 	}
 	for _, c := range cases {
