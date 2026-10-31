@@ -411,17 +411,11 @@ func splitSign(d string) (sign, digits string) {
 // unsigned renders digits without a sign: groups, then the decimal part.
 func (l *Localizer) unsigned(digits string) string {
 	intPart, frac, _ := strings.Cut(digits, ".")
-	var b strings.Builder
-	for i, ch := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			b.WriteString(l.cat.Meta.Group)
-		}
-		b.WriteRune(ch)
-	}
+	num := money.GroupDigits(intPart, l.cat.Meta.Group)
 	if frac != "" {
-		b.WriteString(l.cat.Meta.Decimal + frac)
+		num += l.cat.Meta.Decimal + frac
 	}
-	return b.String()
+	return num
 }
 
 // pluralRule maps a whole number to its CLDR plural category.

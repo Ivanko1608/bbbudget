@@ -168,3 +168,26 @@ func TestMoneyJSONRoundTrip(t *testing.T) {
 		t.Fatal("excess precision accepted")
 	}
 }
+
+func TestGroupDigits(t *testing.T) {
+	cases := []struct {
+		digits    string
+		separator string
+		want      string
+	}{
+		{"", ",", ""},
+		{"12", ",", "12"},
+		{"123", ",", "123"},
+		{"1234", ",", "1,234"},
+		{"1234567", " ", "1 234 567"},
+	}
+	for _, c := range cases {
+		t.Run(c.digits, func(t *testing.T) {
+			got := GroupDigits(c.digits, c.separator)
+
+			if got != c.want {
+				t.Errorf("GroupDigits(%q, %q) = %q, want %q", c.digits, c.separator, got, c.want)
+			}
+		})
+	}
+}
