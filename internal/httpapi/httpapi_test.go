@@ -404,9 +404,15 @@ func TestMetaListsCrypto(t *testing.T) {
 func TestMetaReportsAPIVersion(t *testing.T) {
 	c := setup(t)
 
-	v := c.do("GET", "/api/meta", "", 200)
+	w := c.req("GET", "/api/meta", "", nil)
+	var meta struct {
+		APIVersion uint8 `json:"api_version"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &meta); err != nil {
+		t.Fatal(err)
+	}
 
-	eq(t, "api version", v["api_version"], 1.0)
+	eq(t, "api version", meta.APIVersion, 1)
 }
 
 // Budgets saved before pots existed (no "pots"/"withdrawals") or saved with
