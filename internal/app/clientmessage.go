@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"bbbudget/internal/budget"
 	"bbbudget/internal/i18n"
@@ -14,24 +15,12 @@ import (
 // planned for. The error itself is logged.
 const InternalErrorMessage = "internal error"
 
-// ClientClass says how a request failed, in terms every transport can map to
-// its own status.
-type ClientClass string
-
-const (
-	ClassBadRequest    ClientClass = "bad_request"
-	ClassNotFound      ClientClass = "not_found"
-	ClassConflict      ClientClass = "conflict"
-	ClassUnprocessable ClientClass = "unprocessable"
-	ClassUpstream      ClientClass = "upstream"
-)
-
-// ClientFailure is all a client is told about an error: its class and a
-// message that is fixed text or built from the request's own input, never
+// ClientFailure is all a client is told about an error: the HTTP status it
+// maps to and a message that is fixed text or built from the request's own input, never
 // from the text of an error, because lower layers wrap errors with paths and
 // upstream details.
 type ClientFailure struct {
-	Class   ClientClass
+	Status  int
 	Message string
 	// Fields are structured data that goes with the message, such as the
 	// issues of an invalid budget.
@@ -60,23 +49,23 @@ var clientRules = []clientRule{
 	typedRule(describeOpError),
 	typedRule(describeValidationError),
 	typedRule(describeUndoConflict),
-	sentinelRule(ErrNothingToUndo, ClassConflict),
-	sentinelRule(ErrTooOld, ClassConflict),
+	sentinelRule(ErrNothingToUndo, http.StatusConflict),
+	sentinelRule(ErrTooOld, http.StatusConflict),
 	typedRule(describeRevisionConflict),
-	sentinelRuleWithClientMessage(store.ErrNotFound, ClassNotFound),
+	sentinelRuleWithClientMessage(store.ErrNotFound, http.StatusNotFound),
 	typedRule(describeNoMatch),
-	sentinelRule(store.ErrExists, ClassConflict),
-	sentinelRule(ErrRatesOff, ClassConflict),
+	sentinelRule(store.ErrExists, http.StatusConflict),
+	sentinelRule(ErrRatesOff, http.StatusConflict),
 	typedRule(describeRateError),
-	sentinelRule(store.ErrBadID, ClassBadRequest),
-	sentinelRuleWithClientMessage(ErrBadInput, ClassBadRequest),
+	sentinelRule(store.ErrBadID, http.StatusBadRequest),
+	sentinelRuleWithClientMessage(ErrBadInput, http.StatusBadRequest),
 	typedRule(describeArithmeticError),
-	sentinelRule(store.ErrNoteNotFound, ClassNotFound),
-	sentinelRule(store.ErrTooManyNotes, ClassConflict),
-	sentinelRule(store.ErrNoteEmpty, ClassBadRequest),
-	sentinelRule(store.ErrNoteTooLong, ClassBadRequest),
-	sentinelRule(store.ErrBadNoteSource, ClassBadRequest),
-	sentinelRule(store.ErrBadNoteID, ClassBadRequest),
+	sentinelRule(store.ErrNoteNotFound, http.StatusNotFound),
+	sentinelRule(store.ErrTooManyNotes, http.StatusConflict),
+	sentinelRule(store.ErrNoteEmpty, http.StatusBadRequest),
+	sentinelRule(store.ErrNoteTooLong, http.StatusBadRequest),
+	sentinelRule(store.ErrBadNoteSource, http.StatusBadRequest),
+	sentinelRule(store.ErrBadNoteID, http.StatusBadRequest),
 }
 
 // GetClientFailure returns what a client is told about err, and false when err
@@ -148,11 +137,11 @@ func getClientFields(err error, getLocalizer func() *i18n.Localizer) map[string]
 // sentinelRule tells the client the text of the sentinel itself. That text is
 // fixed where the sentinel is declared; the text of a wrapper around it is
 // never used.
-func sentinelRule(target error, class ClientClass) clientRule {
+func sentinelRule(target error, status int) clientRule {
 	return clientRule{
 		matches: func(err error) bool { return errors.Is(err, target) },
 		describe: func(error) ClientFailure {
-			return ClientFailure{Class: class, Message: target.Error()}
+			return ClientFailure{Status: status, Message: target.Error()}
 		},
 	}
 }
@@ -160,7 +149,7 @@ func sentinelRule(target error, class ClientClass) clientRule {
 // sentinelRuleWithClientMessage is a sentinelRule for a sentinel that app
 // wraps in a ClientError to say which input it is about; the ClientError's
 // message replaces the sentinel's.
-func sentinelRuleWithClientMessage(target error, class ClientClass) clientRule {
+func sentinelRuleWithClientMessage(target error, status int) clientRule {
 	return clientRule{
 		matches: func(err error) bool { return errors.Is(err, target) },
 		describe: func(err error) ClientFailure {
@@ -171,7 +160,7 @@ func sentinelRuleWithClientMessage(target error, class ClientClass) clientRule {
 				message = clientErr.Message
 			}
 
-			return ClientFailure{Class: class, Message: message}
+			return ClientFailure{Status: status, Message: message}
 		},
 	}
 }
@@ -199,11 +188,11 @@ func describeOpError(badOp *budget.OpError) ClientFailure {
 		message = fmt.Sprintf("op %d (%s): %s", badOp.Index, badOp.Op, describeNoMatchText(noMatch))
 	}
 
-	return ClientFailure{Class: ClassBadRequest, Message: message}
+	return ClientFailure{Status: http.StatusBadRequest, Message: message}
 }
 
 func describeNoMatch(noMatch *budget.NoMatchError) ClientFailure {
-	return ClientFailure{Class: ClassNotFound, Message: describeNoMatchText(noMatch)}
+	return ClientFailure{Status: http.StatusNotFound, Message: describeNoMatchText(noMatch)}
 }
 
 func describeNoMatchText(noMatch *budget.NoMatchError) string {
@@ -211,7 +200,7 @@ func describeNoMatchText(noMatch *budget.NoMatchError) string {
 }
 
 func describeValidationError(*budget.ValidationError) ClientFailure {
-	return ClientFailure{Class: ClassUnprocessable, Message: "the budget is invalid"}
+	return ClientFailure{Status: http.StatusUnprocessableEntity, Message: "the budget is invalid"}
 }
 
 func describeUndoConflict(undoLater *UndoConflictError) ClientFailure {
@@ -219,19 +208,19 @@ func describeUndoConflict(undoLater *UndoConflictError) ClientFailure {
 		"undo those first, or force it to undo them all",
 		undoLater.Revision, len(undoLater.Later))
 
-	return ClientFailure{Class: ClassConflict, Message: message}
+	return ClientFailure{Status: http.StatusConflict, Message: message}
 }
 
 func describeRevisionConflict(*store.ConflictError) ClientFailure {
 	message := "the budget was changed elsewhere; reload and retry"
 
-	return ClientFailure{Class: ClassConflict, Message: message}
+	return ClientFailure{Status: http.StatusConflict, Message: message}
 }
 
 func describeRateError(*RateError) ClientFailure {
-	return ClientFailure{Class: ClassUpstream, Message: RateFetchFailedMessage}
+	return ClientFailure{Status: http.StatusBadGateway, Message: RateFetchFailedMessage}
 }
 
 func describeArithmeticError(*money.ArithmeticError) ClientFailure {
-	return ClientFailure{Class: ClassBadRequest, Message: "an amount is out of range"}
+	return ClientFailure{Status: http.StatusBadRequest, Message: "an amount is out of range"}
 }

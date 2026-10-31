@@ -37,7 +37,7 @@ func (s *server) getFailure(r *http.Request, err error) (failure, bool) {
 	clientFailure, ok := app.GetClientFailure(err, func() *i18n.Localizer { return s.reader(r) })
 	if ok {
 		return failure{
-			status: statusFromClass(clientFailure.Class),
+			status: clientFailure.Status,
 			body:   clientFailure.Body(),
 		}, true
 	}
@@ -55,23 +55,6 @@ func (s *server) getFailure(r *http.Request, err error) (failure, bool) {
 	}
 
 	return failure{}, false
-}
-
-func statusFromClass(class app.ClientClass) int {
-	switch class {
-	case app.ClassBadRequest:
-		return http.StatusBadRequest
-	case app.ClassNotFound:
-		return http.StatusNotFound
-	case app.ClassConflict:
-		return http.StatusConflict
-	case app.ClassUnprocessable:
-		return http.StatusUnprocessableEntity
-	case app.ClassUpstream:
-		return http.StatusBadGateway
-	default:
-		return http.StatusInternalServerError
-	}
 }
 
 func newMessageFailure(status int, message string) failure {
