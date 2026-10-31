@@ -312,8 +312,8 @@ func locales() []localeInfo {
 }
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
-	type meta struct {
-		APIVersion  int16                    `json:"api_version"`
+	type metaResponse struct {
+		APIVersion  uint8                    `json:"api_version"`
 		Currencies  []string                 `json:"currencies"`
 		Crypto      []string                 `json:"crypto"`
 		RateSources []budget.RateSource      `json:"rate_sources"`
@@ -329,7 +329,7 @@ func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	for _, c := range money.Codes() {
 		digits[c] = money.MustLookup(c).Digits
 	}
-	s.writeJSON(w, http.StatusOK, meta{
+	s.writeJSON(w, http.StatusOK, metaResponse{
 		APIVersion:  apiVersion,
 		Currencies:  money.Codes(),
 		Crypto:      money.CryptoCodes(),
