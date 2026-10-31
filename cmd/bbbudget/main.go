@@ -196,7 +196,7 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 			"templates": *c.templateDir,
 			"settings":  *c.settingsFile,
 		},
-		Assistant: newAssistant(a, c.logger),
+		Assistant: assistant.New(a, assistant.ProviderFromSettings(a), c.logger),
 	}
 	go a.RunAutoRefresh(ctx, c.logger)
 	if *hosts != "" {
@@ -206,13 +206,6 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 		opts.MCP = newMCPHandler(mcpserver.New(a, mcpOptions(*defaultBudget, c.logger)))
 	}
 	return serve(ctx, *addr, httpapi.New(a, opts), c.logger, c.stdout)
-}
-
-func newAssistant(a *app.App, logger *slog.Logger) *assistant.Assistant {
-	chat := assistant.New(a, assistant.ProviderFromSettings(a))
-	chat.Log = logger
-
-	return chat
 }
 
 func mcpOptions(defaultBudget string, logger *slog.Logger) mcpserver.Options {

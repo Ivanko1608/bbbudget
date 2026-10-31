@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -82,7 +83,11 @@ func newAssistant(t *testing.T, model *script) *Assistant {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assistant := New(a, func() (Provider, error) { return model, nil })
+	assistant := New(
+		a,
+		func() (Provider, error) { return model, nil },
+		slog.New(slog.DiscardHandler),
+	)
 	assistant.Now = func() time.Time { return testNow }
 	return assistant
 }

@@ -180,9 +180,11 @@ func (failingConversation) SendResults(
 
 func TestAChatFailureSendsAFixedMessageAndLogsTheDetail(t *testing.T) {
 	api := setupLogged(t, func(a *app.App, opts *Options) {
-		opts.Assistant = assistant.New(a, func() (assistant.Provider, error) {
-			return failingModel{}, nil
-		})
+		opts.Assistant = assistant.New(
+			a,
+			func() (assistant.Provider, error) { return failingModel{}, nil },
+			opts.Log,
+		)
 	})
 
 	response := api.req("POST", "/api/budgets/home/chat", `{"message":"hi"}`, nil)

@@ -1,10 +1,8 @@
 package assistant
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
-	"log/slog"
 	"sync"
 	"time"
 )
@@ -63,7 +61,7 @@ func (a *Assistant) createChat(ctx context.Context, budget string) (*chat, error
 	if err != nil {
 		return nil, err
 	}
-	tools, err := connectTools(ctx, a.App, budget, cmp.Or(a.Log, slog.Default()))
+	tools, err := connectTools(ctx, a.App, budget, a.Log)
 	if err != nil {
 		return nil, err
 	}

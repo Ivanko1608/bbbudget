@@ -111,7 +111,7 @@ type Assistant struct {
 	TTL time.Duration
 	Now func() time.Time
 	// Log receives the errors of tool calls, which the chat shows only as
-	// fixed messages; default slog.Default().
+	// fixed messages.
 	Log *slog.Logger
 
 	mu    sync.Mutex
@@ -120,10 +120,13 @@ type Assistant struct {
 
 // New returns an assistant over the app that keeps idle conversations for
 // DefaultTTL.
-func New(a *app.App, provider func() (Provider, error)) *Assistant {
+func New(
+	a *app.App, provider func() (Provider, error), logger *slog.Logger,
+) *Assistant {
 	return &Assistant{
 		App:      a,
 		Provider: provider,
+		Log:      logger,
 		TTL:      DefaultTTL,
 		Now:      time.Now,
 		chats:    map[string]*chat{},
