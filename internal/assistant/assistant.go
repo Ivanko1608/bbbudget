@@ -9,7 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +110,9 @@ type Assistant struct {
 	// TTL drops conversations idle for longer.
 	TTL time.Duration
 	Now func() time.Time
+	// Log receives the errors of tool calls, which the chat shows only as
+	// fixed messages.
+	Log *slog.Logger
 
 	mu    sync.Mutex
 	chats map[string]*chat
@@ -117,10 +120,13 @@ type Assistant struct {
 
 // New returns an assistant over the app that keeps idle conversations for
 // DefaultTTL.
-func New(a *app.App, provider func() (Provider, error)) *Assistant {
+func New(
+	a *app.App, provider func() (Provider, error), logger *slog.Logger,
+) *Assistant {
 	return &Assistant{
 		App:      a,
 		Provider: provider,
+		Log:      logger,
 		TTL:      DefaultTTL,
 		Now:      time.Now,
 		chats:    map[string]*chat{},
@@ -140,7 +146,7 @@ type Request struct {
 func (a *Assistant) Reply(ctx context.Context, req Request, emit func(Event)) (string, error) {
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
-		return req.Conversation, fmt.Errorf("%w: empty message", app.ErrBadInput)
+		return req.Conversation, app.NewClientError(app.ErrBadInput, "empty message")
 	}
 	current, err := a.getOrCreateChat(ctx, req.Conversation, req.Budget)
 	if err != nil {

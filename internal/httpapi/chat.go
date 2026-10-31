@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
 )
 
@@ -34,7 +35,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	events := startEventStream(w)
 	conversation, err := s.opts.Assistant.Reply(r.Context(), request, events.send)
 	if err != nil {
-		events.send(assistant.Event{Type: assistant.EventError, Error: err.Error()})
+		s.reportChatError(r, events, err)
 	}
 	events.send(assistant.Event{Type: assistant.EventDone, Conversation: conversation})
 }
@@ -60,4 +61,21 @@ func (s *eventStream) send(event assistant.Event) {
 	}
 	_, _ = fmt.Fprintf(s.w, "data: %s\n\n", encoded)
 	_ = s.controller.Flush()
+}
+
+const assistantFailedMessage = "the assistant couldn't answer; see the server log"
+
+// reportChatError tells the stream about a failed reply: the request's own
+// mistake in the client's terms, anything else a fixed message. Only the
+// latter is the server's fault, so only it is logged as an error.
+func (s *server) reportChatError(r *http.Request, events *eventStream, err error) {
+	message, isClientError := app.GetClientMessage(err)
+	if isClientError {
+		s.opts.Log.Info("assistant reply rejected", "path", r.URL.Path, "err", err)
+	} else {
+		s.logRequestError(r, "assistant reply failed", err)
+		message = assistantFailedMessage
+	}
+
+	events.send(assistant.Event{Type: assistant.EventError, Error: message})
 }

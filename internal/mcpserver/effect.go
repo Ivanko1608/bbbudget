@@ -1,8 +1,6 @@
 package mcpserver
 
 import (
-	"fmt"
-
 	"bbbudget/internal/app"
 	"bbbudget/internal/budget"
 	"bbbudget/internal/i18n"
@@ -21,7 +19,7 @@ const (
 
 func (d Detail) check() error {
 	if d != DetailChange && d != DetailFull {
-		return fmt.Errorf(`detail must be "full" or omitted, got %q`, d)
+		return app.NewClientError(app.ErrBadInput, `detail must be "full" or omitted, got %q`, d)
 	}
 	return nil
 }

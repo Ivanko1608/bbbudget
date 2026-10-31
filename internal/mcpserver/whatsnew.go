@@ -34,7 +34,7 @@ const whatsNewDescription = `What happened to the budget since your own last cha
 	`about a budget you have worked on before.`
 
 func (h *handlers) registerWhatsNew(s *mcp.Server) {
-	addReadTool(s, "whats_new", whatsNewDescription, h.getWhatsNew)
+	addReadTool(s, h.translate, "whats_new", whatsNewDescription, h.getWhatsNew)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "whats-new",
 		URITemplate: "whats-new://{id}",
@@ -63,7 +63,7 @@ func (h *handlers) readWhatsNew(
 	}
 	text, err := json.Marshal(result)
 	if err != nil {
-		return nil, err
+		return nil, h.translate.toError("whats-new resource", err)
 	}
 	contents := &mcp.ResourceContents{URI: uri, MIMEType: resourceMIMEType, Text: string(text)}
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil

@@ -125,3 +125,11 @@ func TestStatusOfAnAssistantThatIsntReady(t *testing.T) {
 		t.Errorf("problem: %q", status.Problem)
 	}
 }
+
+func TestStatusOfAnErrorWithoutAMessageIsFixedText(t *testing.T) {
+	problem := getProblem(errors.New("open /wrapper/path: denied"))
+
+	if problem != problemUnknown {
+		t.Errorf("problem: %q", problem)
+	}
+}

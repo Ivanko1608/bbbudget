@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"reflect"
 	"slices"
@@ -91,6 +92,9 @@ type Options struct {
 	// Source is who the history names for every write; default
 	// store.SourceMCP, an outside MCP client.
 	Source store.Source
+	// Log receives the errors that tool calls turn into fixed messages;
+	// default slog.Default().
+	Log *slog.Logger
 }
 
 // New builds an MCP server over the app.
@@ -109,6 +113,10 @@ func New(a *app.App, opts Options) *mcp.Server {
 		app:           a,
 		defaultBudget: opts.DefaultBudget,
 		origin:        store.Origin{Source: source},
+		translate: translator{
+			logger:       cmp.Or(opts.Log, slog.Default()),
+			getLocalizer: a.SettingsLocalizer,
+		},
 	}
 	h.register(s)
 	return s
@@ -118,6 +126,7 @@ type handlers struct {
 	app           *app.App
 	defaultBudget string
 	origin        store.Origin
+	translate     translator
 }
 
 var schemaOpts = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
@@ -134,36 +143,42 @@ type toolFunc[In any] func(context.Context, In) (any, error)
 
 // addWriteTool registers a handler whose input schema is inferred from In with the
 // money-aware type mapping above.
-func addWriteTool[In any](s *mcp.Server, name, desc string, fn toolFunc[In]) {
-	addTool(s, &mcp.Tool{Name: name, Description: desc}, fn)
+func addWriteTool[In any](
+	s *mcp.Server, translate translator, name, desc string, fn toolFunc[In],
+) {
+	addTool(s, translate, &mcp.Tool{Name: name, Description: desc}, fn)
 }
 
 // addReadTool registers a tool that never changes anything.
-func addReadTool[In any](s *mcp.Server, name, desc string, fn toolFunc[In]) {
+func addReadTool[In any](
+	s *mcp.Server, translate translator, name, desc string, fn toolFunc[In],
+) {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	addTool(s, &mcp.Tool{Name: name, Description: desc, Annotations: readOnly}, fn)
+	addTool(s, translate, &mcp.Tool{Name: name, Description: desc, Annotations: readOnly}, fn)
 }
 
-func addTool[In any](s *mcp.Server, t *mcp.Tool, fn toolFunc[In]) {
+func addTool[In any](s *mcp.Server, translate translator, t *mcp.Tool, fn toolFunc[In]) {
 	schema, err := jsonschema.For[In](schemaOpts)
 	if err != nil {
 		panic(fmt.Sprintf("tool %s: %v", t.Name, err))
 	}
 	t.InputSchema = schema
-	mcp.AddTool(s, t, toMCPHandler(fn))
+	mcp.AddTool(s, t, toMCPHandler(t.Name, translate, fn))
 }
 
-func toMCPHandler[In any](fn toolFunc[In]) mcp.ToolHandlerFor[In, any] {
+func toMCPHandler[In any](
+	name string, translate translator, fn toolFunc[In],
+) mcp.ToolHandlerFor[In, any] {
 	return func(
 		ctx context.Context, _ *mcp.CallToolRequest, in In,
 	) (*mcp.CallToolResult, any, error) {
 		out, err := fn(ctx, in)
 		if err != nil {
-			return nil, nil, err // reported to the model as a tool error
+			return translate.toToolResult(name, err), nil, nil
 		}
 		raw, err := json.Marshal(out)
 		if err != nil {
-			return nil, nil, err
+			return translate.toToolResult(name, err), nil, nil
 		}
 		text := &mcp.TextContent{Text: string(raw)}
 		return &mcp.CallToolResult{Content: []mcp.Content{text}}, nil, nil
@@ -177,7 +192,8 @@ func (h *handlers) id(ref string) (string, error) {
 	if h.defaultBudget != "" {
 		return h.defaultBudget, nil
 	}
-	return "", fmt.Errorf(`"budget" is required (no default budget configured); call list_budgets`)
+	return "", app.NewClientError(app.ErrBadInput,
+		`"budget" is required (no default budget configured); call list_budgets`)
 }
 
 type Ref struct {
@@ -331,17 +347,17 @@ const (
 const effectDescriptionSuffix = " Returns what changed and its effect; " +
 	"set detail to full for the whole budget."
 
-type toolDefinition func(s *mcp.Server)
+type toolDefinition func(s *mcp.Server, translate translator)
 
 func newTool[In any](name, description string, kind toolKind, fn toolFunc[In]) toolDefinition {
-	return func(s *mcp.Server) {
+	return func(s *mcp.Server, translate translator) {
 		switch kind {
 		case readTool:
-			addReadTool(s, name, description, fn)
+			addReadTool(s, translate, name, description, fn)
 		case writeToolWithEffect:
-			addWriteTool(s, name, description+effectDescriptionSuffix, fn)
+			addWriteTool(s, translate, name, description+effectDescriptionSuffix, fn)
 		case writeTool:
-			addWriteTool(s, name, description, fn)
+			addWriteTool(s, translate, name, description, fn)
 		}
 	}
 }
@@ -418,11 +434,11 @@ func (h *handlers) tools() []toolDefinition {
 
 func (h *handlers) register(s *mcp.Server) {
 	for _, registerTool := range h.tools() {
-		registerTool(s)
+		registerTool(s, h.translate)
 	}
 	h.registerLedger(s)
 	h.registerWhatsNew(s)
-	registerPrompts(s)
+	registerPrompts(s, h.translate)
 	h.registerBudgetResource(s)
 }
 
@@ -446,7 +462,7 @@ func (h *handlers) readBudgetResource(
 	}
 	raw, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
-		return nil, err
+		return nil, h.translate.toError("budget resource", err)
 	}
 	contents := &mcp.ResourceContents{
 		URI:      req.Params.URI,
@@ -532,9 +548,6 @@ func (h *handlers) refreshRates(ctx context.Context, in RatesIn) (any, error) {
 	}
 	v, updates, err := h.app.RefreshRates(ctx, h.origin, id, in.Codes)
 	if err != nil {
-		if len(updates) > 0 {
-			return nil, fmt.Errorf("%w; per currency: %+v", err, updates)
-		}
 		return nil, err
 	}
 	result, err := h.written(in.WriteRef, v, nil)

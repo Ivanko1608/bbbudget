@@ -159,15 +159,15 @@ func (h *handlers) flagsByMonth(
 }
 
 func (h *handlers) registerLedger(s *mcp.Server) {
-	addWriteTool(s, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
+	addWriteTool(s, h.translate, "log_transactions", "Record money actually spent or received (not the plan): one item, or many at once, e.g. from a bank statement the user pasted. Pick each category from get_budget's categories; ask the user when unsure rather than guessing. Give every statement row an external_id so a repeated import is skipped. All or nothing. Returns what was logged, its batch id and the month's flags (overspending, projected overspending, unplanned spending).",
 		h.logTransactions)
-	addReadTool(s, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
+	addReadTool(s, h.translate, "list_transactions", "Logged transactions, newest first, optionally by date range, category or batch.",
 		h.listTransactions)
-	addWriteTool(s, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
+	addWriteTool(s, h.translate, "update_transaction", "Correct one logged transaction; omitted fields stay. Changing amount, currency or category values it again at today's rate.",
 		h.updateTransaction)
-	addWriteTool(s, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
+	addWriteTool(s, h.translate, "delete_transactions", "Remove logged transactions by id, or a whole batch (everything one log_transactions call added). Use it to take back a mistaken log or import.",
 		h.deleteTransactions)
-	addReadTool(s, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
+	addReadTool(s, h.translate, "month_status", "Plan versus actual for a month: per category what was planned, spent and is left, the spending projected to the end of the month, and flags for overspending, projected overspending, and spending nothing was planned for. Amounts in the base currency.",
 		h.getMonthStatus)
 }
 
@@ -247,7 +247,7 @@ func (h *handlers) deleteByIDsOrBatch(
 	byBatch := in.Batch != ""
 	switch {
 	case byIDs == byBatch:
-		return 0, errors.New("give either ids or a batch")
+		return 0, app.NewClientError(app.ErrBadInput, "give either ids or a batch")
 	case byBatch:
 		return h.app.DeleteBatch(ctx, id, in.Batch)
 	}

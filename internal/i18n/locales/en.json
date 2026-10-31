@@ -64,6 +64,8 @@
   "list.and": "{a} and {b}",
 
   "compare.baseline": "Current budget",
+  "compare.scenario_stale": "This scenario no longer applies to the budget.",
+  "compare.scenario_failed": "This scenario can't be calculated.",
 
   "change.list": "{items}",
   "change.none": "no changes",

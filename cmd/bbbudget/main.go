@@ -208,7 +208,7 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 			"templates": *c.templateDir,
 			"settings":  *c.settingsFile,
 		},
-		Assistant: assistant.New(a, assistant.ProviderFromSettings(a)),
+		Assistant: assistant.New(a, assistant.ProviderFromSettings(a), c.logger),
 	}
 	go a.RunAutoRefresh(ctx, c.logger)
 	if *hosts != "" {
@@ -223,13 +223,13 @@ func runServe(ctx context.Context, c *cli, args []string) error {
 		)
 	}
 	if *withMCP {
-		opts.MCP = newMCPHandler(mcpserver.New(a, mcpOptions(*defaultBudget)))
+		opts.MCP = newMCPHandler(mcpserver.New(a, mcpOptions(*defaultBudget, c.logger)))
 	}
 	return serve(ctx, *addr, httpapi.New(a, opts), c.logger, c.stdout)
 }
 
-func mcpOptions(defaultBudget string) mcpserver.Options {
-	return mcpserver.Options{DefaultBudget: defaultBudget, Version: version}
+func mcpOptions(defaultBudget string, logger *slog.Logger) mcpserver.Options {
+	return mcpserver.Options{DefaultBudget: defaultBudget, Version: version, Log: logger}
 }
 
 func newMCPHandler(srv *mcp.Server) http.Handler {
@@ -250,7 +250,7 @@ func runMCP(ctx context.Context, c *cli, args []string) error {
 		return err
 	}
 	c.logger.Info("mcp server on stdio", "dir", *c.dir, "default_budget", *defaultBudget)
-	srv := mcpserver.New(a, mcpOptions(*defaultBudget))
+	srv := mcpserver.New(a, mcpOptions(*defaultBudget, c.logger))
 	return srv.Run(ctx, &mcp.StdioTransport{})
 }
 
@@ -708,7 +708,7 @@ func printRates(w io.Writer, updates []app.RateUpdate) {
 	fmt.Fprintln(table, "CURRENCY\tOLD\tNEW\tFROM\tDATE")
 	for _, u := range updates {
 		if u.Error != "" {
-			fmt.Fprintf(table, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, u.Error)
+			fmt.Fprintf(table, "%s\t%s\t-\t%s\t\n", u.Code, u.Old, cmp.Or(u.Detail, u.Error))
 			continue
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", u.Code, u.Old, u.New, u.From, u.Date)

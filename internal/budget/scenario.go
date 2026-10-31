@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"errors"
 	"strings"
 
 	"bbbudget/internal/i18n"
@@ -71,7 +72,10 @@ type Outcome struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Error is set when the scenario no longer applies (e.g. its item was deleted).
+	// It is a fixed message; OpIndex and Op say which op of the scenario failed.
 	Error            string        `json:"error,omitempty"`
+	OpIndex          int           `json:"op_index,omitempty"`
+	Op               OpKind        `json:"op,omitempty"`
 	FirstMonthSaved  *money.Money  `json:"first_month_saved,omitempty"`
 	EndSavings       *money.Money  `json:"end_savings,omitempty"`
 	DeltaEndSavings  *money.Money  `json:"delta_end_savings,omitempty"`
@@ -111,18 +115,35 @@ func Compare(b Budget, refs []string, l *i18n.Localizer) ([]Outcome, error) {
 	for _, s := range scen {
 		variant, err := Apply(b, s.Ops...)
 		if err != nil {
-			out = append(out, Outcome{ID: s.ID, Name: s.Name, Error: err.Error()})
+			out = append(out, newFailedOutcome(s, err, l))
 			continue
 		}
 		rep, err := Analyze(variant)
 		if err != nil {
-			out = append(out, Outcome{ID: s.ID, Name: s.Name, Error: err.Error()})
+			out = append(out, newFailedOutcome(s, err, l))
 			continue
 		}
 		rep.Localize(l)
 		out = append(out, outcome(s.ID, s.Name, rep, baseline.EndSavings))
 	}
 	return out, nil
+}
+
+func newFailedOutcome(s Scenario, err error, l *i18n.Localizer) Outcome {
+	failed := Outcome{ID: s.ID, Name: s.Name}
+
+	var badOp *OpError
+	if errors.As(err, &badOp) {
+		failed.Error = l.Render(msg("compare.scenario_stale", nil))
+		failed.OpIndex = badOp.Index
+		failed.Op = badOp.Op
+
+		return failed
+	}
+
+	failed.Error = l.Render(msg("compare.scenario_failed", nil))
+
+	return failed
 }
 
 func outcome(id, name string, r *Report, baseEnd *money.Money) Outcome {

@@ -14,3 +14,5 @@ fp:db0dc5218c73
 fp:aec07e3204e6
 # A made-up home path in the first version of the notes tests, still in history.
 fp:00bb21ac6c83
+# A false positive: the constant in the wrapped-error tests is a fake path, still in history.
+fp:9acb85a8badb

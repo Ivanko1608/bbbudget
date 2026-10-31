@@ -235,6 +235,9 @@ func (p *Plan) MonthStatus(
 	return status, nil
 }
 
+// ErrBadMonth means a month was not written YYYY-MM.
+var ErrBadMonth = errors.New("month must be YYYY-MM")
+
 // ErrOutsideWindow means a month is before the budget's start or after its end.
 var ErrOutsideWindow = errors.New("outside the budget's window")
 
@@ -242,7 +245,7 @@ var ErrOutsideWindow = errors.New("outside the budget's window")
 func (p *Plan) monthIndex(month string) (int, time.Time, error) {
 	start, err := time.Parse("2006-01", month)
 	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("month must be YYYY-MM, got %q", month)
+		return 0, time.Time{}, fmt.Errorf("%w, got %q", ErrBadMonth, month)
 	}
 	index := (start.Year()-p.Start.Year())*12 + int(start.Month()-p.Start.Month())
 	if index < 0 || index >= p.Months {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -31,7 +32,7 @@ func (a *App) LogTransactions(
 	ctx context.Context, origin store.Origin, id string, inputs []budget.TransactionInput,
 ) (*LogResult, error) {
 	if len(inputs) == 0 {
-		return nil, fmt.Errorf("%w: no transactions given", ErrBadInput)
+		return nil, NewClientError(ErrBadInput, "no transactions given")
 	}
 	metadata := logMetadata{at: a.Now().UTC(), source: string(origin.Source)}
 	var result LogResult
@@ -232,7 +233,8 @@ func parseEndDate(bound string) (time.Time, error) {
 func parseDate(bound string) (time.Time, error) {
 	day, err := time.Parse(time.DateOnly, bound)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("%w: dates are YYYY-MM-DD or YYYY-MM, got %q", ErrBadInput, bound)
+		return time.Time{}, NewClientError(
+			ErrBadInput, "dates are YYYY-MM-DD or YYYY-MM, got %q", bound)
 	}
 	return day, nil
 }
@@ -265,7 +267,7 @@ func (a *App) UpdateTransaction(
 		hasID := func(t budget.Transaction) bool { return t.ID == transactionID }
 		i := slices.IndexFunc(transactions, hasID)
 		if i < 0 {
-			return nil, fmt.Errorf("%w: no transaction %q", store.ErrNotFound, transactionID)
+			return nil, NewClientError(store.ErrNotFound, "no transaction %q", transactionID)
 		}
 		plan, err := budget.Compile(b)
 		if err != nil {
@@ -323,7 +325,7 @@ func valueOr[T any](patch *T, old T) T {
 // none: an unknown id is an error.
 func (a *App) DeleteTransactions(ctx context.Context, id string, ids []string) (int, error) {
 	if len(ids) == 0 {
-		return 0, fmt.Errorf("%w: give the ids of the transactions to delete", ErrBadInput)
+		return 0, NewClientError(ErrBadInput, "give the ids of the transactions to delete")
 	}
 	return a.removeTransactions(ctx, id, func(
 		transactions []budget.Transaction,
@@ -335,7 +337,7 @@ func (a *App) DeleteTransactions(ctx context.Context, id string, ids []string) (
 // DeleteBatch removes every transaction logged in batch.
 func (a *App) DeleteBatch(ctx context.Context, id, batch string) (int, error) {
 	if batch == "" {
-		return 0, fmt.Errorf("%w: give the batch to delete", ErrBadInput)
+		return 0, NewClientError(ErrBadInput, "give the batch to delete")
 	}
 	return a.removeTransactions(ctx, id, func(
 		transactions []budget.Transaction,
@@ -369,7 +371,7 @@ func withoutIDs(transactions []budget.Transaction, ids []string) ([]budget.Trans
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("%w: no transaction %s", store.ErrNotFound, strings.Join(missing, ", "))
+		return nil, NewClientError(store.ErrNotFound, "no transaction %s", strings.Join(missing, ", "))
 	}
 	hasGivenID := func(t budget.Transaction) bool { return slices.Contains(ids, t.ID) }
 	return slices.DeleteFunc(slices.Clone(transactions), hasGivenID), nil
@@ -379,7 +381,7 @@ func withoutBatch(transactions []budget.Transaction, batch string) ([]budget.Tra
 	inBatch := func(t budget.Transaction) bool { return t.Batch == batch }
 	kept := slices.DeleteFunc(slices.Clone(transactions), inBatch)
 	if len(kept) == len(transactions) {
-		return nil, fmt.Errorf("%w: no transactions in batch %q", store.ErrNotFound, batch)
+		return nil, NewClientError(store.ErrNotFound, "no transactions in batch %q", batch)
 	}
 	return kept, nil
 }
@@ -403,8 +405,11 @@ func (a *App) MonthStatus(ctx context.Context, id, month string) (*budget.MonthS
 		month = a.Now().Format("2006-01")
 	}
 	status, err := plan.MonthStatus(month, ledger.Transactions, a.Now())
+	if errors.Is(err, budget.ErrBadMonth) || errors.Is(err, budget.ErrOutsideWindow) {
+		return nil, NewClientErrorFrom(ErrBadInput, err)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBadInput, err)
+		return nil, err
 	}
 	return status, nil
 }

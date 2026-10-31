@@ -26,7 +26,7 @@ import (
 
 const maxBody = 1 << 20
 
-const internalErrorMessage = "internal error"
+const internalErrorMessage = app.InternalErrorMessage
 
 var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
 
@@ -230,71 +230,6 @@ func (s *server) writeErr(w http.ResponseWriter, status int, msg string, issues 
 	s.writeJSON(w, status, errBody{Error: msg, Issues: issues})
 }
 
-// fail maps domain errors to HTTP statuses. Anything unrecognised is a 500
-// and is logged, with a generic message to the client.
-func (s *server) fail(w http.ResponseWriter, r *http.Request, err error) {
-	var (
-		invalid    *budget.ValidationError
-		conflict   *store.ConflictError
-		badOp      *budget.OpError
-		noMatch    *budget.NoMatchError
-		tooLarge   *http.MaxBytesError
-		rateFailed *app.RateError
-		undoLater  *app.UndoConflictError
-	)
-	switch {
-	case errors.As(err, &badOp): // checked first: a bad target inside an op is the caller's mistake
-		s.writeErr(w, http.StatusBadRequest, err.Error(), nil)
-	case errors.As(err, &invalid):
-		reader := s.reader(r)
-		issues := make([]budget.Issue, len(invalid.Issues))
-		for i, is := range invalid.Issues {
-			issues[i] = is.Localized(reader)
-		}
-		s.writeErr(w, http.StatusUnprocessableEntity, err.Error(), issues)
-	case errors.As(err, &undoLater):
-		app.LocalizeHistory(undoLater.Later, s.reader(r))
-		body := map[string]any{"error": err.Error(), "later": undoLater.Later}
-		s.writeJSON(w, http.StatusConflict, body)
-	case errors.Is(err, app.ErrNothingToUndo), errors.Is(err, app.ErrTooOld):
-		s.writeErr(w, http.StatusConflict, err.Error(), nil)
-	case errors.As(err, &conflict):
-		body := map[string]any{"error": err.Error(), "revision": conflict.Actual}
-		s.writeJSON(w, http.StatusConflict, body)
-	case errors.Is(err, store.ErrNotFound), errors.As(err, &noMatch):
-		s.writeErr(w, http.StatusNotFound, err.Error(), nil)
-	case errors.Is(err, store.ErrExists):
-		s.writeErr(w, http.StatusConflict, err.Error(), nil)
-	case errors.Is(err, app.ErrRatesOff):
-		s.writeErr(w, http.StatusConflict, app.ErrRatesOff.Error(), nil)
-	case errors.As(err, &rateFailed): // the rate provider failed, not us
-		s.writeErr(w, http.StatusBadGateway, err.Error(), nil)
-	case errors.As(err, &tooLarge):
-		s.writeErr(w, http.StatusRequestEntityTooLarge, "request body too large", nil)
-	case isBadRequest(err):
-		s.writeErr(w, http.StatusBadRequest, err.Error(), nil)
-	default:
-		s.opts.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-		s.writeErr(w, http.StatusInternalServerError, internalErrorMessage, nil)
-	}
-}
-
-var errBadRequest = errors.New("bad request")
-
-func isBadRequest(err error) bool {
-	var (
-		overflow  *money.ArithmeticError
-		badJSON   *json.SyntaxError
-		wrongType *json.UnmarshalTypeError
-	)
-	return errors.Is(err, store.ErrBadID) ||
-		errors.Is(err, errBadRequest) ||
-		errors.Is(err, app.ErrBadInput) ||
-		errors.As(err, &overflow) ||
-		errors.As(err, &badJSON) ||
-		errors.As(err, &wrongType)
-}
-
 func decode(r *http.Request, v any) error {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -303,7 +238,7 @@ func decode(r *http.Request, v any) error {
 		if errors.As(err, &me) {
 			return err
 		}
-		return errors.Join(errBadRequest, err)
+		return &badRequestError{cause: err}
 	}
 	return nil
 }
@@ -678,7 +613,18 @@ func (s *server) quote(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.logRateDetails(r, out)
 	s.writeJSON(w, http.StatusOK, out)
+}
+
+// logRateDetails logs the full error behind each failed rate update; the
+// client gets only the update's Error.
+func (s *server) logRateDetails(r *http.Request, updates []app.RateUpdate) {
+	for _, u := range updates {
+		if u.Detail != "" {
+			s.logRequestError(r, "rate update failed for "+u.Code, errors.New(u.Detail))
+		}
+	}
 }
 
 // refreshRates fetches and saves fresh rates: {codes?: [...]}; omitted means
@@ -695,8 +641,9 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var re *app.RateError
 		if errors.As(err, &re) && updates != nil {
+			s.logRateDetails(r, updates)
 			s.writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error":        err.Error(),
+				"error":        app.RateFetchFailedMessage,
 				"rate_updates": updates,
 			})
 			return
@@ -704,6 +651,7 @@ func (s *server) refreshRates(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.logRateDetails(r, updates)
 	v.Localize(s.reader(r))
 	s.writeJSON(w, http.StatusOK, struct {
 		*app.View
