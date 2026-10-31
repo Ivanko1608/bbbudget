@@ -145,8 +145,8 @@ func (s *server) guard(next http.Handler) http.Handler {
 			s.writeErr(w, http.StatusForbidden, "host not allowed", nil)
 			return
 		}
-		if r.URL.Path != "/mcp" && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if ct := r.Header.Get("Content-Type"); r.Method != http.MethodDelete && !strings.HasPrefix(ct, "application/json") {
+		if isMutation(r) {
+			if requiresJSON(r) {
 				s.writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json", nil)
 				return
 			}
@@ -159,6 +159,19 @@ func (s *server) guard(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isMutation(r *http.Request) bool {
+	isRead := r.Method == http.MethodGet || r.Method == http.MethodHead
+
+	return r.URL.Path != "/mcp" && !isRead
+}
+
+func requiresJSON(r *http.Request) bool {
+	contentType := r.Header.Get("Content-Type")
+	isJSON := strings.HasPrefix(contentType, "application/json")
+
+	return r.Method != http.MethodDelete && !isJSON
 }
 
 func (s *server) hostAllowed(hostport string) bool {
@@ -178,8 +191,6 @@ func (s *server) hostAllowed(hostport string) bool {
 	}
 	return false
 }
-
-// --- helpers ---
 
 type errBody struct {
 	Error  string         `json:"error"`
@@ -307,8 +318,6 @@ func decode(r *http.Request, v any) error {
 	}
 	return nil
 }
-
-// --- handlers ---
 
 // Writes through the API are made in the browser. The editor saves as you
 // type, and those saves merge into one history entry.
