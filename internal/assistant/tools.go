@@ -122,13 +122,9 @@ const (
 	toolCallFailedMessage   = "the tool call failed; see the server log"
 )
 
-// newFailedCall reports a call that failed before the MCP server answered. The
-// model gets the same {"error": message} content the server gives, and the
-// chat gets the message itself. The messages are plain text that needs no
-// JSON escaping.
+// newFailedCall reports a call that failed before the MCP server answered.
 func newFailedCall(call ToolCall, message string) (ToolResult, Event) {
-	content := `{"error":"` + message + `"}`
-	result := ToolResult{CallID: call.ID, Content: content, IsError: true}
+	result := ToolResult{CallID: call.ID, Content: message, IsError: true}
 	event := Event{Type: EventTool, Tool: call.Name, Error: message}
 
 	return result, event
