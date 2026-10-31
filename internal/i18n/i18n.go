@@ -253,7 +253,7 @@ func MatchAcceptLanguage(header string) string {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(params), "q="); ok {
 			q = parseQ(v)
 		}
-		if tag != "" && tag != "*" && q > 0 {
+		if isUsableLanguage(tag, q) {
 			candidates = append(candidates, cand{tag, q})
 		}
 	}
@@ -264,6 +264,12 @@ func MatchAcceptLanguage(header string) string {
 		}
 	}
 	return ""
+}
+
+func isUsableLanguage(tag string, q int) bool {
+	isNamed := tag != "" && tag != "*"
+
+	return isNamed && q > 0
 }
 
 // parseQ reads an HTTP quality value ("0.8", "1", "0.125") as thousandths;
@@ -285,11 +291,17 @@ func parseQ(v string) int {
 // FromEnv picks a locale from LC_ALL, LC_MESSAGES or LANG, or Default.
 func FromEnv() string {
 	for _, k := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		if v := os.Getenv(k); v != "" && v != "C" && v != "POSIX" {
+		if v := os.Getenv(k); isLocaleName(v) {
 			return Match(v)
 		}
 	}
 	return Default
+}
+
+func isLocaleName(v string) bool {
+	isPlaceholder := v == "C" || v == "POSIX"
+
+	return v != "" && !isPlaceholder
 }
 
 var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)
@@ -446,7 +458,7 @@ var pluralRules = map[string]pluralRule{
 		switch m10, m100 := n%10, n%100; {
 		case m10 == 1 && m100 != 11:
 			return "one"
-		case m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14):
+		case isSlavicFew(n):
 			return "few"
 		default:
 			return "many"
@@ -455,10 +467,10 @@ var pluralRules = map[string]pluralRule{
 	// Polish.
 	"polish": {[]string{"few", "many", "one"}, func(n int64) string {
 		n = abs(n)
-		switch m10, m100 := n%10, n%100; {
+		switch {
 		case n == 1:
 			return "one"
-		case m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14):
+		case isSlavicFew(n):
 			return "few"
 		default:
 			return "many"
@@ -471,6 +483,17 @@ var pluralRules = map[string]pluralRule{
 // PluralCategories lists the categories a rule can produce; each catalog
 // message with plural forms must cover them.
 func PluralCategories(rule string) []string { return pluralRules[rule].categories }
+
+// isSlavicFew is the CLDR "few" rule shared by Russian and Polish: the last digit
+// is 2 to 4, except in 12 to 14.
+func isSlavicFew(n int64) bool {
+	lastDigit := n % 10
+	lastTwoDigits := n % 100
+	endsInTwoToFour := lastDigit >= 2 && lastDigit <= 4
+	isTeen := lastTwoDigits >= 12 && lastTwoDigits <= 14
+
+	return endsInTwoToFour && !isTeen
+}
 
 func abs(n int64) int64 {
 	if n < 0 {

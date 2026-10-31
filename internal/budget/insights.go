@@ -243,6 +243,13 @@ func foreignIncome(p *Plan) map[string]money.Money {
 	return out
 }
 
+func isVolatileCryptoIncome(income money.Money) bool {
+	c := income.Currency()
+	isVolatileCrypto := c.Crypto && !c.Stable
+
+	return isVolatileCrypto && income.IsPositive()
+}
+
 // ruleCryptoIncome sizes the risk of income paid in a volatile cryptocurrency
 // (stablecoins are covered by the FX rules like any other currency).
 func ruleCryptoIncome(pr *Projection) []Insight {
@@ -251,7 +258,7 @@ func ruleCryptoIncome(pr *Projection) []Insight {
 	total := money.Zero(p.Base)
 	var codes []string
 	for _, code := range slices.Sorted(maps.Keys(fi)) {
-		if c := fi[code].Currency(); c.Crypto && !c.Stable && fi[code].IsPositive() {
+		if isVolatileCryptoIncome(fi[code]) {
 			total = total.Add(p.IncomeValue(fi[code], roundReceive))
 			codes = append(codes, code)
 		}
