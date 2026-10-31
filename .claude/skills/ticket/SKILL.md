@@ -174,9 +174,9 @@ List them under **Where to look** in the PR description, one line each: `` `<pat
 
 While a pull request is open, follow-up work on it goes into that pull request as new commits: leftovers from a review, wording fixes, and anything the user asks for in the session. Don't open a new issue or pull request for it.
 
-File a new issue only when the work falls outside the issue's scope or feature, or when part of it must land first. A rule change is its own commit, not its own issue. When unsure, ask the user instead of filing.
+File a new issue only when the work belongs to a different feature, or when part of it must land first. A rule change is its own commit, not its own issue. When unsure, ask the user instead of filing.
 
-New commits after a `merge` verdict get one review of just those commits, as in step 5, and a fresh CI run before the hand-back.
+New commits after a `merge` verdict get one review of just those commits (`git diff <last reviewed commit>..HEAD`) with step 5's instructions, then a fresh CI run before the hand-back. On `changes needed`, step 6 applies.
 
 ## Writing a new ticket
 
