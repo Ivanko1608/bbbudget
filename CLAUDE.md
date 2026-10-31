@@ -34,14 +34,14 @@ This file is about one thing: **code that a stranger understands on the first re
 ## Go
 
 - **Accept interfaces, return structs.** Define interfaces in the consumer package, small (1–3 methods), describing only what the consumer uses.
-- **Sentinel errors are specific to one case** (`ErrNothingToUndo`, not `ErrFailed`). Translate filesystem errors into them at the store boundary, so upper layers never import `os`. Check with `errors.Is`.
+- **Sentinel errors are specific to one case** (`ErrNothingToUndo`, not `ErrFailed`). Translate filesystem errors into them at the store boundary, so upper layers never check filesystem errors. Check with `errors.Is`.
 - **Wrap errors with context:** `fmt.Errorf("budget %s is corrupt: %w", id, err)`.
 - **Never ignore errors.** If one truly can't be handled, log it and say why.
 - **Library code returns errors;** only `main` calls `log.Fatal` or `os.Exit`.
 - **Return a zero value with the error.** Return `(T{}, err)` or `(nil, err)`, and never use the value when `err != nil`.
 - **Keep the HTTP layer thin:** parse, call `app.App`, map, respond. Response DTOs live in the handler package.
 - **Use `ServeMux` patterns** like `GET /api/budgets/{id}` with `r.PathValue("id")`.
-- **No premature abstraction.** Don't add layers, options or plug-in points for a case that doesn't exist yet. Named helpers that make a function read as steps, and consumer interfaces for fakes, are not premature.
+- **No premature abstraction.** Don't add layers, configuration flags or plug-in points for a case that doesn't exist yet. Named helpers that make a function read as steps, and consumer interfaces for fakes, are not premature.
 
 ## Names
 
