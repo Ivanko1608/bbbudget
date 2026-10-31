@@ -55,7 +55,6 @@ type Arg struct {
 	Sep  string `json:"sep,omitempty"`
 }
 
-// Helpers for building arguments.
 func Money(m money.Money) Arg { return Arg{Money: &m} }
 func Month(ym string) Arg     { return Arg{Month: ym} }
 func Int(n int64) Arg         { return Arg{Int: &n} }
@@ -155,11 +154,11 @@ func parseCatalog(locale string, raw []byte) (*Catalog, error) {
 
 // Catalogs returns every built-in catalog by locale.
 func Catalogs() map[string]*Catalog {
-	cs, err := catalogs()
+	byLocale, err := catalogs()
 	if err != nil {
 		panic("i18n: " + err.Error()) // embedded files; caught by the tests
 	}
-	return cs
+	return byLocale
 }
 
 // Locales lists the available locales, sorted.
@@ -199,8 +198,8 @@ type Localizer struct {
 // For returns a Localizer for the best match of tag ("de", "de-AT", "en-GB");
 // unknown tags get English.
 func For(tag string) *Localizer {
-	cs := Catalogs()
-	return &Localizer{cat: cs[Match(tag)], fallback: cs[Default]}
+	byLocale := Catalogs()
+	return &Localizer{cat: byLocale[Match(tag)], fallback: byLocale[Default]}
 }
 
 // Locale is the locale actually used.
@@ -228,12 +227,12 @@ func supported(tag string) (string, bool) {
 	if i := strings.IndexAny(tag, ".@"); i >= 0 { // POSIX: de_DE.UTF-8
 		tag = tag[:i]
 	}
-	cs := Catalogs()
-	if _, ok := cs[tag]; ok {
+	byLocale := Catalogs()
+	if _, ok := byLocale[tag]; ok {
 		return tag, true
 	}
 	if base, _, _ := strings.Cut(tag, "-"); base != "" {
-		if _, ok := cs[base]; ok {
+		if _, ok := byLocale[base]; ok {
 			return base, true
 		}
 	}
@@ -247,19 +246,19 @@ func MatchAcceptLanguage(header string) string {
 		tag string
 		q   int // thousandths
 	}
-	var cands []cand
+	var candidates []cand
 	for _, part := range strings.Split(header, ",") {
 		tag, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		q := 1000
 		if v, ok := strings.CutPrefix(strings.TrimSpace(params), "q="); ok {
 			q = parseQ(v)
 		}
-		if tag != "" && tag != "*" && q > 0 {
-			cands = append(cands, cand{tag, q})
+		if isUsableLanguage(tag, q) {
+			candidates = append(candidates, cand{tag, q})
 		}
 	}
-	slices.SortStableFunc(cands, func(a, b cand) int { return cmp.Compare(b.q, a.q) })
-	for _, c := range cands {
+	slices.SortStableFunc(candidates, func(a, b cand) int { return cmp.Compare(b.q, a.q) })
+	for _, c := range candidates {
 		if m, ok := supported(c.tag); ok {
 			return m
 		}
@@ -267,11 +266,19 @@ func MatchAcceptLanguage(header string) string {
 	return ""
 }
 
+func isUsableLanguage(tag string, q int) bool {
+	isNamed := tag != "" && tag != "*"
+
+	return isNamed && q > 0
+}
+
 // parseQ reads an HTTP quality value ("0.8", "1", "0.125") as thousandths;
 // anything malformed is 0, which drops the language.
 func parseQ(v string) int {
 	whole, frac, _ := strings.Cut(strings.TrimSpace(v), ".")
-	if (whole != "0" && whole != "1") || len(frac) > 3 || strings.Trim(frac, "0123456789") != "" {
+	validWhole := whole == "0" || whole == "1"
+	validFraction := len(frac) <= 3 && strings.Trim(frac, "0123456789") == ""
+	if !validWhole || !validFraction {
 		return 0
 	}
 	thousandths, _ := strconv.Atoi(frac + strings.Repeat("0", 3-len(frac)))
@@ -284,11 +291,17 @@ func parseQ(v string) int {
 // FromEnv picks a locale from LC_ALL, LC_MESSAGES or LANG, or Default.
 func FromEnv() string {
 	for _, k := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		if v := os.Getenv(k); v != "" && v != "C" && v != "POSIX" {
+		if v := os.Getenv(k); isSpecificLocale(v) {
 			return Match(v)
 		}
 	}
 	return Default
+}
+
+func isSpecificLocale(v string) bool {
+	isPOSIXDefault := v == "C" || v == "POSIX"
+
+	return v != "" && !isPOSIXDefault
 }
 
 var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)
@@ -296,23 +309,23 @@ var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)
 // Render renders a message. Missing keys render as the key itself, so a gap
 // is visible rather than blank (the catalog tests keep that from shipping).
 func (l *Localizer) Render(m Msg) string {
-	cat := l.cat
-	forms, ok := cat.Forms(m.Key)
+	catalog := l.cat
+	forms, ok := catalog.Forms(m.Key)
 	if !ok {
-		cat = l.fallback
-		forms, ok = cat.Forms(m.Key)
+		catalog = l.fallback
+		forms, ok = catalog.Forms(m.Key)
 	}
 	if !ok {
 		return m.Key
 	}
 	text, ok := forms[""]
 	if !ok {
-		text = pluralText(cat, forms, m.Args["count"])
+		text = pluralText(catalog, forms, m.Args["count"])
 	}
-	return placeholder.ReplaceAllStringFunc(text, func(ph string) string {
-		a, ok := m.Args[ph[1:len(ph)-1]]
+	return placeholder.ReplaceAllStringFunc(text, func(token string) string {
+		a, ok := m.Args[token[1:len(token)-1]]
 		if !ok {
-			return ph
+			return token
 		}
 		return l.Arg(a)
 	})
@@ -320,12 +333,12 @@ func (l *Localizer) Render(m Msg) string {
 
 // pluralText picks the form for count with the rule of the catalog the
 // message came from (a fallback's English forms need English rules).
-func pluralText(cat *Catalog, forms map[string]string, count Arg) string {
+func pluralText(catalog *Catalog, forms map[string]string, count Arg) string {
 	var n int64
 	if count.Int != nil {
 		n = *count.Int
 	}
-	if t, ok := forms[pluralRules[cat.Meta.Plural].pick(n)]; ok {
+	if t, ok := forms[pluralRules[catalog.Meta.Plural].pick(n)]; ok {
 		return t
 	}
 	return forms["other"]
@@ -410,17 +423,11 @@ func splitSign(d string) (sign, digits string) {
 // unsigned renders digits without a sign: groups, then the decimal part.
 func (l *Localizer) unsigned(digits string) string {
 	intPart, frac, _ := strings.Cut(digits, ".")
-	var b strings.Builder
-	for i, ch := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			b.WriteString(l.cat.Meta.Group)
-		}
-		b.WriteRune(ch)
-	}
+	num := money.GroupDigits(intPart, l.cat.Meta.Group)
 	if frac != "" {
-		b.WriteString(l.cat.Meta.Decimal + frac)
+		num += l.cat.Meta.Decimal + frac
 	}
-	return b.String()
+	return num
 }
 
 // pluralRule maps a whole number to its CLDR plural category.
@@ -451,7 +458,7 @@ var pluralRules = map[string]pluralRule{
 		switch m10, m100 := n%10, n%100; {
 		case m10 == 1 && m100 != 11:
 			return "one"
-		case m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14):
+		case isSlavicFew(n):
 			return "few"
 		default:
 			return "many"
@@ -460,10 +467,10 @@ var pluralRules = map[string]pluralRule{
 	// Polish.
 	"polish": {[]string{"few", "many", "one"}, func(n int64) string {
 		n = abs(n)
-		switch m10, m100 := n%10, n%100; {
+		switch {
 		case n == 1:
 			return "one"
-		case m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14):
+		case isSlavicFew(n):
 			return "few"
 		default:
 			return "many"
@@ -476,6 +483,15 @@ var pluralRules = map[string]pluralRule{
 // PluralCategories lists the categories a rule can produce; each catalog
 // message with plural forms must cover them.
 func PluralCategories(rule string) []string { return pluralRules[rule].categories }
+
+func isSlavicFew(n int64) bool {
+	lastDigit := n % 10
+	lastTwoDigits := n % 100
+	endsInTwoToFour := lastDigit >= 2 && lastDigit <= 4
+	isTeen := lastTwoDigits >= 12 && lastTwoDigits <= 14
+
+	return endsInTwoToFour && !isTeen
+}
 
 func abs(n int64) int64 {
 	if n < 0 {
