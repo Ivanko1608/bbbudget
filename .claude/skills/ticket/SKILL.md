@@ -105,18 +105,17 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - Check each acceptance criterion: met, partly met or not met, with evidence.
    - Check correctness and the rules in `CONTRIBUTING.md`.
    - Do a separate style pass. Read `CLAUDE.md` and go through every section (Structure, Expressions, Go, Names, Comments, Tests, JavaScript) against each added or changed hunk.
-   - Report findings in three tiers, each with `file:line` and the rule it breaks:
+   - Report findings in two tiers, each with `file:line` and the rule it breaks:
      - Blocking: a violation in new or changed code.
-     - Should-fix notes, for the user: a case you're unsure about, and any note that is not blocking.
-     - Nitpicks: small, low-priority points, such as a better name, a tighter line or a clearer message. Report them even when you think the build agent may skip them.
+     - Should-fix notes, for the user: a case you're unsure about, and any note that is not blocking. A naming or wording point that breaks no written rule goes here if it matters, and is dropped otherwise.
    - Check that every surprising change is listed under **Where to look** in the PR description. A missing one is a blocking finding.
    - Check that the PR description's feature, Why and decisions match the issue. A mismatch is a blocking finding.
    - Check that no rule change is mixed into other work. A mixed one is a blocking finding.
    - Run `gh pr checks <pr>`. A failing check is a blocking finding.
    - Write the review to a uniquely named file inside your own worktree, and never post it or any other comment on the PR. Only humans comment on pull requests.
-   - Reply with a verdict, `merge` or `changes needed`. The verdict is `changes needed` only when there is at least one blocking finding. Then list the blocking findings, the should-fix notes, the nitpicks and the path of the review file.
+   - Reply with a verdict, `merge` or `changes needed`. The verdict is `changes needed` only when there is at least one blocking finding. Then list the blocking findings, the should-fix notes and the path of the review file.
 
-6. **Fix, at most four times.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Add the nitpicks to that message, marked optional: the agent may skip any of them, and its reply says which ones it skipped, with a one-line reason each. Nitpicks never start a fix round by themselves and never count toward the same-findings stop below. Should-fix notes, and findings the reviewer or you doubt, are not sent. They go to the user in the hand-back. Each fix round that changes the approach adds a decision line, and every new surprising change is added to **Where to look**, as in step 4. Stop and hand the rest to the user when either holds:
+6. **Fix, at most four times.** On `changes needed`, send the blocking findings back to the Sonnet agent with `SendMessage`, then review again. Should-fix notes, and findings the reviewer or you doubt, are not sent. They go to the user in the hand-back. Each fix round that changes the approach adds a decision line, and every new surprising change is added to **Where to look**, as in step 4. Stop and hand the rest to the user when either holds:
    - Four fix rounds have run.
    - A review reports the same blocking findings as the one before. Two findings are the same when they name the same file and the same problem. Hand those findings to the user.
 
@@ -125,7 +124,12 @@ List the queue with `gh issue list --label ready` and `gh issue list --label nee
    - A check fails: send the failure to the Sonnet agent. This counts as a fix round toward the four, and the same stop rules apply.
    - A check never started (no steps, failed within seconds, or an annotation about billing or runners): the verdict is `waiting on CI`. Tell the user why, quoting the annotation.
 
-8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing: the should-fix notes, the doubtful findings, every nitpick nobody fixed: those skipped in any round, with reasons, and those from the final review, and any blocking findings left when the loop stopped. For the tokens, take each agent's total from its latest task notification, since the total is cumulative and earlier notifications are already included, then round it and add the agents up (for example "build about 60k, review about 140k, about 200k in all"). Give `gh pr merge <pr> --squash` only when every check passed.
+8. **Hand back.** `gh issue edit <n> --remove-label in-progress --add-label in-review`, and set the board Status. Comment on the issue with the PR link, the verdict, the CI result, how many fix rounds ran, and roughly how many tokens the build and review agents used. Tell the user the same, plus the PR number, the feature, and everything not sent back for fixing:
+   - the should-fix notes;
+   - the doubtful findings;
+   - any blocking findings left when the loop stopped.
+
+   For the tokens, take each agent's total from its latest task notification, since the total is cumulative and earlier notifications are already included, then round it and add the agents up (for example "build about 60k, review about 140k, about 200k in all"). Give `gh pr merge <pr> --squash` only when every check passed.
 
 When the user gives direction in the session at any point, record it as a decision before acting on it.
 
