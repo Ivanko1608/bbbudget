@@ -401,6 +401,14 @@ func TestMetaListsCrypto(t *testing.T) {
 	eq(t, "BTC digits", digits["BTC"], 8.0)
 }
 
+func TestMetaReportsAPIVersion(t *testing.T) {
+	c := setup(t)
+
+	v := c.do("GET", "/api/meta", "", 200)
+
+	eq(t, "api version", v["api_version"], 1.0)
+}
+
 // Budgets saved before pots existed (no "pots"/"withdrawals") or saved with
 // null lists must load with every list as [], never null: the UI iterates them.
 func TestOldStoredBudgetsLoadWithoutNullLists(t *testing.T) {
