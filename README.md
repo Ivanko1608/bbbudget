@@ -412,6 +412,9 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `POST /api/budgets/{id}/chat` `{message, conversation?}` | ask the assistant; server-sent events `text`, `tool`, `changed`, then `error` if the reply failed, and always `done` with the `conversation` to continue |
 | `GET /api/notes` · `DELETE /api/notes/{id}` | the notes kept about you, each with `text`, `source` (`chat`, `statement_import` or `connector`) and `created_at`; at most 50 notes of 200 characters; kept in `.notes.json` beside the budgets |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
+| `GET /api/meta` | what the server supports: `api_version`, currencies, rate sources, templates, op kinds, strategies and locales |
+
+`api_version` starts at 1 and goes up only for a breaking change; new fields and endpoints don't change it. The server keeps the previous version working for at least one app release, since apps in the stores lag behind servers. There are no `/api/v1` prefixes.
 
 The server binds to 127.0.0.1 and accepts only these requests:
 
