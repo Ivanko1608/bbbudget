@@ -291,17 +291,17 @@ func parseQ(v string) int {
 // FromEnv picks a locale from LC_ALL, LC_MESSAGES or LANG, or Default.
 func FromEnv() string {
 	for _, k := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		if v := os.Getenv(k); isLocaleName(v) {
+		if v := os.Getenv(k); isSpecificLocale(v) {
 			return Match(v)
 		}
 	}
 	return Default
 }
 
-func isLocaleName(v string) bool {
-	isPlaceholder := v == "C" || v == "POSIX"
+func isSpecificLocale(v string) bool {
+	isPOSIXDefault := v == "C" || v == "POSIX"
 
-	return v != "" && !isPlaceholder
+	return v != "" && !isPOSIXDefault
 }
 
 var placeholder = regexp.MustCompile(`\{([a-z_0-9]+)\}`)
@@ -484,8 +484,6 @@ var pluralRules = map[string]pluralRule{
 // message with plural forms must cover them.
 func PluralCategories(rule string) []string { return pluralRules[rule].categories }
 
-// isSlavicFew is the CLDR "few" rule shared by Russian and Polish: the last digit
-// is 2 to 4, except in 12 to 14.
 func isSlavicFew(n int64) bool {
 	lastDigit := n % 10
 	lastTwoDigits := n % 100
