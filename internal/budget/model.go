@@ -112,8 +112,8 @@ func FormatRateSources() string {
 // IsManual reports whether the rate is typed by hand rather than fetched.
 func (r CurrencyRate) IsManual() bool { return r.Source == "" || r.Source == RateSourceManual }
 
-// GetCurrencyRate returns the budget's currency with the given code.
-func (b Budget) GetCurrencyRate(code string) (CurrencyRate, bool) {
+// GetCurrencyRateByCode returns the budget's currency with the given code.
+func (b Budget) GetCurrencyRateByCode(code string) (CurrencyRate, bool) {
 	i := slices.IndexFunc(b.Currencies, func(c CurrencyRate) bool { return c.Code == code })
 	if i < 0 {
 		return CurrencyRate{}, false
