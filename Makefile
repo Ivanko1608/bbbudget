@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 GOLANGCI_LINT_VERSION := v2.15.0
 
-.PHONY: build test race cover lint check-no-lint check eval e2e run mcp hooks clean
+.PHONY: build test race cover lint check-no-lint check eval e2e mobile run mcp hooks clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/bbbudget ./cmd/bbbudget
@@ -35,6 +35,11 @@ eval:
 # Needs Node 22+; skipped when no Chromium is found.
 e2e: build
 	node --test e2e/*.test.mjs
+
+# Flutter app checks (needs Flutter on PATH). Not part of check until CI
+# installs Flutter, so check keeps passing where Flutter isn't installed.
+mobile:
+	cd mobile && flutter pub get && flutter analyze && flutter test
 
 run: build
 	./bin/bbbudget serve
