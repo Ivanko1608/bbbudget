@@ -1,5 +1,1 @@
 # leakscan false positives. Fingerprints are truncated hashes, safe to commit.
-# The fake API key in an old HTTP test.
-fp:aec07e3204e6
-# A made-up home path in the first version of the notes tests, still in history.
-fp:00bb21ac6c83
