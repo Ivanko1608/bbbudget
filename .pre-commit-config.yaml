@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/Ivanko1608/tinfoil
-    rev: v1.1.0
+    rev: v1.2.0
     hooks:
       - id: tinfoil
         args: [--fail-on, medium]

@@ -1,16 +1,1 @@
 # leakscan false positives. Fingerprints are truncated hashes, safe to commit.
-# "/api/budgets/home…" routes in the HTTP tests read as a /home/<user> path.
-fp:1baf37dd77c0
-fp:e3f87d76a748
-fp:3aa27dabe73a
-fp:75338f768fc5
-fp:1596a868206d
-fp:2eaef9c3eca3
-fp:2f80e999216e
-fp:3b8961c662a9
-fp:c0f5e0912a80
-fp:db0dc5218c73
-# The fake API key in an old HTTP test.
-fp:aec07e3204e6
-# A made-up home path in the first version of the notes tests, still in history.
-fp:00bb21ac6c83

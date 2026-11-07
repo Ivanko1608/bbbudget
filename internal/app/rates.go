@@ -40,19 +40,21 @@ func (e *RateError) Unwrap() error { return e.Err }
 // ErrBadInput marks a request the caller got wrong (unknown currency or source).
 var ErrBadInput = errors.New("bad input")
 
-func (a *App) requireFetching() error {
-	s, err := a.Settings()
+func (a *App) checkRateFetchingEnabled() error {
+	settings, err := a.Settings()
 	if err != nil {
 		return err
 	}
-	if !s.FetchRates {
+
+	if !settings.FetchRates {
 		return ErrRatesOff
 	}
+
 	return nil
 }
 
 func (a *App) provider(source budget.RateSource) (rates.Provider, error) {
-	if err := a.requireFetching(); err != nil {
+	if err := a.checkRateFetchingEnabled(); err != nil {
 		return nil, err
 	}
 	if source == "" || source == budget.RateSourceManual {
@@ -185,8 +187,8 @@ func (a *App) PreviewRates(ctx context.Context, id string, codes []string) ([]Ra
 func isCurrencyChangedOrRemoved(
 	code string, originalBudget, currentBudget budget.Budget,
 ) bool {
-	originalRate, _ := originalBudget.GetCurrencyRate(code)
-	currentRate, found := currentBudget.GetCurrencyRate(code)
+	originalRate, _ := originalBudget.GetCurrencyRateByCode(code)
+	currentRate, found := currentBudget.GetCurrencyRateByCode(code)
 	if !found {
 		return true
 	}
@@ -212,7 +214,7 @@ func (a *App) fetchRates(
 	} else {
 		for _, code := range codes {
 			code = strings.ToUpper(strings.TrimSpace(code))
-			currency, found := original.GetCurrencyRate(code)
+			currency, found := original.GetCurrencyRateByCode(code)
 			if !found {
 				return nil, &budget.NoMatchError{Kind: "currency", Ref: code}
 			}
@@ -225,7 +227,7 @@ func (a *App) fetchRates(
 	if len(targets) == 0 {
 		return []RateUpdate{}, nil
 	}
-	if err := a.requireFetching(); err != nil {
+	if err := a.checkRateFetchingEnabled(); err != nil {
 		return nil, err
 	}
 
@@ -279,7 +281,7 @@ func (a *App) SetCurrency(
 	if err != nil {
 		return nil, err
 	}
-	_, exists := r.Budget.GetCurrencyRate(code)
+	_, exists := r.Budget.GetCurrencyRateByCode(code)
 	if patch.PerBase == nil && (!exists || patch.Source != nil) {
 		src := a.defaultRateSource()
 		if patch.Source != nil {

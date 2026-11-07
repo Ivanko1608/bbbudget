@@ -39,9 +39,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Ivanko1608/tinfoil@v1.1.0
+      - uses: Ivanko1608/tinfoil@v1.2.0
         with:
           history: "true"
+          history-rev: HEAD
           fail-on: medium
       - uses: gitleaks/gitleaks-action@v3
         env:
