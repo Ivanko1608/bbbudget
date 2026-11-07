@@ -160,6 +160,9 @@ func Monthly() Schedule { return Schedule{Every: 1} }
 // Once applies only in month m.
 func Once(m int) Schedule { return Schedule{Start: m} }
 
+// IsOneOff reports whether the schedule applies in a single month.
+func (s Schedule) IsOneOff() bool { return s.Every == 0 }
+
 // ActiveIn reports whether the schedule applies in month m.
 func (s Schedule) ActiveIn(m int) bool {
 	if m < s.Start || (s.End != nil && m > *s.End) {

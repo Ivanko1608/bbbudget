@@ -197,18 +197,23 @@ func (m Money) Display() string {
 	return m.format(d.Scale(), d.Rat())
 }
 
+// GroupDigits puts separator between each group of three digits, counted from the right.
+func GroupDigits(digits, separator string) string {
+	var b strings.Builder
+	for i, ch := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteString(separator)
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
+}
+
 func (m Money) format(digits int, v *big.Rat) string {
 	neg := v.Sign() < 0
 	s := new(big.Rat).Abs(v).FloatString(digits)
 	intPart, frac, _ := strings.Cut(s, ".")
-	var b strings.Builder
-	for i, ch := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(ch)
-	}
-	num := b.String()
+	num := GroupDigits(intPart, ",")
 	if frac != "" {
 		num += "." + frac
 	}
