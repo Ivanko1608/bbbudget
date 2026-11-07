@@ -249,7 +249,7 @@ func TestNoteErrorsMapToStatuses(t *testing.T) {
 			s := &server{opts: Options{}}
 			w := httptest.NewRecorder()
 
-			s.failNote(w, httptest.NewRequest("GET", "/api/notes", nil), tt.err)
+			s.fail(w, httptest.NewRequest("GET", "/api/notes", nil), tt.err)
 
 			eq(t, "status", w.Code, tt.want)
 			var body errBody

@@ -1,1 +1,3 @@
 # leakscan false positives. Fingerprints are truncated hashes, safe to commit.
+# A false positive: the constant in the wrapped-error tests is a fake path, still in history.
+fp:9acb85a8badb

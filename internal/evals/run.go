@@ -2,6 +2,7 @@ package evals
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -65,7 +66,11 @@ func createApp(ctx context.Context, dir, template string) (*app.App, error) {
 }
 
 func newAssistant(budgetApp *app.App, provider assistant.Provider) *assistant.Assistant {
-	budgetAssistant := assistant.New(budgetApp, func() (assistant.Provider, error) { return provider, nil })
+	budgetAssistant := assistant.New(
+		budgetApp,
+		func() (assistant.Provider, error) { return provider, nil },
+		slog.New(slog.DiscardHandler),
+	)
 	budgetAssistant.Now = func() time.Time { return Today }
 	return budgetAssistant
 }

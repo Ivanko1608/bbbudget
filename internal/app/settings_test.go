@@ -1,11 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
 )
+
+var quiet = slog.New(slog.DiscardHandler)
 
 func ptr[T any](v T) *T { return &v }
 
@@ -119,13 +124,13 @@ func TestRefreshIfDue(t *testing.T) {
 		t.Fatal("coingecko is down in the test app") // so USD stays manual
 	}
 
-	ran, err := a.RefreshIfDue(ctx)
+	ran, err := a.RefreshIfDue(ctx, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	eq(t, "ran with auto-refresh off by default", ran, false)
 	withSettings(t, a, settings.Patch{AutoRefresh: ptr("hourly")})
-	ran, err = a.RefreshIfDue(ctx)
+	ran, err = a.RefreshIfDue(ctx, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +141,7 @@ func TestRefreshIfDue(t *testing.T) {
 	eq(t, "currencies updated", st.Updated, 1)
 	eq(t, "failures", len(st.Failures), 0)
 	now = now.Add(59 * time.Minute)
-	if ran, _ = a.RefreshIfDue(ctx); ran {
+	if ran, _ = a.RefreshIfDue(ctx, quiet); ran {
 		t.Fatal("ran before the hour was up")
 	}
 	now = now.Add(time.Minute)
@@ -145,7 +150,7 @@ func TestRefreshIfDue(t *testing.T) {
 	if _, err = a.Apply(ctx, byTest, "home", store.AnyRevision, btcToGecko); err != nil {
 		t.Fatal(err)
 	}
-	ran, err = a.RefreshIfDue(ctx)
+	ran, err = a.RefreshIfDue(ctx, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +161,7 @@ func TestRefreshIfDue(t *testing.T) {
 
 	withSettings(t, a, settings.Patch{FetchRates: ptr(false)})
 	now = now.Add(2 * time.Hour)
-	if ran, _ := a.RefreshIfDue(ctx); ran {
+	if ran, _ := a.RefreshIfDue(ctx, quiet); ran {
 		t.Fatal("auto-refresh ran with fetching turned off")
 	}
 }
@@ -196,18 +201,43 @@ func TestFailedAutoRefreshRetriesSoon(t *testing.T) {
 	up := a.Rates[budget.RateSourceAuto]
 	a.Rates[budget.RateSourceAuto] = down
 
-	ran, _ := a.RefreshIfDue(ctx)
+	ran, _ := a.RefreshIfDue(ctx, quiet)
 	eq(t, "first run happened", ran, true)
 	eq(t, "currencies updated while down", a.AutoRefresh().Updated, 0)
 	now = now.Add(9 * time.Minute)
-	ran, _ = a.RefreshIfDue(ctx)
+	ran, _ = a.RefreshIfDue(ctx, quiet)
 	eq(t, "retried too soon", ran, false)
 	a.Rates[budget.RateSourceAuto] = up
 	now = now.Add(time.Minute)
-	ran, _ = a.RefreshIfDue(ctx)
+	ran, _ = a.RefreshIfDue(ctx, quiet)
 	eq(t, "retried after 10 minutes", ran, true)
 	eq(t, "currencies updated after retry", a.AutoRefresh().Updated, 1)
 	now = now.Add(time.Hour)
-	ran, _ = a.RefreshIfDue(ctx)
+	ran, _ = a.RefreshIfDue(ctx, quiet)
 	eq(t, "ran again within the full interval", ran, false)
+}
+
+func TestAutoRefreshStatusKeepsErrorTextOutOfFailures(t *testing.T) {
+	a, ctx := testApp(t), context.Background()
+	if _, _, err := a.RefreshRates(ctx, byTest, "home", []string{"USD"}); err != nil {
+		t.Fatal(err)
+	}
+	withSettings(t, a, settings.Patch{AutoRefresh: ptr("daily")})
+	const upstreamText = "dial tcp: lookup rates.invalid: network is unreachable"
+	a.Rates[budget.RateSourceAuto] = rates.Fixed{
+		ID:  budget.RateSourceAuto,
+		Err: errors.New(upstreamText),
+	}
+	var logged bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logged, nil))
+
+	_, err := a.RefreshIfDue(ctx, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	failures := strings.Join(a.AutoRefresh().Failures, "\n")
+	eq(t, "failures are reported", failures != "", true)
+	eq(t, "failures hold the upstream text", strings.Contains(failures, upstreamText), false)
+	eq(t, "log holds the upstream text", strings.Contains(logged.String(), upstreamText), true)
 }

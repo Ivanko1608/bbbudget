@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -31,7 +32,11 @@ func (greeting) SendResults(context.Context, []assistant.ToolResult) (assistant.
 }
 
 func withGreeter(a *app.App) *assistant.Assistant {
-	return assistant.New(a, func() (assistant.Provider, error) { return greeter{}, nil })
+	return assistant.New(
+		a,
+		func() (assistant.Provider, error) { return greeter{}, nil },
+		slog.New(slog.DiscardHandler),
+	)
 }
 
 // eventsOf decodes a server-sent event stream.

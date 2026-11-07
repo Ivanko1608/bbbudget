@@ -141,7 +141,7 @@ func (a *App) planUndo(
 	}
 	change, found := findChange(history, revision)
 	if !found {
-		err = fmt.Errorf("%w: r%d is not a change in the history of %s", ErrBadInput, revision, id)
+		err = NewClientError(ErrBadInput, "r%d is not a change in the history of %s", revision, id)
 		return undoPlan{}, err
 	}
 	if err := checkUndoable(change.entry); err != nil {

@@ -61,7 +61,7 @@ func (a *Assistant) createChat(ctx context.Context, budget string) (*chat, error
 	if err != nil {
 		return nil, err
 	}
-	tools, err := connectTools(ctx, a.App, budget)
+	tools, err := connectTools(ctx, a.App, budget, a.Log)
 	if err != nil {
 		return nil, err
 	}

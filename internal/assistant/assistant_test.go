@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -82,7 +83,11 @@ func newAssistant(t *testing.T, model *script) *Assistant {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assistant := New(a, func() (Provider, error) { return model, nil })
+	assistant := New(
+		a,
+		func() (Provider, error) { return model, nil },
+		slog.New(slog.DiscardHandler),
+	)
 	assistant.Now = func() time.Time { return testNow }
 	return assistant
 }
@@ -245,6 +250,33 @@ func TestToolErrorsGoBackToTheModel(t *testing.T) {
 				t.Errorf("content lacks %q: %s", c.want, result.Content)
 			}
 		})
+	}
+}
+
+func TestAFailedToolShowsTheChatOnlyTheFixedMessage(t *testing.T) {
+	failing := call("1", "update_item", `{"item":"nothing like it","amount":"1"}`)
+	model := &script{turns: []Turn{calls(failing), says("Sorry, which item?")}}
+	assistant := newAssistant(t, model)
+
+	events, _ := ask(t, assistant, "", "change it")
+
+	var shown string
+	for _, event := range events {
+		if event.Type == EventTool {
+			shown = event.Error
+		}
+	}
+	want := `op 1 (set_item): no item matches "nothing like it"`
+	if shown != want {
+		t.Errorf("chat shows %q, want %q", shown, want)
+	}
+}
+
+func TestAToolResultInAnyOtherShapeIsNotShown(t *testing.T) {
+	shown := parseErrorMessage("open /wrapper/path: permission denied")
+
+	if shown != toolCallFailedMessage {
+		t.Errorf("chat shows %q, want %q", shown, toolCallFailedMessage)
 	}
 }
 

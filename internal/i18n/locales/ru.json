@@ -64,6 +64,8 @@
   "list.and": "{a} и {b}",
 
   "compare.baseline": "Текущий бюджет",
+  "compare.scenario_stale": "Этот сценарий больше не подходит к бюджету.",
+  "compare.scenario_failed": "Этот сценарий не удаётся рассчитать.",
 
   "change.list": "{items}",
   "change.none": "без изменений",

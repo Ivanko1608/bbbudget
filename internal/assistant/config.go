@@ -9,6 +9,10 @@ import (
 	"bbbudget/internal/settings"
 )
 
+// problemUnknown is what the status says when the settings fail in a way
+// that has no message of its own.
+const problemUnknown = "the assistant can't be set up with these settings"
+
 // ErrAssistantOff means the assistant is turned off in the settings.
 var ErrAssistantOff = errors.New("the assistant is off; turn it on in Settings")
 
@@ -66,13 +70,26 @@ type Status struct {
 func StatusFromSettings(s settings.Settings) Status {
 	provider, err := NewProvider(s)
 	if err != nil {
-		return Status{Provider: s.AssistantProvider, Problem: err.Error()}
+		return Status{Provider: s.AssistantProvider, Problem: getProblem(err)}
 	}
 	return Status{
 		Ready:         true,
 		Provider:      provider.Name(),
 		Model:         provider.Model(),
 		OnThisMachine: runsOnThisMachine(provider),
+	}
+}
+
+// getProblem is what the status tells about a provider that can't be built:
+// the text of the errors written for that, never the text of any other.
+func getProblem(err error) string {
+	switch {
+	case errors.Is(err, ErrAssistantOff):
+		return ErrAssistantOff.Error()
+	case errors.Is(err, ErrNoModel):
+		return ErrNoModel.Error()
+	default:
+		return problemUnknown
 	}
 }
 
