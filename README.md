@@ -422,7 +422,10 @@ web/static/          The UI (vanilla JS, no build step): index.html (budgets), s
 | `POST /api/budgets/{id}/chat` `{message, conversation?}` | ask the assistant; server-sent events `text`, `tool`, `changed`, then `error` if the reply failed, and always `done` with the `conversation` to continue |
 | `GET /api/notes` · `DELETE /api/notes/{id}` | the notes kept about you, each with `text`, `source` (`chat`, `statement_import` or `connector`) and `created_at`; at most 50 notes of 200 characters; kept in `.notes.json` beside the budgets |
 | `GET /api/budgets/{id}/compare` · `POST …/scenarios` · `POST …/scenarios/{sid}/adopt` · `DELETE …/scenarios/{sid}` | scenarios |
+| `GET /api/meta` | what the server supports: `api_version`, currencies, rate sources, templates, op kinds, strategies and locales |
 | `POST /api/pair` `{code, name}` → `{device, token}` · `GET /api/devices` · `DELETE /api/devices/{id}` | remote mode only: pair a device (`403` for a wrong or expired code) / list / revoke |
+
+`api_version` starts at 1 and goes up only for a breaking change; new fields and endpoints don't change it. The server keeps the previous version working for at least one app release, since apps in the stores lag behind servers. There are no `/api/v1` prefixes.
 
 The server binds to 127.0.0.1 and accepts only these requests:
 
@@ -465,7 +468,7 @@ The tests include:
 - an end-to-end test that builds the binary and drives `bbbudget mcp` over real stdio;
 - browser tests in [`e2e/`](e2e/) that run `bbbudget serve` on a throwaway directory and drive the page in headless Chromium over the DevTools protocol: every view, editing in place, adding and undoing, covering a short month, routing income to a pot, paying off a debt, what-if, the phone layout and the settings page. They fail on any script error or request to another origin. They use only Node's built-in test runner and WebSocket, and skip when no Chromium is found (set `CHROME` to pick one).
 
-`make hooks` installs the [pre-commit](https://pre-commit.com) hooks in [`.pre-commit-config.yaml`](.pre-commit-config.yaml). On commit, [tinfoil](https://github.com/Ivanko1608/tinfoil) scans staged changes for personal data (home paths, emails, and anything in your own denylist at `~/.config/leakscan/denylist.txt`) and [gitleaks](https://github.com/gitleaks/gitleaks) scans them for credentials. On push, tinfoil also checks the author and committer of every commit that isn't on a remote yet, because a staged scan never sees them; use your GitHub noreply address as `user.email`. CI runs tinfoil over the full history and gitleaks over the new commits. Known false positives go in `.leakscanignore`.
+`make hooks` installs the [pre-commit](https://pre-commit.com) hooks in [`.pre-commit-config.yaml`](.pre-commit-config.yaml). On commit, [tinfoil](https://github.com/Ivanko1608/tinfoil) scans staged changes for personal data (home paths, emails, and anything in your own denylist at `~/.config/leakscan/denylist.txt`) and [gitleaks](https://github.com/gitleaks/gitleaks) scans them for credentials. On push, tinfoil also checks the author and committer of every commit that isn't on a remote yet, because a staged scan never sees them; use your GitHub noreply address as `user.email`. CI runs tinfoil over main's history plus the pull request's own commits and gitleaks over the new commits. Known false positives go in `.leakscanignore`.
 
 ## Contributing and security
 
