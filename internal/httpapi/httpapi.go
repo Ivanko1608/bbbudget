@@ -17,17 +17,30 @@ import (
 	"bbbudget/internal/app"
 	"bbbudget/internal/assistant"
 	"bbbudget/internal/budget"
+	"bbbudget/internal/devices"
 	"bbbudget/internal/i18n"
 	"bbbudget/internal/money"
 	"bbbudget/internal/settings"
 	"bbbudget/internal/store"
+	"bbbudget/internal/templates"
 )
+
+const apiVersion = 1
 
 const maxBody = 1 << 20
 
 const internalErrorMessage = app.InternalErrorMessage
 
 var internalErrorBody = []byte(`{"error":"` + internalErrorMessage + `"}` + "\n")
+
+// Fixed texts for the device errors. Responses never carry an error's own
+// text, so these are the only words a client gets.
+const (
+	badPairingCodeMessage = "pairing code is wrong or expired"
+	badTokenMessage       = "device token is unknown or revoked"
+	deviceNotFoundMessage = "no paired device has this id"
+	missingTokenMessage   = "send a paired device's token as Authorization: Bearer <token>"
+)
 
 // The codes go on to the outside rate providers, so the cap bounds what one
 // request can ask of them. The UI asks for one code at a time.
@@ -52,6 +65,9 @@ type Options struct {
 	Paths map[string]string
 	// Assistant, if set, answers chat messages.
 	Assistant *assistant.Assistant
+	// Devices, if set, turns on remote mode: the API and MCP answer only
+	// paired devices, and any Host is accepted. Nil keeps the server local.
+	Devices *devices.Registry
 }
 
 type server struct {
@@ -94,6 +110,11 @@ func New(a *app.App, opts Options) http.Handler {
 	mux.HandleFunc("POST /api/budgets/{id}/chat", s.chat)
 	mux.HandleFunc("GET /api/notes", s.listNotes)
 	mux.HandleFunc("DELETE /api/notes/{id}", s.deleteNote)
+	if opts.Devices != nil {
+		mux.HandleFunc("POST "+pairPath, s.pair)
+		mux.HandleFunc("GET /api/devices", s.listDevices)
+		mux.HandleFunc("DELETE /api/devices/{id}", s.revokeDevice)
+	}
 	if opts.MCP != nil {
 		mux.Handle("/mcp", opts.MCP)
 	}
@@ -111,15 +132,19 @@ func New(a *app.App, opts Options) http.Handler {
 			files.ServeHTTP(w, r)
 		})
 	}
+	if opts.Devices != nil {
+		return s.guard(s.requireDevice(mux))
+	}
 	return s.guard(mux)
 }
 
 // guard blocks DNS-rebinding (unknown Host) and cross-site form posts
 // (mutations must be JSON, which browsers cannot send cross-origin without a
-// CORS preflight this server never approves).
+// CORS preflight this server never approves). In remote mode any Host is
+// fine: a rebound page has no device token to send.
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.hostAllowed(r.Host) {
+		if s.opts.Devices == nil && !s.hostAllowed(r.Host) {
 			s.writeErr(w, http.StatusForbidden, "host not allowed", nil)
 			return
 		}
@@ -244,16 +269,34 @@ func locales() []localeInfo {
 }
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
+	type metaResponse struct {
+		APIVersion  uint8                    `json:"api_version"`
+		Currencies  []string                 `json:"currencies"`
+		Crypto      []string                 `json:"crypto"`
+		RateSources []budget.RateSource      `json:"rate_sources"`
+		Digits      map[string]int           `json:"digits"`
+		Templates   []templates.Template     `json:"templates"`
+		OpKinds     map[budget.OpKind]string `json:"op_kinds"`
+		Strategies  []string                 `json:"strategies"`
+		Locale      string                   `json:"locale"`
+		Locales     []localeInfo             `json:"locales"`
+	}
+
 	digits := map[string]int{}
 	for _, c := range money.Codes() {
 		digits[c] = money.MustLookup(c).Digits
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"currencies": money.Codes(), "crypto": money.CryptoCodes(), "rate_sources": budget.RateSources, "digits": digits,
-		"templates": s.app.Templates.List(), "op_kinds": budget.OpKinds,
-		"strategies": budget.Strategies,
-		"locale":     s.reader(r).Locale(),
-		"locales":    locales(),
+	s.writeJSON(w, http.StatusOK, metaResponse{
+		APIVersion:  apiVersion,
+		Currencies:  money.Codes(),
+		Crypto:      money.CryptoCodes(),
+		RateSources: budget.RateSources,
+		Digits:      digits,
+		Templates:   s.app.Templates.List(),
+		OpKinds:     budget.OpKinds,
+		Strategies:  budget.Strategies,
+		Locale:      s.reader(r).Locale(),
+		Locales:     locales(),
 	})
 }
 
