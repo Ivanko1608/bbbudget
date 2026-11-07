@@ -44,7 +44,7 @@ type idleProvider struct{}
 
 func (idleProvider) Name() settings.AssistantProvider { return "idle" }
 func (idleProvider) Model() string                    { return "idle" }
-func (idleProvider) Start(string, []assistant.Tool) assistant.Conversation {
+func (idleProvider) Start(assistant.SystemPrompt, []assistant.Tool) assistant.Conversation {
 	return idleProvider{}
 }
 func (idleProvider) SendText(context.Context, string) (assistant.Turn, error) {

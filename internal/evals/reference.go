@@ -38,7 +38,9 @@ func (p *ReferenceProvider) Name() settings.AssistantProvider { return reference
 
 func (p *ReferenceProvider) Model() string { return string(referenceProviderName) }
 
-func (p *ReferenceProvider) Start(string, []assistant.Tool) assistant.Conversation { return p }
+func (p *ReferenceProvider) Start(assistant.SystemPrompt, []assistant.Tool) assistant.Conversation {
+	return p
+}
 
 // SendText answers a new message from the person with the next list of calls.
 func (p *ReferenceProvider) SendText(context.Context, string) (assistant.Turn, error) {

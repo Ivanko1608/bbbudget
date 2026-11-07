@@ -80,7 +80,9 @@ func startAnthropic(t *testing.T, replies ...string) (Conversation, *messagesSer
 		option.WithBaseURL(httpServer.URL),
 		option.WithMaxRetries(0),
 	)
-	return provider.Start("be brief", []Tool{setItem, getBudget}), server
+	system := SystemPrompt{Instructions: "be brief", Context: "about Home"}
+
+	return provider.Start(system, []Tool{setItem, getBudget}), server
 }
 
 func say(t *testing.T, conversation Conversation, text string) Turn {
@@ -120,6 +122,39 @@ func TestAnthropicRequestSettings(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestAnthropicCachesInstructionsAndToolsButNotContext(t *testing.T) {
+	conversation, server := startAnthropic(t, answersRent)
+
+	say(t, conversation, "hi")
+
+	request := server.requests[0]
+	system := request["system"].([]any)
+	instructions := system[0].(map[string]any)
+	contextBlock := system[1].(map[string]any)
+	tools := request["tools"].([]any)
+	cases := []struct {
+		name  string
+		block map[string]any
+		want  bool
+	}{
+		{name: "instructions", block: instructions, want: true},
+		{name: "context", block: contextBlock, want: false},
+		{name: "first tool", block: tools[0].(map[string]any), want: false},
+		{name: "last tool", block: tools[len(tools)-1].(map[string]any), want: true},
+	}
+	for _, c := range cases {
+		if got := c.block["cache_control"] != nil; got != c.want {
+			t.Errorf("%s cached: got %v, want %v", c.name, got, c.want)
+		}
+	}
+	if instructions["text"] != "be brief" {
+		t.Errorf("instructions text: %v", instructions["text"])
+	}
+	if contextBlock["text"] != "about Home" {
+		t.Errorf("context text: %v", contextBlock["text"])
 	}
 }
 

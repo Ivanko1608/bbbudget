@@ -57,7 +57,7 @@ func NewAnthropic(config AnthropicConfig, options ...option.RequestOption) *Anth
 func (p *Anthropic) Name() settings.AssistantProvider { return settings.AssistantAnthropic }
 func (p *Anthropic) Model() string                    { return p.model }
 
-func (p *Anthropic) Start(system string, tools []Tool) Conversation {
+func (p *Anthropic) Start(system SystemPrompt, tools []Tool) Conversation {
 	// Sorted, so the tool list, and with it the cached prompt prefix, is the
 	// same on every request.
 	sorted := slices.SortedFunc(slices.Values(tools), func(a, b Tool) int {
@@ -67,7 +67,9 @@ func (p *Anthropic) Start(system string, tools []Tool) Conversation {
 	for _, tool := range sorted {
 		offered = append(offered, toAnthropicTool(tool))
 	}
-	return &anthropicConversation{provider: p, system: system, tools: offered}
+	markLastToolCacheable(offered)
+
+	return &anthropicConversation{provider: p, system: toSystemBlocks(system), tools: offered}
 }
 
 func toAnthropicTool(tool Tool) anthropic.BetaToolUnionParam {
@@ -77,6 +79,26 @@ func toAnthropicTool(tool Tool) anthropic.BetaToolUnionParam {
 		InputSchema: toInputSchema(tool.Schema),
 	}
 	return anthropic.BetaToolUnionParam{OfTool: &param}
+}
+
+// markLastToolCacheable puts a cache breakpoint after the tool definitions.
+func markLastToolCacheable(tools []anthropic.BetaToolUnionParam) {
+	if len(tools) == 0 {
+		return
+	}
+	last := tools[len(tools)-1].OfTool
+	last.CacheControl = anthropic.NewBetaCacheControlEphemeralParam()
+}
+
+// toSystemBlocks caches the instructions and leaves the context out of the
+// cache, so what changes per chat never invalidates the cached prefix.
+func toSystemBlocks(system SystemPrompt) []anthropic.BetaTextBlockParam {
+	instructions := anthropic.BetaTextBlockParam{
+		Text:         system.Instructions,
+		CacheControl: anthropic.NewBetaCacheControlEphemeralParam(),
+	}
+
+	return []anthropic.BetaTextBlockParam{instructions, {Text: system.Context}}
 }
 
 // toInputSchema moves a decoded JSON Schema object into the SDK's type:
@@ -112,7 +134,7 @@ func toStringSlice(value any) []string {
 
 type anthropicConversation struct {
 	provider *Anthropic
-	system   string
+	system   []anthropic.BetaTextBlockParam
 	tools    []anthropic.BetaToolUnionParam
 	messages []anthropic.BetaMessageParam
 }
@@ -162,7 +184,7 @@ func (c *anthropicConversation) buildRequest() anthropic.BetaMessageNewParams {
 	return anthropic.BetaMessageNewParams{
 		Model:     anthropic.Model(c.provider.model),
 		MaxTokens: maxAnswerTokens,
-		System:    []anthropic.BetaTextBlockParam{{Text: c.system}},
+		System:    c.system,
 		Messages:  c.messages,
 		Tools:     c.tools,
 		// Budget questions don't need deep thinking, and medium keeps
